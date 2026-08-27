@@ -35,6 +35,12 @@ func compileWorkflow(definition contractsv1.WorkflowDefinition, registry *Regist
 	if registry == nil {
 		return CompiledWorkflow{}, contractsv1.Receipt{}, errors.New("producer registry is required")
 	}
+	var executable contractsv1.WorkflowDefinition
+	if err := json.Unmarshal(body, &executable); err != nil {
+		return CompiledWorkflow{}, contractsv1.Receipt{}, err
+	}
+	definition = executable
+	normalizeLegacySlots(&definition)
 	if err := validateSlotFlow(definition); err != nil {
 		return CompiledWorkflow{}, contractsv1.Receipt{}, err
 	}
@@ -48,6 +54,16 @@ func compileWorkflow(definition contractsv1.WorkflowDefinition, registry *Regist
 			return CompiledWorkflow{}, contractsv1.Receipt{}, fmt.Errorf("compile node %q: %w", node.Id, err)
 		}
 		node.Context = contextRequirements
+		if len(node.Context) > 8 {
+			return CompiledWorkflow{}, contractsv1.Receipt{}, fmt.Errorf("compile node %q: context fanout exceeds 8", node.Id)
+		}
+		totalOutputs := 0
+		for _, slot := range node.OutputSlots {
+			totalOutputs += slot.MaxItems
+		}
+		if totalOutputs > 8 {
+			return CompiledWorkflow{}, contractsv1.Receipt{}, fmt.Errorf("compile node %q: output fanout exceeds 8", node.Id)
+		}
 		compiled.Nodes = append(compiled.Nodes, CompiledNode{Definition: node})
 	}
 	hash, err := Digest(struct {
@@ -63,6 +79,92 @@ func compileWorkflow(definition contractsv1.WorkflowDefinition, registry *Regist
 		[]contractsv1.SHA256{compiled.DefinitionHash}, []contractsv1.SHA256{compiled.CompileHash},
 		map[string]any{"workflow_ref": compiled.WorkflowRef})
 	return compiled, receipt, err
+}
+
+func normalizeLegacySlots(definition *contractsv1.WorkflowDefinition) {
+	for nodeIndex := range definition.Nodes {
+		node := &definition.Nodes[nodeIndex]
+		for slotIndex := range node.OutputSlots {
+			slot := &node.OutputSlots[slotIndex]
+			if slot.ArtifactKind == nil {
+				kind := contractsv1.SlotArtifactKindActionArtifact
+				slot.ArtifactKind = &kind
+			}
+			if slot.ContentSchema == nil {
+				schema := contractsv1.WorkflowRef(fmt.Sprintf("%s@1", slot.ArtifactType))
+				slot.ContentSchema = &schema
+			}
+			if len(slot.Consumers) == 0 {
+				for _, candidate := range definition.Nodes {
+					if containsString(candidate.DependsOn, string(node.Id)) && hasMatchingSlot(candidate.InputSlots, *slot) {
+						slot.Consumers = append(slot.Consumers, string(candidate.Id))
+					}
+				}
+				if hasMatchingSlot(definition.Outputs, *slot) {
+					slot.Consumers = append(slot.Consumers, "workflow-output")
+				}
+			}
+		}
+	}
+	for nodeIndex := range definition.Nodes {
+		node := &definition.Nodes[nodeIndex]
+		for slotIndex := range node.InputSlots {
+			slot := &node.InputSlots[slotIndex]
+			for _, dependency := range node.DependsOn {
+				dependencyNode, ok := nodeByID(definition.Nodes, dependency)
+				if !ok {
+					continue
+				}
+				if source, ok := matchingSlot(dependencyNode.OutputSlots, *slot); ok {
+					if slot.ArtifactKind == nil {
+						slot.ArtifactKind = source.ArtifactKind
+					}
+					if slot.ContentSchema == nil {
+						slot.ContentSchema = source.ContentSchema
+					}
+				}
+			}
+		}
+	}
+	for slotIndex := range definition.Outputs {
+		slot := &definition.Outputs[slotIndex]
+		for _, node := range definition.Nodes {
+			if source, ok := matchingSlot(node.OutputSlots, *slot); ok {
+				if slot.ArtifactKind == nil {
+					slot.ArtifactKind = source.ArtifactKind
+				}
+				if slot.ContentSchema == nil {
+					slot.ContentSchema = source.ContentSchema
+				}
+			}
+		}
+		if len(slot.Consumers) == 0 {
+			slot.Consumers = append([]string(nil), definition.Intent.Consumers...)
+		}
+	}
+}
+
+func nodeByID(nodes []contractsv1.NodeDefinition, id string) (contractsv1.NodeDefinition, bool) {
+	for _, node := range nodes {
+		if string(node.Id) == id {
+			return node, true
+		}
+	}
+	return contractsv1.NodeDefinition{}, false
+}
+
+func hasMatchingSlot(slots []contractsv1.Slot, wanted contractsv1.Slot) bool {
+	_, ok := matchingSlot(slots, wanted)
+	return ok
+}
+
+func matchingSlot(slots []contractsv1.Slot, wanted contractsv1.Slot) (contractsv1.Slot, bool) {
+	for _, slot := range slots {
+		if slot.Id == wanted.Id && slot.ArtifactType == wanted.ArtifactType {
+			return slot, true
+		}
+	}
+	return contractsv1.Slot{}, false
 }
 
 func compileNodeContext(defaults, explicit []contractsv1.ContextRequirement, registry *Registry) ([]contractsv1.ContextRequirement, error) {

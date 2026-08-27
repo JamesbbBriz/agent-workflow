@@ -7,15 +7,22 @@ import (
 	"fmt"
 )
 
-const maxContentBytes = 1 << 20
+const (
+	maxContentBytes         = 128 << 10
+	maxReceiptMaterialBytes = 1536 << 10
+)
 
 func validateBoundedJSON(label string, value any) error {
+	return validateJSONLimit(label, value, maxContentBytes)
+}
+
+func validateJSONLimit(label string, value any, limit int) error {
 	body, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", label, err)
 	}
-	if len(body) > maxContentBytes {
-		return fmt.Errorf("%s exceeds %d bytes", label, maxContentBytes)
+	if len(body) > limit {
+		return fmt.Errorf("%s exceeds %d bytes", label, limit)
 	}
 	return nil
 }

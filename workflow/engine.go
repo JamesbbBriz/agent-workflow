@@ -47,11 +47,10 @@ type ReplayMaterial struct {
 }
 
 type RunRequest struct {
-	Job        contractsv1.JobDefinition
-	Campaign   contractsv1.CampaignDefinition
-	Workflow   contractsv1.WorkflowDefinition
-	NodeID     string
-	OccurredAt time.Time
+	Job      contractsv1.JobDefinition
+	Campaign contractsv1.CampaignDefinition
+	Workflow contractsv1.WorkflowDefinition
+	NodeID   string
 }
 
 type RunResult struct {
@@ -90,9 +89,6 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 	if e == nil || e.provider == nil || e.ledger == nil {
 		return RunResult{}, errors.New("provider and ledger are required")
 	}
-	if request.OccurredAt.IsZero() {
-		return RunResult{}, errors.New("occurred_at is required")
-	}
 	if err := contract.ValidateDefinition("JobDefinition", request.Job); err != nil {
 		return RunResult{}, err
 	}
@@ -103,7 +99,14 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 	if err != nil {
 		return RunResult{}, err
 	}
-	compiled, compileReceipt, err := compileWorkflow(request.Workflow, e.registry, aggregateID, request.OccurredAt)
+	transitionAt := time.Now().UTC()
+	existingReplay, replayErr := e.ledger.Replay(aggregateID)
+	if replayErr == nil {
+		transitionAt = existingReplay.Receipts[0].OccurredAt
+	} else if !errors.Is(replayErr, ErrReplayEmpty) {
+		return RunResult{}, replayErr
+	}
+	compiled, compileReceipt, err := compileWorkflow(request.Workflow, e.registry, aggregateID, transitionAt)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -124,7 +127,8 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 	if err := validateOutputCatalog(node.Definition, e.outputs); err != nil {
 		return RunResult{}, err
 	}
-	if replay, err := e.ledger.Replay(aggregateID); err == nil {
+	if replayErr == nil {
+		replay := existingReplay
 		if invocation, ok, err := materializeInvocation(replay); err != nil {
 			return RunResult{}, err
 		} else if ok {
@@ -138,10 +142,8 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 				}
 				return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: material.Artifacts, Replay: replay}, nil
 			}
-			return e.resumeInvocation(ctx, aggregateID, request.OccurredAt, compiled, invocation, replay)
+			return e.resumeInvocation(ctx, aggregateID, transitionAt, compiled, invocation, replay)
 		}
-	} else if !errors.Is(err, ErrReplayEmpty) {
-		return RunResult{}, err
 	}
 	resolved, err := resolveContext(ctx, e.registry, request, compiled, node, compileReceipt)
 	if err != nil {
@@ -163,7 +165,7 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 	if err != nil {
 		return RunResult{}, err
 	}
-	deadline := request.OccurredAt
+	deadline := transitionAt
 	duration := time.Duration(0)
 	if node.Definition.DeadlineSeconds != nil {
 		duration = time.Duration(*node.Definition.DeadlineSeconds) * time.Second
@@ -182,7 +184,10 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 		Bundle: resolved.Bundle, Capabilities: manifest, Budget: node.Definition.Budget, Deadline: deadline,
 		InputHashes: []contractsv1.SHA256{jobHash, campaignHash, compiled.CompileHash, resolved.Bundle.BundleHash, manifest.ManifestHash},
 	}
-	preReceipts, err := preExecutionReceipts(aggregateID, request.OccurredAt, compileReceipt, invocation)
+	if err := validateJSONLimit("invocation material", invocation, maxReceiptMaterialBytes); err != nil {
+		return RunResult{}, err
+	}
+	preReceipts, err := preExecutionReceipts(aggregateID, transitionAt, compileReceipt, invocation)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -195,7 +200,7 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 	if err != nil {
 		return RunResult{}, err
 	}
-	return e.resumeInvocation(ctx, aggregateID, request.OccurredAt, compiled, invocation, replay)
+	return e.resumeInvocation(ctx, aggregateID, transitionAt, compiled, invocation, replay)
 }
 
 func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occurredAt time.Time, compiled CompiledWorkflow, invocation Invocation, replay contractsv1.ReplayBundle) (RunResult, error) {
@@ -357,9 +362,6 @@ func validateRunBinding(request RunRequest, compiled CompiledWorkflow) error {
 	if !found {
 		return errors.New("workflow is not pinned by the campaign")
 	}
-	if request.OccurredAt.Before(request.Campaign.EvidenceFrontier.Cutoff) {
-		return errors.New("delivery predates the campaign evidence cutoff")
-	}
 	return nil
 }
 
@@ -442,6 +444,9 @@ func validateOutputCatalog(node contractsv1.NodeDefinition, outputs OutputCatalo
 }
 
 func validateArtifacts(artifacts []contractsv1.ActionArtifact, invocation Invocation, outputs OutputCatalog) error {
+	if err := validateJSONLimit("action artifact set", artifacts, maxReceiptMaterialBytes); err != nil {
+		return err
+	}
 	expectedInputs := invocation.InputHashes
 	counts := make(map[contractsv1.Identifier]int)
 	slots := make(map[contractsv1.Identifier]contractsv1.Slot, len(invocation.Node.OutputSlots))

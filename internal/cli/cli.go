@@ -150,7 +150,7 @@ func executeDemo(definition contractsv1.WorkflowDefinition, cutoff time.Time) (w
 	}, workflow.OutputCatalog{
 		"recommendation@1": validateRecommendation,
 	}, demoProvider{}, workflow.NewMemoryLedger())
-	return engine.RunNode(context.Background(), workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research", OccurredAt: cutoff})
+	return engine.RunNode(context.Background(), workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
 }
 
 func demoIntent(kind contractsv1.IntentCardKind, title string) contractsv1.IntentCard {
