@@ -23,10 +23,15 @@ type AuthoringCore struct {
 	blockers         map[string]bool
 	approvalPolicies map[string]bool
 	ledger           Ledger
+	sources          Ledger
 }
 
 func NewAuthoringCore(registry *Registry, executors ExecutorCatalog, capabilities CapabilityCatalog, outputs OutputCatalog, blockers, approvalPolicies []string, ledger Ledger) *AuthoringCore {
-	core := &AuthoringCore{registry: registry, executors: ExecutorCatalog{}, capabilities: CapabilityCatalog{}, outputs: OutputCatalog{}, blockers: map[string]bool{}, approvalPolicies: map[string]bool{}, ledger: ledger}
+	return NewAuthoringCoreWithSources(registry, executors, capabilities, outputs, blockers, approvalPolicies, ledger, ledger)
+}
+
+func NewAuthoringCoreWithSources(registry *Registry, executors ExecutorCatalog, capabilities CapabilityCatalog, outputs OutputCatalog, blockers, approvalPolicies []string, ledger, sources Ledger) *AuthoringCore {
+	core := &AuthoringCore{registry: registry, executors: ExecutorCatalog{}, capabilities: CapabilityCatalog{}, outputs: OutputCatalog{}, blockers: map[string]bool{}, approvalPolicies: map[string]bool{}, ledger: ledger, sources: sources}
 	for ref, kind := range executors {
 		core.executors[ref] = kind
 	}
@@ -46,7 +51,7 @@ func NewAuthoringCore(registry *Registry, executors ExecutorCatalog, capabilitie
 }
 
 func (c *AuthoringCore) Catalog() (contractsv1.AuthoringCatalog, error) {
-	if c == nil || c.registry == nil || c.ledger == nil {
+	if c == nil || c.registry == nil || c.ledger == nil || c.sources == nil {
 		return contractsv1.AuthoringCatalog{}, errors.New("authoring registry and ledger are required")
 	}
 	catalog := contractsv1.AuthoringCatalog{Kind: contractsv1.AuthoringCatalogKindAuthoringCatalog, SchemaVersion: 1, Executors: []contractsv1.CatalogExecutor{}, Producers: []contractsv1.CatalogProducer{}, Capabilities: []contractsv1.CatalogCapability{}, OutputSchemas: []contractsv1.WorkflowRef{}, Blockers: []string{}, ApprovalPolicies: []string{}}
@@ -306,7 +311,7 @@ func (c *AuthoringCore) PreviewApproval(brief contractsv1.ApprovalBrief, actor, 
 	if actor == "" {
 		return contractsv1.ApprovalPreview{}, errors.New("actor is required")
 	}
-	source, err := c.ledger.Replay(sourceAggregateID)
+	source, err := c.sources.Replay(sourceAggregateID)
 	if err != nil {
 		return contractsv1.ApprovalPreview{}, errors.New("approval source is not canonical")
 	}

@@ -59,7 +59,8 @@ Run the local Workflow Builder beside the Canvas:
 ```bash
 go run ./cmd/agent-workflow builder \
   --listen 127.0.0.1:4321 \
-  --ledger .agent-workflow/builder.jsonl
+  --ledger .agent-workflow/builder.jsonl \
+  --canvas web/public/canvas.response.json
 npm run web:dev
 ```
 

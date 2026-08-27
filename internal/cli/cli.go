@@ -52,11 +52,12 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	listenAddress := flags.String("listen", "127.0.0.1:4321", "loopback listen address")
 	ledgerPath := flags.String("ledger", ".agent-workflow/builder.jsonl", "canonical admission ledger")
+	canvasPath := flags.String("canvas", "", "verified Canvas snapshot supplying approval source Replays")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "builder accepts only --listen and --ledger")
+		fmt.Fprintln(stderr, "builder accepts only --listen, --ledger, and --canvas")
 		return 2
 	}
 	host, _, err := net.SplitHostPort(*listenAddress)
@@ -67,7 +68,14 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeError(stdout, stderr, true, "ledger_unavailable", err)
 	}
-	core, err := demoAuthoringCore(ledger)
+	sources := workflow.NewMemoryLedger()
+	if *canvasPath != "" {
+		sources, err = loadCanvasSources(*canvasPath)
+		if err != nil {
+			return writeError(stdout, stderr, true, "canvas_unavailable", err)
+		}
+	}
+	core, err := demoAuthoringCore(ledger, sources)
 	if err != nil {
 		return writeError(stdout, stderr, true, "builder_unavailable", err)
 	}
@@ -83,16 +91,41 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func demoAuthoringCore(ledger workflow.Ledger) (*workflow.AuthoringCore, error) {
+func demoAuthoringCore(ledger, sources workflow.Ledger) (*workflow.AuthoringCore, error) {
 	registry, err := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1, contractsv1.ContextPackEdition{Authority: contractsv1.ContextPackEditionAuthorityCanonical}))
 	if err != nil {
 		return nil, err
 	}
-	return workflow.NewAuthoringCore(registry,
+	return workflow.NewAuthoringCoreWithSources(registry,
 		workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval},
 		workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead},
 		workflow.OutputCatalog{"recommendation@1": validateRecommendation, "review-decision@1": func(any) error { return nil }},
-		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger), nil
+		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger, sources), nil
+}
+
+func loadCanvasSources(path string) (workflow.Ledger, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, errors.New("Canvas source file is unavailable")
+	}
+	var envelope struct {
+		Data contractsv1.CanvasSnapshot `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || contract.ValidateDefinition("CanvasSnapshot", envelope.Data) != nil {
+		return nil, errors.New("Canvas source file is invalid")
+	}
+	ledger := workflow.NewMemoryLedger()
+	for _, replay := range envelope.Data.Replays {
+		if err := workflow.VerifyReplay(replay); err != nil {
+			return nil, errors.New("Canvas source Replay is invalid")
+		}
+		for _, receipt := range replay.Receipts {
+			if err := ledger.Append(receipt); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return ledger, nil
 }
 
 func runCanvas(args []string, stdout, stderr io.Writer) int {
