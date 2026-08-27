@@ -31,14 +31,14 @@ func MergeAdmissionReadback(current, admitted contractsv1.CanvasSnapshot) contra
 	if current.Definition.Job.Id != admitted.Definition.Job.Id || current.Definition.Campaign.Id != admitted.Definition.Campaign.Id {
 		return admitted
 	}
+	if !reflect.DeepEqual(current.Definition.Job, admitted.Definition.Job) || !reflect.DeepEqual(current.Definition.Campaign, admitted.Definition.Campaign) {
+		return admitted
+	}
 	previousStates := current.Definition.WorkflowStates
-	merged := admitted
-	if reflect.DeepEqual(current.Definition.Job, admitted.Definition.Job) && reflect.DeepEqual(current.Definition.Campaign, admitted.Definition.Campaign) {
-		merged = current
-		merged.Definition = admitted.Definition
-		if admitted.GeneratedAt.After(merged.GeneratedAt) {
-			merged.GeneratedAt = admitted.GeneratedAt
-		}
+	merged := current
+	merged.Definition = admitted.Definition
+	if admitted.GeneratedAt.After(merged.GeneratedAt) {
+		merged.GeneratedAt = admitted.GeneratedAt
 	}
 	planned := make(map[string]bool, len(merged.Definition.Campaign.WorkflowPlan))
 	for _, ref := range merged.Definition.Campaign.WorkflowPlan {

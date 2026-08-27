@@ -97,7 +97,7 @@ func TestBuilderHTTPDoesNotRebindRuntimeAcrossDefinitions(t *testing.T) {
 	definition.Id = "rebound-review"
 	job, campaign := envelope.Data.Definition.Job, envelope.Data.Definition.Campaign
 	job.Intent.Title = "Rebound job title"
-	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"rebound-review@1"}
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@1", "rebound-review@1"}
 	handler := builderapi.NewWithCanvas(testCore(t), time.Now, &envelope.Data)
 	admissionPreview := preview(t, handler, job, campaign, definition)
 	if response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": admissionPreview}); response.Code != http.StatusOK {
@@ -111,6 +111,9 @@ func TestBuilderHTTPDoesNotRebindRuntimeAcrossDefinitions(t *testing.T) {
 	decodeBody(t, read, &response)
 	if len(response.Data.Executions) != 0 || len(response.Data.Replays) != 0 || response.Data.Definition.Job.Intent.Title != "Rebound job title" {
 		t.Fatalf("historical runtime was rebound to changed definitions: %s", read.Body.String())
+	}
+	if response.Data.Definition.WorkflowStates["research-review@1"] == contractsv1.CanvasEntityStatusAdmitted || len(response.Data.AdmissionReplays) != 1 {
+		t.Fatalf("historical admission was rebound to changed definitions: %s", read.Body.String())
 	}
 }
 

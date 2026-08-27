@@ -265,7 +265,7 @@ func TestBuilderRestartRestoresCanonicalAdmissionProjection(t *testing.T) {
 	}
 }
 
-func TestBuilderRestartRestoresAppendOnlyCampaignWorkflowPlan(t *testing.T) {
+func TestBuilderRestartDoesNotRebindAdmissionAcrossCampaignPlanChanges(t *testing.T) {
 	sources, snapshot, err := loadCanvasSources("../../web/public/canvas.response.json")
 	if err != nil {
 		t.Fatal(err)
@@ -308,8 +308,8 @@ func TestBuilderRestartRestoresAppendOnlyCampaignWorkflowPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.Definition.WorkflowStates["first-review@1"] != contractsv1.CanvasEntityStatusAdmitted || restored.Definition.WorkflowStates["second-review@1"] != contractsv1.CanvasEntityStatusAdmitted {
-		t.Fatalf("append-only Campaign plan lost admission history: %+v", restored.Definition.WorkflowStates)
+	if restored.Definition.WorkflowStates["first-review@1"] == contractsv1.CanvasEntityStatusAdmitted || restored.Definition.WorkflowStates["second-review@1"] != contractsv1.CanvasEntityStatusAdmitted || len(restored.AdmissionReplays) != 1 {
+		t.Fatalf("historical admission was rebound across Campaign definitions: %+v", restored.Definition.WorkflowStates)
 	}
 }
 
