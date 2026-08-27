@@ -23,7 +23,7 @@ func TestCanvasProjectionUsesOnlyCanonicalRuntimeReceipts(t *testing.T) {
 	}
 
 	job, campaign := demoDefinitions(definition, cutoff)
-	snapshot, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{
+	snapshot, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{
 		Replay:  result.Replay,
 		Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation},
 	})
@@ -72,7 +72,7 @@ func TestCanvasProjectionRejectsTamperedReplay(t *testing.T) {
 	}
 	result.Replay.Receipts[0].ReceiptHash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	job, campaign := demoDefinitions(definition, cutoff)
-	if _, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{
+	if _, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{
 		Replay:  result.Replay,
 		Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation},
 	}); err == nil {
@@ -89,7 +89,7 @@ func TestCanvasProjectionRejectsWorkflowOutsideCampaignPlan(t *testing.T) {
 	}
 	job, campaign := demoDefinitions(definition, cutoff)
 	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"other-workflow@1"}
-	if _, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{
+	if _, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{
 		Replay:  result.Replay,
 		Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation},
 	}); err == nil {
@@ -106,12 +106,12 @@ func TestCanvasProjectionRejectsDefinitionsNotBoundByReplay(t *testing.T) {
 	}
 	job, campaign := demoDefinitions(definition, cutoff)
 	job.Intent.Title = "Altered Job"
-	if _, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{Replay: result.Replay, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}}); err == nil {
+	if _, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{Replay: result.Replay, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}}); err == nil {
 		t.Fatal("expected altered Job definition to be rejected")
 	}
 	job, campaign = demoDefinitions(definition, cutoff)
 	definition.Intent.Title = "Altered Workflow"
-	if _, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{Replay: result.Replay, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}}); err == nil {
+	if _, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{Replay: result.Replay, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}}); err == nil {
 		t.Fatal("expected altered Workflow definition to be rejected")
 	}
 }
@@ -145,7 +145,7 @@ func TestCanvasProjectionDoesNotCompleteBeforeTerminalReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	job, campaign := demoDefinitions(definition, cutoff)
-	snapshot, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{Replay: partial, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}})
+	snapshot, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{Replay: partial, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}})
 	if err != nil {
 		t.Fatal(err)
 	}

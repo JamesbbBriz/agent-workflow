@@ -127,7 +127,7 @@ func runCanvas(args []string, stdout, stderr io.Writer) int {
 		return writeError(stdout, stderr, true, "canvas_failed", err)
 	}
 	job, campaign := demoDefinitions(definition, cutoff.UTC())
-	snapshot, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{
+	snapshot, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{
 		Replay:  result.Replay,
 		Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation},
 	})
@@ -237,11 +237,24 @@ func executeDemo(definition contractsv1.WorkflowDefinition, cutoff time.Time) (w
 		return workflow.RunResult{}, err
 	}
 	job, campaign := demoDefinitions(definition, cutoff)
+	ledger := workflow.NewMemoryLedger()
+	authoring := workflow.NewAuthoringCore(registry,
+		workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval},
+		workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead},
+		workflow.OutputCatalog{"recommendation@1": validateRecommendation, "review-decision@1": func(any) error { return nil }},
+		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger)
+	preview, _, err := authoring.Preview(job, campaign, definition, "demo-operator")
+	if err != nil {
+		return workflow.RunResult{}, err
+	}
+	if _, err := authoring.Confirm(preview, "demo-operator", cutoff); err != nil {
+		return workflow.RunResult{}, err
+	}
 	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{
 		"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead,
 	}, workflow.OutputCatalog{
 		"recommendation@1": validateRecommendation,
-	}, &demoProvider{results: make(map[string]workflow.ProviderResult)}, workflow.NewMemoryLedger())
+	}, &demoProvider{results: make(map[string]workflow.ProviderResult)}, ledger)
 	return engine.RunNode(context.Background(), workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
 }
 

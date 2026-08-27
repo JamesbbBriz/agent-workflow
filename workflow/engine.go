@@ -62,10 +62,11 @@ type RunRequest struct {
 }
 
 type RunResult struct {
-	Compiled  CompiledWorkflow             `json:"compiled"`
-	Bundle    contractsv1.ContextBundle    `json:"bundle"`
-	Artifacts []contractsv1.ActionArtifact `json:"artifacts"`
-	Replay    contractsv1.ReplayBundle     `json:"replay"`
+	Compiled        CompiledWorkflow             `json:"compiled"`
+	Bundle          contractsv1.ContextBundle    `json:"bundle"`
+	Artifacts       []contractsv1.ActionArtifact `json:"artifacts"`
+	AdmissionReplay contractsv1.ReplayBundle     `json:"admission_replay"`
+	Replay          contractsv1.ReplayBundle     `json:"replay"`
 }
 
 type Engine struct {
@@ -114,7 +115,18 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 	} else if !errors.Is(replayErr, ErrReplayEmpty) {
 		return RunResult{}, replayErr
 	}
+	admission, admissionReplay, err := e.admissionForRun(request)
+	if err != nil {
+		return RunResult{}, err
+	}
 	compiled, compileReceipt, err := compileWorkflow(request.Workflow, e.registry, aggregateID, transitionAt)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if compiled.DefinitionHash != admission.DefinitionHash || compiled.CompileHash != admission.CompileHash {
+		return RunResult{}, errors.New("admitted Workflow does not match the compiled execution contract")
+	}
+	compileReceipt, err = bindCompileReceiptToAdmission(compileReceipt, admission.Receipt.ReceiptHash)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -151,9 +163,9 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 				if err != nil {
 					return RunResult{}, err
 				}
-				return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: material.Artifacts, Replay: replay}, nil
+				return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: material.Artifacts, AdmissionReplay: admissionReplay, Replay: replay}, nil
 			}
-			return e.resumeInvocation(ctx, aggregateID, transitionAt, compiled, invocation, replay)
+			return e.resumeInvocation(ctx, aggregateID, transitionAt, compiled, invocation, admissionReplay, replay)
 		}
 	}
 	resolved, err := resolveContext(ctx, e.registry, request, compiled, node, compileReceipt)
@@ -193,7 +205,7 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 		WorkflowRef: compiled.WorkflowRef, Node: node.Definition, Playbook: request.Workflow.Intent,
 		IntentChain: intentChain, Context: resolved.Packs,
 		Bundle: resolved.Bundle, Capabilities: manifest, Budget: node.Definition.Budget, Deadline: deadline,
-		InputHashes: []contractsv1.SHA256{jobHash, campaignHash, compiled.CompileHash, resolved.Bundle.BundleHash, manifest.ManifestHash},
+		InputHashes: []contractsv1.SHA256{admission.Receipt.ReceiptHash, jobHash, campaignHash, compiled.CompileHash, resolved.Bundle.BundleHash, manifest.ManifestHash},
 	}
 	if err := validateJSONLimit("invocation material", invocation, maxReceiptMaterialBytes); err != nil {
 		return RunResult{}, err
@@ -211,10 +223,10 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 	if err != nil {
 		return RunResult{}, err
 	}
-	return e.resumeInvocation(ctx, aggregateID, transitionAt, compiled, invocation, replay)
+	return e.resumeInvocation(ctx, aggregateID, transitionAt, compiled, invocation, admissionReplay, replay)
 }
 
-func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occurredAt time.Time, compiled CompiledWorkflow, invocation Invocation, replay contractsv1.ReplayBundle) (RunResult, error) {
+func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occurredAt time.Time, compiled CompiledWorkflow, invocation Invocation, admissionReplay, replay contractsv1.ReplayBundle) (RunResult, error) {
 	if storedResult, ok, err := materializeProviderResult(replay); err != nil {
 		return RunResult{}, err
 	} else if ok {
@@ -232,7 +244,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		if err != nil {
 			return RunResult{}, err
 		}
-		return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: artifacts, Replay: completed}, nil
+		return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: artifacts, AdmissionReplay: admissionReplay, Replay: completed}, nil
 	}
 	remaining := time.Until(invocation.Deadline)
 	if remaining > 0 {
@@ -296,7 +308,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 	if err != nil {
 		return RunResult{}, err
 	}
-	return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: artifacts, Replay: replay}, nil
+	return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: artifacts, AdmissionReplay: admissionReplay, Replay: replay}, nil
 }
 
 func providerAcknowledged(replay contractsv1.ReplayBundle, invocation Invocation, result ProviderResult) (bool, error) {
@@ -445,7 +457,7 @@ func MaterializeInvocation(bundle contractsv1.ReplayBundle) (Invocation, error) 
 }
 
 // VerifyDefinitionBinding proves that displayed definitions are the ones recorded by Replay.
-func VerifyDefinitionBinding(bundle contractsv1.ReplayBundle, job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definition contractsv1.WorkflowDefinition) (Invocation, error) {
+func VerifyDefinitionBinding(bundle, admissionReplay contractsv1.ReplayBundle, job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definition contractsv1.WorkflowDefinition) (Invocation, error) {
 	invocation, err := MaterializeInvocation(bundle)
 	if err != nil {
 		return Invocation{}, err
@@ -463,12 +475,16 @@ func VerifyDefinitionBinding(bundle contractsv1.ReplayBundle, job contractsv1.Jo
 		return Invocation{}, err
 	}
 	compileReceipt, ok := receiptByType(bundle, contractsv1.ReceiptReceiptTypeCompile)
-	if !ok || len(compileReceipt.InputHashes) != 1 || len(compileReceipt.OutputHashes) != 1 {
+	if !ok || len(compileReceipt.InputHashes) != 2 || len(compileReceipt.OutputHashes) != 1 {
 		return Invocation{}, errors.New("replay compile receipt is incomplete")
 	}
-	if len(invocation.InputHashes) != 5 || invocation.InputHashes[0] != jobHash || invocation.InputHashes[1] != campaignHash ||
-		invocation.InputHashes[2] != compileReceipt.OutputHashes[0] || invocation.InputHashes[3] != invocation.Bundle.BundleHash ||
-		invocation.InputHashes[4] != invocation.Capabilities.ManifestHash || compileReceipt.InputHashes[0] != contractsv1.SHA256(identity.Hash) {
+	admission, err := MaterializeAdmission(admissionReplay, definition.Version)
+	if err != nil || !reflect.DeepEqual(admission.Job, job) || !reflect.DeepEqual(admission.Campaign, campaign) || !reflect.DeepEqual(admission.Workflow, definition) || admission.Receipt.ReceiptHash != compileReceipt.InputHashes[1] {
+		return Invocation{}, errors.New("replay does not bind a canonical Workflow admission")
+	}
+	if len(invocation.InputHashes) != 6 || invocation.InputHashes[0] != compileReceipt.InputHashes[1] || invocation.InputHashes[1] != jobHash || invocation.InputHashes[2] != campaignHash ||
+		invocation.InputHashes[3] != compileReceipt.OutputHashes[0] || invocation.InputHashes[4] != invocation.Bundle.BundleHash ||
+		invocation.InputHashes[5] != invocation.Capabilities.ManifestHash || compileReceipt.InputHashes[0] != contractsv1.SHA256(identity.Hash) {
 		return Invocation{}, errors.New("replay does not bind the displayed definitions")
 	}
 	return invocation, nil
@@ -499,7 +515,7 @@ func validateReplayBinding(invocation Invocation, request RunRequest, compiled C
 	if invocation.JobID != request.Job.Id || invocation.CampaignID != request.Campaign.Id || invocation.WorkflowRef != compiled.WorkflowRef || invocation.Node.Id != node.Definition.Id {
 		return errors.New("recorded invocation identity does not match redelivery")
 	}
-	if len(invocation.InputHashes) < 3 || invocation.InputHashes[0] != jobHash || invocation.InputHashes[1] != campaignHash || invocation.InputHashes[2] != compiled.CompileHash {
+	if len(invocation.InputHashes) != 6 || invocation.InputHashes[1] != jobHash || invocation.InputHashes[2] != campaignHash || invocation.InputHashes[3] != compiled.CompileHash {
 		return errors.New("recorded invocation inputs do not match redelivery")
 	}
 	return nil
@@ -519,18 +535,28 @@ func executionID(request RunRequest) (string, error) {
 }
 
 func validateRunBinding(request RunRequest, compiled CompiledWorkflow, transitionAt time.Time) error {
-	if request.Job.Intent.Kind != contractsv1.IntentCardKindJob || request.Campaign.Intent.Kind != contractsv1.IntentCardKindCampaign {
+	if err := validateCampaignWorkflowBinding(request.Job, request.Campaign, compiled.WorkflowRef); err != nil {
+		return err
+	}
+	if request.Campaign.EvidenceFrontier.Cutoff.After(transitionAt) {
+		return errors.New("campaign evidence cutoff is in the future")
+	}
+	return nil
+}
+
+func validateCampaignWorkflowBinding(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, workflowRef contractsv1.WorkflowRef) error {
+	if job.Intent.Kind != contractsv1.IntentCardKindJob || campaign.Intent.Kind != contractsv1.IntentCardKindCampaign {
 		return errors.New("job or campaign intent kind is invalid")
 	}
-	if request.Campaign.JobId != request.Job.Id {
+	if campaign.JobId != job.Id {
 		return errors.New("campaign is not bound to the job")
 	}
-	if !reflect.DeepEqual(request.Job.Scope, request.Campaign.Scope) {
+	if !reflect.DeepEqual(job.Scope, campaign.Scope) {
 		return errors.New("campaign scope does not match the job")
 	}
 	found := false
-	for _, workflowRef := range request.Campaign.WorkflowPlan {
-		if workflowRef == compiled.WorkflowRef {
+	for _, candidate := range campaign.WorkflowPlan {
+		if candidate == workflowRef {
 			found = true
 			break
 		}
@@ -538,10 +564,30 @@ func validateRunBinding(request RunRequest, compiled CompiledWorkflow, transitio
 	if !found {
 		return errors.New("workflow is not pinned by the campaign")
 	}
-	if request.Campaign.EvidenceFrontier.Cutoff.After(transitionAt) {
-		return errors.New("campaign evidence cutoff is in the future")
-	}
 	return nil
+}
+
+func (e *Engine) admissionForRun(request RunRequest) (contractsv1.WorkflowAdmission, contractsv1.ReplayBundle, error) {
+	replay, err := e.ledger.Replay(workflowDefinitionAggregate(string(request.Workflow.Id)))
+	if err != nil {
+		return contractsv1.WorkflowAdmission{}, contractsv1.ReplayBundle{}, errors.New("Workflow is not canonically admitted")
+	}
+	admission, err := MaterializeAdmission(replay, request.Workflow.Version)
+	if err != nil {
+		return contractsv1.WorkflowAdmission{}, contractsv1.ReplayBundle{}, err
+	}
+	if !reflect.DeepEqual(admission.Job, request.Job) || !reflect.DeepEqual(admission.Campaign, request.Campaign) || !reflect.DeepEqual(admission.Workflow, request.Workflow) {
+		return contractsv1.WorkflowAdmission{}, contractsv1.ReplayBundle{}, errors.New("Workflow admission does not bind this Job and Campaign")
+	}
+	return admission, replay, nil
+}
+
+func bindCompileReceiptToAdmission(receipt contractsv1.Receipt, admissionHash contractsv1.SHA256) (contractsv1.Receipt, error) {
+	if len(receipt.InputHashes) != 1 {
+		return contractsv1.Receipt{}, errors.New("compile receipt is invalid")
+	}
+	return sealReceipt(receipt.AggregateId, receipt.AggregateVersion, receipt.ReceiptType, receipt.OccurredAt, nil,
+		[]contractsv1.SHA256{receipt.InputHashes[0], admissionHash}, receipt.OutputHashes, receipt.Payload)
 }
 
 func aggregateDefinitionHashes(request RunRequest) (contractsv1.SHA256, contractsv1.SHA256, error) {

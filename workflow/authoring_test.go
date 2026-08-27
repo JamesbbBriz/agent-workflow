@@ -15,7 +15,8 @@ import (
 func TestAuthoringPreviewConfirmKeepsImmutableVersions(t *testing.T) {
 	core := authoringCore(t)
 	definition := authoringDefinition(t)
-	preview, lint, err := core.Preview(definition, "operator@example.com")
+	job, campaign := testDefinitions(definition)
+	preview, lint, err := core.Preview(job, campaign, definition, "operator@example.com")
 	if err != nil || !lint.Valid || preview.BaseRevision != 0 || len(preview.ExpandedNodes[0].Definition.Context) != 2 {
 		t.Fatalf("preview did not expand a valid draft: preview=%+v lint=%+v err=%v", preview, lint, err)
 	}
@@ -34,7 +35,8 @@ func TestAuthoringPreviewConfirmKeepsImmutableVersions(t *testing.T) {
 
 	definition.Version = 2
 	definition.Intent.Summary = "A revised immutable version."
-	secondPreview, _, err := core.Preview(definition, "operator@example.com")
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@2"}
+	secondPreview, _, err := core.Preview(job, campaign, definition, "operator@example.com")
 	if err != nil || secondPreview.BaseRevision != 1 {
 		t.Fatalf("version 2 preview failed: %v", err)
 	}
@@ -57,7 +59,8 @@ func TestAuthoringFailsClosedOnCatalogAndPreviewDrift(t *testing.T) {
 	}
 
 	definition = authoringDefinition(t)
-	preview, _, err := core.Preview(definition, "operator@example.com")
+	job, campaign := testDefinitions(definition)
+	preview, _, err := core.Preview(job, campaign, definition, "operator@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,8 +71,9 @@ func TestAuthoringFailsClosedOnCatalogAndPreviewDrift(t *testing.T) {
 }
 
 func TestApprovalBindsBriefActorOptionAndStaleToken(t *testing.T) {
-	core := authoringCore(t)
-	source := approvalSource(t)
+	ledger := workflow.NewMemoryLedger()
+	core := authoringCoreWithLedger(t, ledger)
+	source := approvalSource(t, ledger)
 	action := source.Artifacts[0]
 	var resultReceipt contractsv1.Receipt
 	for _, receipt := range source.Replay.Receipts {
@@ -84,7 +88,7 @@ func TestApprovalBindsBriefActorOptionAndStaleToken(t *testing.T) {
 		RecommendedOptionId: "approve", Recommendation: "Approve because the independent review passed.", Risks: []string{"The public page changes immediately"},
 		Action: action,
 	}
-	preview, err := core.PreviewApproval(brief, "human@example.com", source.Replay)
+	preview, err := core.PreviewApproval(brief, "human@example.com", source.Replay.AggregateId)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,6 +98,9 @@ func TestApprovalBindsBriefActorOptionAndStaleToken(t *testing.T) {
 	}
 	if _, err := core.ConfirmApproval(preview, "other@example.com", "approve", time.Now()); err == nil {
 		t.Fatal("different actor reused approval token")
+	}
+	if _, err := core.PreviewApproval(brief, "human@example.com", "run-forged"); err == nil {
+		t.Fatal("untrusted approval source was accepted")
 	}
 }
 
@@ -117,7 +124,7 @@ func (p *approvalProvider) Poll(_ context.Context, key string) (workflow.Provide
 }
 func (*approvalProvider) Cancel(context.Context, string) error { return nil }
 
-func approvalSource(t *testing.T) workflow.RunResult {
+func approvalSource(t *testing.T, ledger workflow.Ledger) workflow.RunResult {
 	t.Helper()
 	definition := authoringDefinition(t)
 	job, campaign := testDefinitions(definition)
@@ -134,7 +141,9 @@ func approvalSource(t *testing.T) workflow.RunResult {
 		t.Fatal(err)
 	}
 	provider := &approvalProvider{at: cutoff.Add(time.Minute)}
-	result, err := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, workflow.OutputCatalog{"recommendation@1": func(any) error { return nil }}, provider, workflow.NewMemoryLedger()).RunNode(context.Background(), workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
+	request := workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"}
+	admit(t, ledger, registry, request)
+	result, err := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, workflow.OutputCatalog{"recommendation@1": func(any) error { return nil }}, provider, ledger).RunNode(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,6 +161,10 @@ func testDefinitions(definition contractsv1.WorkflowDefinition) (contractsv1.Job
 }
 
 func authoringCore(t *testing.T) *workflow.AuthoringCore {
+	return authoringCoreWithLedger(t, workflow.NewMemoryLedger())
+}
+
+func authoringCoreWithLedger(t *testing.T, ledger workflow.Ledger) *workflow.AuthoringCore {
 	t.Helper()
 	zero := contractsv1.SHA256("sha256:0000000000000000000000000000000000000000000000000000000000000000")
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"example-project"}}
@@ -164,7 +177,7 @@ func authoringCore(t *testing.T) *workflow.AuthoringCore {
 		workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval},
 		workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead},
 		workflow.OutputCatalog{"recommendation@1": func(any) error { return nil }, "review-decision@1": func(any) error { return nil }},
-		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, workflow.NewMemoryLedger())
+		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger)
 }
 
 func authoringDefinition(t *testing.T) contractsv1.WorkflowDefinition {
@@ -178,4 +191,23 @@ func authoringDefinition(t *testing.T) contractsv1.WorkflowDefinition {
 		t.Fatal(err)
 	}
 	return definition
+}
+
+func admit(t *testing.T, ledger workflow.Ledger, registry *workflow.Registry, request workflow.RunRequest) contractsv1.WorkflowAdmission {
+	t.Helper()
+	outputs := outputCatalog()
+	outputs["review-decision@1"] = func(any) error { return nil }
+	core := workflow.NewAuthoringCore(registry,
+		workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval},
+		workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputs,
+		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger)
+	preview, _, err := core.Preview(request.Job, request.Campaign, request.Workflow, "test-operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admission, err := core.Confirm(preview, "test-operator", request.Campaign.EvidenceFrontier.Cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return admission
 }

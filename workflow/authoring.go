@@ -165,7 +165,7 @@ func (c *AuthoringCore) Lint(definition contractsv1.WorkflowDefinition) contract
 	return report
 }
 
-func (c *AuthoringCore) Preview(definition contractsv1.WorkflowDefinition, actor string) (contractsv1.WorkflowAdmissionPreview, contractsv1.WorkflowLintReport, error) {
+func (c *AuthoringCore) Preview(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definition contractsv1.WorkflowDefinition, actor string) (contractsv1.WorkflowAdmissionPreview, contractsv1.WorkflowLintReport, error) {
 	actor = strings.TrimSpace(actor)
 	if actor == "" {
 		return contractsv1.WorkflowAdmissionPreview{}, contractsv1.WorkflowLintReport{}, errors.New("actor is required")
@@ -185,11 +185,24 @@ func (c *AuthoringCore) Preview(definition contractsv1.WorkflowDefinition, actor
 	if err != nil {
 		return contractsv1.WorkflowAdmissionPreview{}, report, err
 	}
+	if err := contract.ValidateDefinition("JobDefinition", job); err != nil {
+		return contractsv1.WorkflowAdmissionPreview{}, report, err
+	}
+	if err := contract.ValidateDefinition("CampaignDefinition", campaign); err != nil {
+		return contractsv1.WorkflowAdmissionPreview{}, report, err
+	}
+	if err := validateCampaignWorkflowBinding(job, campaign, compiled.WorkflowRef); err != nil {
+		return contractsv1.WorkflowAdmissionPreview{}, report, err
+	}
+	jobHash, campaignHash, err := aggregateDefinitionHashes(RunRequest{Job: job, Campaign: campaign})
+	if err != nil {
+		return contractsv1.WorkflowAdmissionPreview{}, report, err
+	}
 	catalog, err := c.Catalog()
 	if err != nil {
 		return contractsv1.WorkflowAdmissionPreview{}, report, err
 	}
-	preview := contractsv1.WorkflowAdmissionPreview{Kind: contractsv1.WorkflowAdmissionPreviewKindWorkflowAdmissionPreview, SchemaVersion: 1, Actor: actor, BaseRevision: base, Workflow: definition, DefinitionHash: compiled.DefinitionHash, CompileHash: compiled.CompileHash, CatalogHash: catalog.CatalogHash, ExpandedNodes: []contractsv1.ExpandedNodeContract{}}
+	preview := contractsv1.WorkflowAdmissionPreview{Kind: contractsv1.WorkflowAdmissionPreviewKindWorkflowAdmissionPreview, SchemaVersion: 1, Actor: actor, BaseRevision: base, Job: job, Campaign: campaign, Workflow: definition, JobHash: jobHash, CampaignHash: campaignHash, DefinitionHash: compiled.DefinitionHash, CompileHash: compiled.CompileHash, CatalogHash: catalog.CatalogHash, ExpandedNodes: []contractsv1.ExpandedNodeContract{}}
 	for _, node := range compiled.Nodes {
 		preview.ExpandedNodes = append(preview.ExpandedNodes, contractsv1.ExpandedNodeContract{Definition: node.Definition, ContextAuthorities: c.contextAuthorities(node.Definition)})
 	}
@@ -228,7 +241,7 @@ func (c *AuthoringCore) Confirm(preview contractsv1.WorkflowAdmissionPreview, ac
 	if current != preview.BaseRevision {
 		return contractsv1.WorkflowAdmission{}, errors.New("workflow preview is stale")
 	}
-	expected, _, err := c.Preview(preview.Workflow, actor)
+	expected, _, err := c.Preview(preview.Job, preview.Campaign, preview.Workflow, actor)
 	if err != nil {
 		return contractsv1.WorkflowAdmission{}, err
 	}
@@ -244,15 +257,15 @@ func (c *AuthoringCore) Confirm(preview contractsv1.WorkflowAdmissionPreview, ac
 		hash := replay.Receipts[len(replay.Receipts)-1].ReceiptHash
 		previous = &hash
 	}
-	payload := map[string]any{"workflow": preview.Workflow, "definition_hash": preview.DefinitionHash, "compile_hash": preview.CompileHash, "preview_hash": preview.PreviewHash}
-	receipt, err := sealActorReceipt(aggregate, current+1, contractsv1.ReceiptReceiptTypeAdmission, actor, occurredAt, previous, []contractsv1.SHA256{preview.DefinitionHash, preview.CompileHash, preview.CatalogHash}, []contractsv1.SHA256{preview.PreviewHash}, payload)
+	payload := map[string]any{"job": preview.Job, "campaign": preview.Campaign, "workflow": preview.Workflow, "job_hash": preview.JobHash, "campaign_hash": preview.CampaignHash, "definition_hash": preview.DefinitionHash, "compile_hash": preview.CompileHash, "preview_hash": preview.PreviewHash}
+	receipt, err := sealActorReceipt(aggregate, current+1, contractsv1.ReceiptReceiptTypeAdmission, actor, occurredAt, previous, []contractsv1.SHA256{preview.JobHash, preview.CampaignHash, preview.DefinitionHash, preview.CompileHash, preview.CatalogHash}, []contractsv1.SHA256{preview.PreviewHash}, payload)
 	if err != nil {
 		return contractsv1.WorkflowAdmission{}, err
 	}
 	if err := c.ledger.Append(receipt); err != nil {
 		return contractsv1.WorkflowAdmission{}, err
 	}
-	admission := contractsv1.WorkflowAdmission{Kind: contractsv1.WorkflowAdmissionKindWorkflowAdmission, SchemaVersion: 1, Workflow: preview.Workflow, Revision: current + 1, DefinitionHash: preview.DefinitionHash, CompileHash: preview.CompileHash, PreviewHash: preview.PreviewHash, Receipt: receipt}
+	admission := contractsv1.WorkflowAdmission{Kind: contractsv1.WorkflowAdmissionKindWorkflowAdmission, SchemaVersion: 1, Job: preview.Job, Campaign: preview.Campaign, Workflow: preview.Workflow, Revision: current + 1, JobHash: preview.JobHash, CampaignHash: preview.CampaignHash, DefinitionHash: preview.DefinitionHash, CompileHash: preview.CompileHash, PreviewHash: preview.PreviewHash, Receipt: receipt}
 	if err := contract.ValidateDefinition("WorkflowAdmission", admission); err != nil {
 		return contractsv1.WorkflowAdmission{}, err
 	}
@@ -288,10 +301,14 @@ func MaterializeAdmission(replay contractsv1.ReplayBundle, version int) (contrac
 	return admissionFromReceipt(replay.Receipts[version-1])
 }
 
-func (c *AuthoringCore) PreviewApproval(brief contractsv1.ApprovalBrief, actor string, source contractsv1.ReplayBundle) (contractsv1.ApprovalPreview, error) {
+func (c *AuthoringCore) PreviewApproval(brief contractsv1.ApprovalBrief, actor, sourceAggregateID string) (contractsv1.ApprovalPreview, error) {
 	actor = strings.TrimSpace(actor)
 	if actor == "" {
 		return contractsv1.ApprovalPreview{}, errors.New("actor is required")
+	}
+	source, err := c.ledger.Replay(sourceAggregateID)
+	if err != nil {
+		return contractsv1.ApprovalPreview{}, errors.New("approval source is not canonical")
 	}
 	actionHash, err := Digest(brief.Action)
 	if err != nil {
@@ -346,7 +363,7 @@ func (c *AuthoringCore) PreviewApproval(brief contractsv1.ApprovalBrief, actor s
 	if err != nil {
 		return contractsv1.ApprovalPreview{}, err
 	}
-	preview := contractsv1.ApprovalPreview{Kind: contractsv1.ApprovalPreviewKindApprovalPreview, SchemaVersion: 1, Actor: actor, BaseRevision: base, Brief: brief, BriefHash: contractsv1.SHA256(briefHash)}
+	preview := contractsv1.ApprovalPreview{Kind: contractsv1.ApprovalPreviewKindApprovalPreview, SchemaVersion: 1, Actor: actor, BaseRevision: base, SourceAggregateId: sourceAggregateID, Brief: brief, BriefHash: contractsv1.SHA256(briefHash)}
 	previewHash, err := Digest(preview)
 	if err != nil {
 		return contractsv1.ApprovalPreview{}, err
@@ -376,6 +393,10 @@ func (c *AuthoringCore) ConfirmApproval(preview contractsv1.ApprovalPreview, act
 				return receipt, nil
 			}
 		}
+	}
+	expected, err := c.PreviewApproval(preview.Brief, actor, preview.SourceAggregateId)
+	if err != nil || !reflect.DeepEqual(expected, preview) {
+		return contractsv1.Receipt{}, errors.New("approval preview is stale or altered")
 	}
 	unsigned := preview
 	unsigned.PreviewHash = ""
@@ -443,6 +464,14 @@ func admissionFromReceipt(receipt contractsv1.Receipt) (contractsv1.WorkflowAdmi
 	if err := decodePayload(receipt.Payload["workflow"], &workflow); err != nil {
 		return contractsv1.WorkflowAdmission{}, err
 	}
+	var job contractsv1.JobDefinition
+	if err := decodePayload(receipt.Payload["job"], &job); err != nil {
+		return contractsv1.WorkflowAdmission{}, err
+	}
+	var campaign contractsv1.CampaignDefinition
+	if err := decodePayload(receipt.Payload["campaign"], &campaign); err != nil {
+		return contractsv1.WorkflowAdmission{}, err
+	}
 	readHash := func(key string) (contractsv1.SHA256, error) {
 		value := fmt.Sprint(receipt.Payload[key])
 		if value == "" || value == "<nil>" {
@@ -462,7 +491,15 @@ func admissionFromReceipt(receipt contractsv1.Receipt) (contractsv1.WorkflowAdmi
 	if err != nil {
 		return contractsv1.WorkflowAdmission{}, err
 	}
-	admission := contractsv1.WorkflowAdmission{Kind: contractsv1.WorkflowAdmissionKindWorkflowAdmission, SchemaVersion: 1, Workflow: workflow, Revision: receipt.AggregateVersion, DefinitionHash: definitionHash, CompileHash: compileHash, PreviewHash: previewHash, Receipt: receipt}
+	jobHash, err := readHash("job_hash")
+	if err != nil {
+		return contractsv1.WorkflowAdmission{}, err
+	}
+	campaignHash, err := readHash("campaign_hash")
+	if err != nil {
+		return contractsv1.WorkflowAdmission{}, err
+	}
+	admission := contractsv1.WorkflowAdmission{Kind: contractsv1.WorkflowAdmissionKindWorkflowAdmission, SchemaVersion: 1, Job: job, Campaign: campaign, Workflow: workflow, Revision: receipt.AggregateVersion, JobHash: jobHash, CampaignHash: campaignHash, DefinitionHash: definitionHash, CompileHash: compileHash, PreviewHash: previewHash, Receipt: receipt}
 	if err := contract.ValidateDefinition("WorkflowAdmission", admission); err != nil {
 		return contractsv1.WorkflowAdmission{}, err
 	}
@@ -473,6 +510,13 @@ func admissionFromReceipt(receipt contractsv1.Receipt) (contractsv1.WorkflowAdmi
 	identity, err := contract.ValidateWorkflow(body)
 	if err != nil || identity.Hash != string(definitionHash) {
 		return contractsv1.WorkflowAdmission{}, errors.New("admission Workflow does not match its definition hash")
+	}
+	actualJobHash, actualCampaignHash, err := aggregateDefinitionHashes(RunRequest{Job: job, Campaign: campaign})
+	if err != nil || actualJobHash != jobHash || actualCampaignHash != campaignHash {
+		return contractsv1.WorkflowAdmission{}, errors.New("admission target definitions do not match their hashes")
+	}
+	if err := validateCampaignWorkflowBinding(job, campaign, contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", workflow.Id, workflow.Version))); err != nil {
+		return contractsv1.WorkflowAdmission{}, err
 	}
 	return admission, nil
 }

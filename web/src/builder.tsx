@@ -26,7 +26,7 @@ export function BuilderPanel({ snapshot, onClose, onCanvas }: { snapshot: Canvas
   const compile = async () => {
     setBusy(true); setError(undefined);
     try {
-      const result = await request<{ preview: WorkflowAdmissionPreview; lint: WorkflowLintReport }>("/v1/workflows/preview", { actor, workflow: draft });
+      const result = await request<{ preview: WorkflowAdmissionPreview; lint: WorkflowLintReport }>("/v1/workflows/preview", { actor, job: snapshot.definition.job, campaign: snapshot.definition.campaign, workflow: draft });
       setPreview(result.preview); setLint(result.lint);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Preview failed"); }
     finally { setBusy(false); }
@@ -35,7 +35,7 @@ export function BuilderPanel({ snapshot, onClose, onCanvas }: { snapshot: Canvas
     if (!preview) return;
     setBusy(true); setError(undefined);
     try {
-      const result = await request<{ canvas: CanvasSnapshot }>("/v1/workflows/confirm", { actor, preview, job: snapshot.definition.job, campaign: snapshot.definition.campaign });
+      const result = await request<{ canvas: CanvasSnapshot }>("/v1/workflows/confirm", { actor, preview });
       onCanvas(mergeAdmissionReadback(snapshot, result.canvas)); localStorage.removeItem(storageKey); onClose();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Confirmation failed"); }
     finally { setBusy(false); }
@@ -104,11 +104,15 @@ export function BuilderPanel({ snapshot, onClose, onCanvas }: { snapshot: Canvas
 
 export function mergeAdmissionReadback(current: CanvasSnapshot, admitted: CanvasSnapshot): CanvasSnapshot {
   if (current.definition.job.id !== admitted.definition.job.id || current.definition.campaign.id !== admitted.definition.campaign.id) return admitted;
+  const admissionReplays = [...(current.admission_replays ?? [])];
+  for (const replay of admitted.admission_replays ?? []) {
+    if (!admissionReplays.some((item) => item.bundle_hash === replay.bundle_hash)) admissionReplays.push(replay);
+  }
   return {
     ...current,
     generated_at: admitted.generated_at > current.generated_at ? admitted.generated_at : current.generated_at,
     definition: { ...current.definition, workflow_states: { ...current.definition.workflow_states, ...admitted.definition.workflow_states } },
-    admission_replays: [...(current.admission_replays ?? []), ...(admitted.admission_replays ?? [])],
+    admission_replays: admissionReplays,
   };
 }
 
@@ -126,7 +130,7 @@ export function ApprovalPanel({ snapshot, artifact, onClose, onCanvas }: { snaps
   const prepare = async () => {
     if (!brief || !source) return;
     setBusy(true); setError(undefined);
-    try { setPreview(await request<ApprovalPreview>("/v1/approvals/preview", { actor, brief, source })); }
+    try { setPreview(await request<ApprovalPreview>("/v1/approvals/preview", { actor, brief, source_aggregate_id: source.aggregate_id })); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Approval preview failed"); }
     finally { setBusy(false); }
   };

@@ -31,7 +31,7 @@ describe("Workflow Builder surfaces", () => {
     admitted.executions = [];
     admitted.replays = [];
     admitted.definition.workflow_states = { "research-review@1": "admitted" };
-    admitted.admission_replays = [snapshot.replays[0]];
+    admitted.admission_replays = snapshot.admission_replays;
     const merged = mergeAdmissionReadback(snapshot, admitted);
     expect(merged.executions).toEqual(snapshot.executions);
     expect(merged.replays).toEqual(snapshot.replays);

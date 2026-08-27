@@ -72,14 +72,15 @@ export interface OptionElement {
 export type Decision = "approve" | "reject";
 
 export interface ApprovalPreview {
-    actor:          string;
-    base_revision:  number;
-    brief:          ApprovalBrief;
-    brief_hash:     string;
-    commit_token:   string;
-    kind:           ApprovalPreviewKind;
-    preview_hash:   string;
-    schema_version: number;
+    actor:               string;
+    base_revision:       number;
+    brief:               ApprovalBrief;
+    brief_hash:          string;
+    commit_token:        string;
+    kind:                ApprovalPreviewKind;
+    preview_hash:        string;
+    schema_version:      number;
+    source_aggregate_id: string;
 }
 
 export type ApprovalPreviewKind = "approval_preview";
@@ -407,8 +408,12 @@ export interface Capability {
 export type CapabilityManifestKind = "capability_manifest";
 
 export interface WorkflowAdmission {
+    campaign:        CampaignDefinition;
+    campaign_hash:   string;
     compile_hash:    string;
     definition_hash: string;
+    job:             Job;
+    job_hash:        string;
     kind:            WorkflowAdmissionKind;
     preview_hash:    string;
     receipt:         ReplayBundleReceipt;
@@ -422,11 +427,15 @@ export type WorkflowAdmissionKind = "workflow_admission";
 export interface WorkflowAdmissionPreview {
     actor:           string;
     base_revision:   number;
+    campaign:        CampaignDefinition;
+    campaign_hash:   string;
     catalog_hash:    string;
     commit_token:    string;
     compile_hash:    string;
     definition_hash: string;
     expanded_nodes:  [ExpandedNodeElement, ...ExpandedNodeElement[]];
+    job:             Job;
+    job_hash:        string;
     kind:            WorkflowAdmissionPreviewKind;
     preview_hash:    string;
     schema_version:  number;

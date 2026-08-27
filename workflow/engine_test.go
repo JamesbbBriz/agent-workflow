@@ -30,13 +30,15 @@ func TestEngineCompilesResolvesExecutesAndReplaysWithoutDuplicateProviderWork(t 
 		t.Fatal(err)
 	}
 	provider := &memoProvider{results: make(map[string]workflow.ProviderResult)}
-	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{
-		"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead,
-	}, outputCatalog(), provider, workflow.NewMemoryLedger())
+	ledger := workflow.NewMemoryLedger()
 	request := workflow.RunRequest{
 		Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition,
 		NodeID: "research",
 	}
+	admit(t, ledger, registry, request)
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{
+		"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead,
+	}, outputCatalog(), provider, ledger)
 
 	first, err := engine.RunNode(context.Background(), request)
 	if err != nil {
@@ -65,6 +67,21 @@ func TestEngineCompilesResolvesExecutesAndReplaysWithoutDuplicateProviderWork(t 
 	}
 }
 
+func TestEngineRejectsUnadmittedWorkflowBeforeProviderExecution(t *testing.T) {
+	definition := loadExample(t)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &memoProvider{results: make(map[string]workflow.ProviderResult)}
+	_, err = workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger()).RunNode(context.Background(), workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"})
+	if err == nil || !strings.Contains(err.Error(), "not canonically admitted") || provider.work != 0 {
+		t.Fatalf("unadmitted Workflow crossed the provider boundary: err=%v work=%d", err, provider.work)
+	}
+}
+
 func TestProviderResultRecoveryConvergesAfterLedgerFailure(t *testing.T) {
 	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
@@ -73,12 +90,14 @@ func TestProviderResultRecoveryConvergesAfterLedgerFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &memoProvider{results: make(map[string]workflow.ProviderResult)}
-	ledger := &failOnceLedger{Ledger: workflow.NewMemoryLedger(), failAt: 6}
-	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger)
+	canonical := workflow.NewMemoryLedger()
 	definition := loadExample(t)
 	deadline := 1
 	definition.Nodes[0].DeadlineSeconds = &deadline
 	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
+	admit(t, canonical, registry, request)
+	ledger := &failOnceLedger{Ledger: canonical, failAt: 6}
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger)
 	if _, err := engine.RunNode(context.Background(), request); err == nil {
 		t.Fatal("injected ledger failure was ignored")
 	}
@@ -104,8 +123,9 @@ func TestExpiredProviderPollBecomesOneTerminalReceipt(t *testing.T) {
 	definition.Nodes[0].DeadlineSeconds = &deadline
 	provider := &pendingProvider{}
 	ledger := workflow.NewMemoryLedger()
-	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger)
 	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
+	admit(t, ledger, registry, request)
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger)
 	if _, err := engine.RunNode(context.Background(), request); err == nil {
 		t.Fatal("pending provider unexpectedly completed")
 	}
@@ -144,8 +164,10 @@ func TestProviderResultCompletedAfterDeadlineIsRejected(t *testing.T) {
 	deadline := 1
 	definition.Nodes[0].DeadlineSeconds = &deadline
 	provider := &lateProvider{}
-	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger())
+	ledger := workflow.NewMemoryLedger()
 	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
+	admit(t, ledger, registry, request)
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger)
 	if _, err := engine.RunNode(context.Background(), request); err == nil {
 		t.Fatal("late provider unexpectedly completed on the first poll")
 	}
@@ -234,6 +256,7 @@ func TestFileLedgerSurvivesCoreRestartAndRedelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: loadExample(t), NodeID: "research"}
+	admit(t, ledger, registry, request)
 	first, err := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger).RunNode(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -270,9 +293,10 @@ func TestCompilerInjectsRequiredIntentChainAndPlaybook(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &memoProvider{results: make(map[string]workflow.ProviderResult)}
-	_, err = workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger()).RunNode(
-		context.Background(), workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"},
-	)
+	ledger := workflow.NewMemoryLedger()
+	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
+	admit(t, ledger, registry, request)
+	_, err = workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger).RunNode(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,19 +309,11 @@ func TestCompilerNormalizesV1SlotsWithoutExecutionMetadata(t *testing.T) {
 	t.Parallel()
 	definition := loadExample(t)
 	for nodeIndex := range definition.Nodes {
-		for slotIndex := range definition.Nodes[nodeIndex].InputSlots {
-			definition.Nodes[nodeIndex].InputSlots[slotIndex].ArtifactKind = nil
-			definition.Nodes[nodeIndex].InputSlots[slotIndex].ContentSchema = nil
-		}
 		for slotIndex := range definition.Nodes[nodeIndex].OutputSlots {
-			definition.Nodes[nodeIndex].OutputSlots[slotIndex].ArtifactKind = nil
-			definition.Nodes[nodeIndex].OutputSlots[slotIndex].ContentSchema = nil
 			definition.Nodes[nodeIndex].OutputSlots[slotIndex].Consumers = nil
 		}
 	}
 	for slotIndex := range definition.Outputs {
-		definition.Outputs[slotIndex].ArtifactKind = nil
-		definition.Outputs[slotIndex].ContentSchema = nil
 		definition.Outputs[slotIndex].Consumers = nil
 	}
 	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
@@ -307,9 +323,10 @@ func TestCompilerNormalizesV1SlotsWithoutExecutionMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &memoProvider{results: make(map[string]workflow.ProviderResult)}
-	result, err := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger()).RunNode(
-		context.Background(), workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"},
-	)
+	ledger := workflow.NewMemoryLedger()
+	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
+	admit(t, ledger, registry, request)
+	result, err := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger).RunNode(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,9 +344,10 @@ func TestCoreIssuesProviderDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &memoProvider{results: make(map[string]workflow.ProviderResult)}
-	_, err = workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger()).RunNode(
-		context.Background(), workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: loadExample(t), NodeID: "research"},
-	)
+	ledger := workflow.NewMemoryLedger()
+	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: loadExample(t), NodeID: "research"}
+	admit(t, ledger, registry, request)
+	_, err = workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger).RunNode(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,10 +384,13 @@ func TestRequiredContextFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &memoProvider{results: make(map[string]workflow.ProviderResult)}
-	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger())
 	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
-	_, err = engine.RunNode(context.Background(), workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"})
+	ledger := workflow.NewMemoryLedger()
+	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
+	admit(t, ledger, registry, request)
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger)
+	_, err = engine.RunNode(context.Background(), request)
 	var missing *workflow.NeedsContextError
 	if !errors.As(err, &missing) || len(missing.Requirements) != 1 || missing.Requirements[0] != "project-brief" {
 		t.Fatalf("expected typed project-brief blocker, got %v", err)
@@ -410,8 +431,11 @@ func TestContextPackAuthorityFailsClosedBeforeProviderExecution(t *testing.T) {
 				t.Fatal(err)
 			}
 			provider := &memoProvider{results: make(map[string]workflow.ProviderResult)}
-			engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger())
-			_, err = engine.RunNode(context.Background(), workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"})
+			ledger := workflow.NewMemoryLedger()
+			request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
+			admit(t, ledger, registry, request)
+			engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger)
+			_, err = engine.RunNode(context.Background(), request)
 			var blocker *workflow.NeedsContextError
 			if !errors.As(err, &blocker) || blocker.Reasons["project-brief"] == "" {
 				t.Fatalf("invalid required context did not become a typed blocker: %v", err)
@@ -441,9 +465,10 @@ func TestOptionalContextProducesExplicitDegradedBundle(t *testing.T) {
 	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	provider := &memoProvider{results: make(map[string]workflow.ProviderResult)}
-	result, err := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger()).RunNode(
-		context.Background(), workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"},
-	)
+	ledger := workflow.NewMemoryLedger()
+	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
+	admit(t, ledger, registry, request)
+	result, err := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger).RunNode(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -591,9 +616,10 @@ func TestEngineRejectsArtifactContentOutsideTheDeclaredSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &memoProvider{results: make(map[string]workflow.ProviderResult), content: map[string]any{"recommendation": 42}}
-	_, err = workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger()).RunNode(
-		context.Background(), workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: loadExample(t), NodeID: "research"},
-	)
+	ledger := workflow.NewMemoryLedger()
+	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: loadExample(t), NodeID: "research"}
+	admit(t, ledger, registry, request)
+	_, err = workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger).RunNode(context.Background(), request)
 	if err == nil {
 		t.Fatal("artifact content outside the declared schema was accepted")
 	}
@@ -608,9 +634,10 @@ func TestEngineRejectsOversizedArtifactContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &memoProvider{results: make(map[string]workflow.ProviderResult), content: map[string]any{"recommendation": strings.Repeat("x", 1<<20)}}
-	_, err = workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger()).RunNode(
-		context.Background(), workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: loadExample(t), NodeID: "research"},
-	)
+	ledger := workflow.NewMemoryLedger()
+	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: loadExample(t), NodeID: "research"}
+	admit(t, ledger, registry, request)
+	_, err = workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger).RunNode(context.Background(), request)
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("oversized artifact was not rejected: %v", err)
 	}

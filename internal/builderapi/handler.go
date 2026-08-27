@@ -46,13 +46,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/workflows/preview":
 		var request struct {
 			Actor    string                         `json:"actor"`
+			Job      contractsv1.JobDefinition      `json:"job"`
+			Campaign contractsv1.CampaignDefinition `json:"campaign"`
 			Workflow contractsv1.WorkflowDefinition `json:"workflow"`
 		}
 		if err := decode(r, &request); err != nil {
 			h.writeError(w, err)
 			return
 		}
-		preview, lint, err := h.core.Preview(request.Workflow, request.Actor)
+		preview, lint, err := h.core.Preview(request.Job, request.Campaign, request.Workflow, request.Actor)
 		if err != nil {
 			h.write(w, struct {
 				Lint contractsv1.WorkflowLintReport `json:"lint"`
@@ -66,10 +68,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/workflows/confirm":
 		var request struct {
-			Actor    string                               `json:"actor"`
-			Preview  contractsv1.WorkflowAdmissionPreview `json:"preview"`
-			Job      contractsv1.JobDefinition            `json:"job"`
-			Campaign contractsv1.CampaignDefinition       `json:"campaign"`
+			Actor   string                               `json:"actor"`
+			Preview contractsv1.WorkflowAdmissionPreview `json:"preview"`
 		}
 		if err := decode(r, &request); err != nil {
 			h.writeError(w, err)
@@ -85,7 +85,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.write(w, nil, err)
 			return
 		}
-		snapshot, err := canvas.ProjectWithAdmissions(request.Job, request.Campaign, []contractsv1.WorkflowDefinition{admission.Workflow}, []contractsv1.ReplayBundle{replay})
+		snapshot, err := canvas.ProjectWithAdmissions(admission.Job, admission.Campaign, []contractsv1.WorkflowDefinition{admission.Workflow}, []contractsv1.ReplayBundle{replay})
 		h.write(w, struct {
 			Admission contractsv1.WorkflowAdmission `json:"admission"`
 			Canvas    contractsv1.CanvasSnapshot    `json:"canvas"`
@@ -107,15 +107,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals/preview":
 		var request struct {
-			Actor  string                    `json:"actor"`
-			Brief  contractsv1.ApprovalBrief `json:"brief"`
-			Source contractsv1.ReplayBundle  `json:"source"`
+			Actor             string                    `json:"actor"`
+			Brief             contractsv1.ApprovalBrief `json:"brief"`
+			SourceAggregateID string                    `json:"source_aggregate_id"`
 		}
 		if err := decode(r, &request); err != nil {
 			h.writeError(w, err)
 			return
 		}
-		preview, err := h.core.PreviewApproval(request.Brief, request.Actor, request.Source)
+		preview, err := h.core.PreviewApproval(request.Brief, request.Actor, request.SourceAggregateID)
 		h.write(w, preview, err)
 		return
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals/confirm":
@@ -154,7 +154,11 @@ func decode(r *http.Request, target any) error {
 	if r.Header.Get("Content-Type") != "application/json" {
 		return errors.New("content type must be application/json")
 	}
-	decoder := json.NewDecoder(io.LimitReader(r.Body, maxRequestBytes+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes+1))
+	if err != nil || len(body) > maxRequestBytes {
+		return errors.New("request body exceeds 2 MiB")
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return errors.New("request JSON is invalid")

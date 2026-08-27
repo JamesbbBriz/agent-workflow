@@ -19,7 +19,8 @@ func TestBuilderHTTPDraftPreviewConfirmReadback(t *testing.T) {
 	core := testCore(t)
 	handler := builderapi.New(core, func() time.Time { return time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC) })
 
-	previewResponse := post(t, handler, "/v1/workflows/preview", map[string]any{"actor": "operator@example.com", "workflow": definition})
+	job, campaign := definitions(definition)
+	previewResponse := post(t, handler, "/v1/workflows/preview", map[string]any{"actor": "operator@example.com", "job": job, "campaign": campaign, "workflow": definition})
 	var previewBody struct {
 		OK   bool `json:"ok"`
 		Data struct {
@@ -31,8 +32,7 @@ func TestBuilderHTTPDraftPreviewConfirmReadback(t *testing.T) {
 		t.Fatalf("preview failed: %s", previewResponse.Body.String())
 	}
 
-	job, campaign := definitions(definition)
-	confirmResponse := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator@example.com", "preview": previewBody.Data.Preview, "job": job, "campaign": campaign})
+	confirmResponse := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator@example.com", "preview": previewBody.Data.Preview})
 	var confirmBody struct {
 		OK   bool `json:"ok"`
 		Data struct {
@@ -59,6 +59,34 @@ func TestBuilderHTTPRejectsUnknownInputAndStalePreview(t *testing.T) {
 	bad := postRaw(handler, "/v1/workflows/preview", []byte(`{"actor":"operator","workflow":{},"authority":"forged"}`))
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("unknown request field passed: %s", bad.Body.String())
+	}
+}
+
+func TestBuilderHTTPBindsTargetBeforeAdmission(t *testing.T) {
+	definition := loadDefinition(t)
+	job, campaign := definitions(definition)
+	core := testCore(t)
+	handler := builderapi.New(core, time.Now)
+	definition.Version = 2
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@1"}
+	response := post(t, handler, "/v1/workflows/preview", map[string]any{"actor": "operator", "job": job, "campaign": campaign, "workflow": definition})
+	if response.Code != http.StatusConflict {
+		t.Fatalf("unpinned version received an admission preview: %s", response.Body.String())
+	}
+	read := httptest.NewRecorder()
+	handler.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/v1/workflows/research-review/versions/1", nil))
+	if read.Code == http.StatusOK {
+		t.Fatalf("failed preview mutated admission history: %s", read.Body.String())
+	}
+}
+
+func TestBuilderHTTPRejectsOversizedBodies(t *testing.T) {
+	core := testCore(t)
+	handler := builderapi.New(core, time.Now)
+	body := append([]byte(`{}`), bytes.Repeat([]byte(" "), 3<<20)...)
+	response := postRaw(handler, "/v1/workflows/lint", body)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("oversized request passed: %s", response.Body.String())
 	}
 }
 

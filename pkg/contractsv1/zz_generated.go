@@ -189,6 +189,9 @@ type ApprovalPreview struct {
 
 	// SchemaVersion corresponds to the JSON schema field "schema_version".
 	SchemaVersion ApprovalPreviewSchemaVersion `json:"schema_version"`
+
+	// SourceAggregateId corresponds to the JSON schema field "source_aggregate_id".
+	SourceAggregateId string `json:"source_aggregate_id"`
 }
 
 type ApprovalPreviewKind string
@@ -1044,11 +1047,23 @@ const SlotArtifactKindContextPack SlotArtifactKind = "context_pack"
 type Strings []string
 
 type WorkflowAdmission struct {
+	// Campaign corresponds to the JSON schema field "campaign".
+	Campaign CampaignDefinition `json:"campaign"`
+
+	// CampaignHash corresponds to the JSON schema field "campaign_hash".
+	CampaignHash SHA256 `json:"campaign_hash"`
+
 	// CompileHash corresponds to the JSON schema field "compile_hash".
 	CompileHash SHA256 `json:"compile_hash"`
 
 	// DefinitionHash corresponds to the JSON schema field "definition_hash".
 	DefinitionHash SHA256 `json:"definition_hash"`
+
+	// Job corresponds to the JSON schema field "job".
+	Job JobDefinition `json:"job"`
+
+	// JobHash corresponds to the JSON schema field "job_hash".
+	JobHash SHA256 `json:"job_hash"`
 
 	// Kind corresponds to the JSON schema field "kind".
 	Kind WorkflowAdmissionKind `json:"kind"`
@@ -1080,6 +1095,12 @@ type WorkflowAdmissionPreview struct {
 	// BaseRevision corresponds to the JSON schema field "base_revision".
 	BaseRevision int `json:"base_revision"`
 
+	// Campaign corresponds to the JSON schema field "campaign".
+	Campaign CampaignDefinition `json:"campaign"`
+
+	// CampaignHash corresponds to the JSON schema field "campaign_hash".
+	CampaignHash SHA256 `json:"campaign_hash"`
+
 	// CatalogHash corresponds to the JSON schema field "catalog_hash".
 	CatalogHash SHA256 `json:"catalog_hash"`
 
@@ -1094,6 +1115,12 @@ type WorkflowAdmissionPreview struct {
 
 	// ExpandedNodes corresponds to the JSON schema field "expanded_nodes".
 	ExpandedNodes []ExpandedNodeContract `json:"expanded_nodes"`
+
+	// Job corresponds to the JSON schema field "job".
+	Job JobDefinition `json:"job"`
+
+	// JobHash corresponds to the JSON schema field "job_hash".
+	JobHash SHA256 `json:"job_hash"`
 
 	// Kind corresponds to the JSON schema field "kind".
 	Kind WorkflowAdmissionPreviewKind `json:"kind"`

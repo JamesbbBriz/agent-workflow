@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 
 	"github.com/JamesbbBriz/agent-workflow/internal/contract"
@@ -37,6 +38,7 @@ func ProjectWithAdmissions(job contractsv1.JobDefinition, campaign contractsv1.C
 	}
 	workflowByRef := make(map[contractsv1.WorkflowRef]contractsv1.WorkflowDefinition, len(workflows))
 	workflowStates := map[string]contractsv1.CanvasEntityStatus{}
+	admissionByRef := map[contractsv1.WorkflowRef]contractsv1.ReplayBundle{}
 	for _, definition := range workflows {
 		body, err := json.Marshal(definition)
 		if err != nil {
@@ -53,6 +55,9 @@ func ProjectWithAdmissions(job contractsv1.JobDefinition, campaign contractsv1.C
 			if err != nil {
 				return contractsv1.CanvasSnapshot{}, err
 			}
+			if !reflect.DeepEqual(admission.Job, job) || !reflect.DeepEqual(admission.Campaign, campaign) {
+				return contractsv1.CanvasSnapshot{}, errors.New("Canvas definitions do not match their Workflow admission")
+			}
 			ref := contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", admission.Workflow.Id, admission.Workflow.Version))
 			definition, ok := workflowByRef[ref]
 			if !ok || definition.Id != admission.Workflow.Id || definition.Version != admission.Workflow.Version {
@@ -64,6 +69,7 @@ func ProjectWithAdmissions(job contractsv1.JobDefinition, campaign contractsv1.C
 				return contractsv1.CanvasSnapshot{}, errors.New("Canvas definition does not match its admission receipt")
 			}
 			workflowStates[string(ref)] = contractsv1.CanvasEntityStatusAdmitted
+			admissionByRef[ref] = replay
 		}
 	}
 	executions := make([]contractsv1.CanvasExecution, 0, len(inputs))
@@ -83,7 +89,11 @@ func ProjectWithAdmissions(job contractsv1.JobDefinition, campaign contractsv1.C
 		if !ok {
 			return contractsv1.CanvasSnapshot{}, errors.New("execution workflow is not pinned by the Campaign")
 		}
-		invocation, err := workflow.VerifyDefinitionBinding(input.Replay, job, campaign, definition)
+		admissionReplay, ok := admissionByRef[candidate.WorkflowRef]
+		if !ok {
+			return contractsv1.CanvasSnapshot{}, errors.New("execution has no canonical Workflow admission")
+		}
+		invocation, err := workflow.VerifyDefinitionBinding(input.Replay, admissionReplay, job, campaign, definition)
 		if err != nil {
 			return contractsv1.CanvasSnapshot{}, err
 		}
