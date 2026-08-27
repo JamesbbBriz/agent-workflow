@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -186,7 +187,7 @@ func (c *AuthoringCore) Preview(job contractsv1.JobDefinition, campaign contract
 	if definition.Version != base+1 {
 		return contractsv1.WorkflowAdmissionPreview{}, report, fmt.Errorf("workflow version must be %d", base+1)
 	}
-	compiled, _, err := compileWorkflow(definition, c.registry, "preview", time.Unix(0, 0).UTC())
+	compiled, compileReceipt, err := compileWorkflow(definition, c.registry, "preview", time.Unix(0, 0).UTC())
 	if err != nil {
 		return contractsv1.WorkflowAdmissionPreview{}, report, err
 	}
@@ -198,6 +199,22 @@ func (c *AuthoringCore) Preview(job contractsv1.JobDefinition, campaign contract
 	}
 	if err := validateCampaignWorkflowBinding(job, campaign, compiled.WorkflowRef); err != nil {
 		return contractsv1.WorkflowAdmissionPreview{}, report, err
+	}
+	for nodeIndex, node := range compiled.Nodes {
+		for contextIndex, requirement := range node.Definition.Context {
+			if !requirement.Required {
+				continue
+			}
+			producer, _ := c.registry.lookup(string(requirement.Selector))
+			_, resolveErr := producer.Resolve(context.Background(), ProducerRequest{Requirement: requirement, Job: job, Campaign: campaign, Workflow: definition, WorkflowRef: compiled.WorkflowRef, CompileReceipt: compileReceipt, EvidenceCutoff: campaign.EvidenceFrontier.Cutoff})
+			if resolveErr != nil {
+				report.Valid = false
+				report.Issues = append(report.Issues, contractsv1.WorkflowLintIssue{Severity: contractsv1.WorkflowLintIssueSeverityError, Code: "context-unavailable", Path: fmt.Sprintf("$.nodes[%d].context[%d]", nodeIndex, contextIndex), Message: fmt.Sprintf("required context %q is unavailable for this Campaign", requirement.Id)})
+			}
+		}
+	}
+	if !report.Valid {
+		return contractsv1.WorkflowAdmissionPreview{}, report, errors.New("workflow lint failed")
 	}
 	jobHash, campaignHash, err := aggregateDefinitionHashes(RunRequest{Job: job, Campaign: campaign})
 	if err != nil {

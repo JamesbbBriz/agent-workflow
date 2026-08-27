@@ -42,7 +42,11 @@ export function App() {
   const [approving, setApproving] = useState<CanvasNodeData>();
 
   useEffect(() => {
-    fetch("/canvas.response.json")
+    fetch("/v1/canvas")
+      .then((response) => {
+        if (!response.ok) return fetch("/canvas.response.json");
+        return response;
+      })
       .then((response) => {
         if (!response.ok) throw new Error("Canvas data is unavailable.");
         return response.json() as Promise<CanvasResponse>;

@@ -49,6 +49,24 @@ func TestAuthoringPreviewConfirmKeepsImmutableVersions(t *testing.T) {
 	}
 }
 
+func TestAuthoringPreviewRejectsUnavailableRequiredContext(t *testing.T) {
+	definition := authoringDefinition(t)
+	job, campaign := testDefinitions(definition)
+	registry, err := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := workflow.NewAuthoringCore(registry,
+		workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval},
+		workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead},
+		workflow.OutputCatalog{"recommendation@1": func(any) error { return nil }, "review-decision@1": func(any) error { return nil }},
+		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, workflow.NewMemoryLedger())
+	_, report, err := core.Preview(job, campaign, definition, "operator@example.com")
+	if err == nil || report.Valid || report.Issues[0].Code != "context-unavailable" {
+		t.Fatalf("unavailable required Context received an admission token: report=%+v err=%v", report, err)
+	}
+}
+
 func TestAuthoringFailsClosedOnCatalogAndPreviewDrift(t *testing.T) {
 	core := authoringCore(t)
 	definition := authoringDefinition(t)

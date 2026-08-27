@@ -76,11 +76,15 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 			return writeError(stdout, stderr, true, "canvas_unavailable", err)
 		}
 	}
-	core, err := demoAuthoringCore(ledger, sources)
+	core, err := demoAuthoringCore(ledger, sources, sourceCanvas)
 	if err != nil {
 		return writeError(stdout, stderr, true, "builder_unavailable", err)
 	}
 	if sourceCanvas != nil {
+		sourceCanvas, err = restoreCanvasAdmissions(sourceCanvas, ledger)
+		if err != nil {
+			return writeError(stdout, stderr, true, "canvas_unavailable", err)
+		}
 		sourceCanvas, err = restoreCanvasApprovals(sourceCanvas, ledger)
 		if err != nil {
 			return writeError(stdout, stderr, true, "canvas_unavailable", err)
@@ -98,6 +102,47 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func restoreCanvasAdmissions(snapshot *contractsv1.CanvasSnapshot, ledger *workflow.FileLedger) (*contractsv1.CanvasSnapshot, error) {
+	replays, err := ledger.ReplaysByReceiptType(contractsv1.ReceiptReceiptTypeAdmission)
+	if err != nil || len(replays) == 0 {
+		return snapshot, err
+	}
+	admissions := map[contractsv1.WorkflowRef]contractsv1.WorkflowAdmission{}
+	var latest contractsv1.WorkflowAdmission
+	var latestAt time.Time
+	for _, replay := range replays {
+		for version, receipt := range replay.Receipts {
+			admission, err := workflow.MaterializeAdmission(replay, version+1)
+			if err != nil {
+				return nil, err
+			}
+			ref := contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", admission.Workflow.Id, admission.Workflow.Version))
+			admissions[ref] = admission
+			if receipt.OccurredAt.After(latestAt) || receipt.OccurredAt.Equal(latestAt) && string(receipt.ReceiptHash) > string(latest.Receipt.ReceiptHash) {
+				latest, latestAt = admission, receipt.OccurredAt
+			}
+		}
+	}
+	definitions := make([]contractsv1.WorkflowDefinition, 0, len(latest.Campaign.WorkflowPlan))
+	for _, ref := range latest.Campaign.WorkflowPlan {
+		if admission, ok := admissions[ref]; ok {
+			definitions = append(definitions, admission.Workflow)
+			continue
+		}
+		for _, definition := range snapshot.Definition.Workflows {
+			if contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", definition.Id, definition.Version)) == ref {
+				definitions = append(definitions, definition)
+				break
+			}
+		}
+	}
+	next, err := canvas.ProjectWithAdmissions(latest.Job, latest.Campaign, definitions, replays)
+	if err != nil {
+		return nil, err
+	}
+	return &next, nil
+}
+
 func restoreCanvasApprovals(snapshot *contractsv1.CanvasSnapshot, ledger *workflow.FileLedger) (*contractsv1.CanvasSnapshot, error) {
 	approvals, err := ledger.ReplaysByReceiptType(contractsv1.ReceiptReceiptTypeApproval)
 	if err != nil {
@@ -106,6 +151,13 @@ func restoreCanvasApprovals(snapshot *contractsv1.CanvasSnapshot, ledger *workfl
 	for _, approval := range approvals {
 		next, err := canvas.ApplyApproval(*snapshot, approval)
 		if err != nil {
+			visible, visibilityErr := approvalActionVisible(*snapshot, approval)
+			if visibilityErr != nil {
+				return nil, visibilityErr
+			}
+			if !visible {
+				continue
+			}
 			return nil, err
 		}
 		snapshot = &next
@@ -113,8 +165,40 @@ func restoreCanvasApprovals(snapshot *contractsv1.CanvasSnapshot, ledger *workfl
 	return snapshot, nil
 }
 
-func demoAuthoringCore(ledger, sources workflow.Ledger) (*workflow.AuthoringCore, error) {
-	registry, err := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1, contractsv1.ContextPackEdition{Authority: contractsv1.ContextPackEditionAuthorityCanonical}))
+func approvalActionVisible(snapshot contractsv1.CanvasSnapshot, approval contractsv1.ReplayBundle) (bool, error) {
+	if err := workflow.VerifyReplay(approval); err != nil || len(approval.Receipts) != 1 {
+		return false, errors.New("approval replay is invalid")
+	}
+	body, err := json.Marshal(approval.Receipts[0].Payload["brief"])
+	if err != nil {
+		return false, errors.New("approval brief is invalid")
+	}
+	var brief contractsv1.ApprovalBrief
+	if json.Unmarshal(body, &brief) != nil || contract.ValidateDefinition("ApprovalBrief", brief) != nil {
+		return false, errors.New("approval brief is invalid")
+	}
+	for _, execution := range snapshot.Executions {
+		for _, output := range execution.Outputs {
+			if output.Id == brief.Action.Id {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func demoAuthoringCore(ledger, sources workflow.Ledger, snapshot *contractsv1.CanvasSnapshot) (*workflow.AuthoringCore, error) {
+	var projectBriefs []contractsv1.ContextPackEdition
+	if snapshot != nil {
+		for _, execution := range snapshot.Executions {
+			for _, port := range execution.ContextPorts {
+				if port.Selector == "project-brief" && port.Edition != nil {
+					projectBriefs = append(projectBriefs, *port.Edition)
+				}
+			}
+		}
+	}
+	registry, err := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1, projectBriefs...))
 	if err != nil {
 		return nil, err
 	}

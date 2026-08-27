@@ -127,7 +127,8 @@ export function BuilderPanel({ snapshot, onClose, onCanvas }: { snapshot: Canvas
             <div className="builder-nodes">{preview.expanded_nodes.map(({ definition, context_authorities }) => <article className="builder-node" key={definition.id}>
               <div className="builder-node-title"><strong>{humanize(definition.id)}</strong><code>{definition.kind} · {definition.executor}</code></div>
               <p>Depends on: {definition.depends_on.join(", ") || "start"}</p>
-              <p>Context: {definition.context.map((item, index) => `${item.selector}/${item.pack_type}@${item.schema_version} · ${item.required ? "required" : "optional"} · ${context_authorities[index] ?? "unresolved"}`).join("; ") || "none"}</p>
+              <p>Context: {definition.context.map((item) => `${item.selector}/${item.pack_type}@${item.schema_version} · ${item.required ? "required" : "optional"}`).join("; ") || "none"}</p>
+              <p>Authorities: {context_authorities.join(", ") || "unresolved"}</p>
               <p>Capabilities: {definition.capabilities.join(", ") || "none"}</p>
               <p>Budget: {definition.budget.max_attempts} attempts · {definition.budget.max_actions} actions · {definition.budget.max_candidates} candidates{definition.deadline_seconds ? ` · ${definition.deadline_seconds}s deadline` : ""}</p>
               <p>Outputs: {definition.output_slots.map((slot) => `${slot.id}:${slot.content_schema ?? slot.artifact_type}`).join(", ") || "none"}</p>
@@ -150,9 +151,13 @@ export function BuilderPanel({ snapshot, onClose, onCanvas }: { snapshot: Canvas
 export function mergeAdmissionReadback(current: CanvasSnapshot, admitted: CanvasSnapshot): CanvasSnapshot {
   if (current.definition.job.id !== admitted.definition.job.id || current.definition.campaign.id !== admitted.definition.campaign.id) return admitted;
   const admittedWorkflow = admitted.definition.workflows[0];
-  const workflows = admittedWorkflow
-    ? current.definition.workflows.map((workflow) => workflow.id === admittedWorkflow.id ? admittedWorkflow : workflow) as typeof current.definition.workflows
+  const candidates = admittedWorkflow
+    ? (current.definition.workflows.some((workflow) => workflow.id === admittedWorkflow.id)
+      ? current.definition.workflows.map((workflow) => workflow.id === admittedWorkflow.id ? admittedWorkflow : workflow)
+      : [...current.definition.workflows, admittedWorkflow]) as typeof current.definition.workflows
     : current.definition.workflows;
+  const planned = new Set(admitted.definition.campaign.workflow_plan);
+  const workflows = candidates.filter((workflow) => planned.has(`${workflow.id}@${workflow.version}`)) as typeof current.definition.workflows;
   const admissionReplays = [...(current.admission_replays ?? [])];
   for (const replay of admitted.admission_replays ?? []) {
     if (!admissionReplays.some((item) => item.bundle_hash === replay.bundle_hash)) admissionReplays.push(replay);

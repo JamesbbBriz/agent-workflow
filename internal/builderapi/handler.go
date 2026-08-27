@@ -3,6 +3,7 @@ package builderapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -38,6 +39,15 @@ func NewWithCanvas(core *workflow.AuthoringCore, now func() time.Time, snapshot 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/canvas":
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.canvas == nil {
+			h.write(w, nil, errors.New("trusted Canvas is unavailable"))
+			return
+		}
+		h.write(w, *h.canvas, nil)
+		return
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/catalog":
 		catalog, err := h.core.Catalog()
 		h.write(w, catalog, err)
@@ -100,6 +110,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		snapshot, err := canvas.ProjectWithAdmissions(admission.Job, admission.Campaign, definitions, []contractsv1.ReplayBundle{replay})
+		if err == nil {
+			h.canvas = &snapshot
+		}
 		h.write(w, struct {
 			Admission contractsv1.WorkflowAdmission `json:"admission"`
 			Canvas    contractsv1.CanvasSnapshot    `json:"canvas"`
@@ -213,6 +226,18 @@ func (h *Handler) admissionDefinitions(preview contractsv1.WorkflowAdmissionPrev
 			definitions = append(definitions, preview.Workflow)
 		}
 	}
+	planned := make(map[contractsv1.WorkflowRef]bool, len(preview.Campaign.WorkflowPlan))
+	for _, ref := range preview.Campaign.WorkflowPlan {
+		planned[ref] = true
+	}
+	filtered := definitions[:0]
+	for _, definition := range definitions {
+		ref := contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", definition.Id, definition.Version))
+		if planned[ref] {
+			filtered = append(filtered, definition)
+		}
+	}
+	definitions = filtered
 	if _, err := canvas.Project(preview.Job, preview.Campaign, definitions); err != nil {
 		return nil, err
 	}

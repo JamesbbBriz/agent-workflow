@@ -222,7 +222,15 @@ func testCore(t *testing.T) *workflow.AuthoringCore {
 
 func testCoreWithSources(t *testing.T, sources workflow.Ledger) *workflow.AuthoringCore {
 	t.Helper()
-	registry, err := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1))
+	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"example-project"}}
+	content := map[string]any{"brief": "bounded"}
+	hash, err := workflow.Digest(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pack := contractsv1.ContextPackEdition{Kind: contractsv1.ContextPackEditionKindContextPackEdition, SchemaVersion: 1, Id: "project-brief-edition", PackType: "project-brief", PackSchemaVersion: 1, Authority: contractsv1.ContextPackEditionAuthorityCanonical, Scope: scope, CapturedAt: cutoff.Add(-time.Hour), ExpiresAt: cutoff.Add(time.Hour), Coverage: contractsv1.ContextPackEditionCoverageComplete, Content: content, ContentSha256: contractsv1.SHA256(hash), Provenance: []contractsv1.ArtifactRef{{Id: "seed", Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "seed", SchemaVersion: 1, Sha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000", MediaType: "application/json"}}}
+	registry, err := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1, pack))
 	if err != nil {
 		t.Fatal(err)
 	}

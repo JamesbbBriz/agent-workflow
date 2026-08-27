@@ -167,7 +167,11 @@ func (l *FileLedger) ReplaysByReceiptType(receiptType contractsv1.ReceiptReceipt
 	}
 	ids := make([]string, 0, len(all))
 	for id, receipts := range all {
-		if len(receipts) == 1 && receipts[0].ReceiptType == receiptType {
+		matched := len(receipts) > 0
+		for _, receipt := range receipts {
+			matched = matched && receipt.ReceiptType == receiptType
+		}
+		if matched {
 			ids = append(ids, id)
 		}
 	}

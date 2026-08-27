@@ -388,7 +388,8 @@ func TestRequiredContextFailsClosed(t *testing.T) {
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	ledger := workflow.NewMemoryLedger()
 	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
-	admit(t, ledger, registry, request)
+	admissionRegistry, _ := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	admit(t, ledger, admissionRegistry, request)
 	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger)
 	_, err = engine.RunNode(context.Background(), request)
 	var missing *workflow.NeedsContextError
@@ -433,7 +434,8 @@ func TestContextPackAuthorityFailsClosedBeforeProviderExecution(t *testing.T) {
 			provider := &memoProvider{results: make(map[string]workflow.ProviderResult)}
 			ledger := workflow.NewMemoryLedger()
 			request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
-			admit(t, ledger, registry, request)
+			admissionRegistry, _ := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+			admit(t, ledger, admissionRegistry, request)
 			engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger)
 			_, err = engine.RunNode(context.Background(), request)
 			var blocker *workflow.NeedsContextError

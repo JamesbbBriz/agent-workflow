@@ -45,4 +45,13 @@ describe("Workflow Builder surfaces", () => {
     expect(merged.definition.workflow_states?.["research-review@2"]).toBe("admitted");
     expect(merged.admission_replays).toHaveLength(1);
   });
+
+  it("replaces the planned Workflow when admission uses a new identity", () => {
+    const admitted = structuredClone(snapshot);
+    admitted.definition.workflows[0].id = "new-review";
+    admitted.definition.campaign.workflow_plan = ["new-review@1"];
+    admitted.definition.workflow_states = { "new-review@1": "admitted" };
+    const merged = mergeAdmissionReadback(snapshot, admitted);
+    expect(merged.definition.workflows.map((workflow) => workflow.id)).toEqual(["new-review"]);
+  });
 });

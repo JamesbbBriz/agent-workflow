@@ -164,7 +164,7 @@ func TestBuilderRestartRestoresCanonicalApprovalProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	core, err := demoAuthoringCore(ledger, sources)
+	core, err := demoAuthoringCore(ledger, sources, snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,6 +193,51 @@ func TestBuilderRestartRestoresCanonicalApprovalProjection(t *testing.T) {
 	}
 	if restored.Executions[0].Outputs[0].ApprovalState != contractsv1.ActionArtifactApprovalStateApproved {
 		t.Fatal("restart did not restore the canonical approval")
+	}
+}
+
+func TestApprovalVisibilityRejectsMalformedReplay(t *testing.T) {
+	if _, err := approvalActionVisible(contractsv1.CanvasSnapshot{}, contractsv1.ReplayBundle{}); err == nil {
+		t.Fatal("malformed approval replay was treated as an unrelated valid decision")
+	}
+}
+
+func TestBuilderRestartRestoresCanonicalAdmissionProjection(t *testing.T) {
+	sources, snapshot, err := loadCanvasSources("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "builder.jsonl")
+	ledger, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := demoAuthoringCore(ledger, sources, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := loadExampleWorkflow(t)
+	definition.Id = "restart-review"
+	job, campaign := demoDefinitions(definition, snapshot.Definition.Campaign.EvidenceFrontier.Cutoff)
+	job.Id = "restart-job"
+	campaign.Id, campaign.JobId = "restart-campaign", job.Id
+	preview, _, err := core.Preview(job, campaign, definition, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Confirm(preview, "operator@example.com", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := restoreCanvasAdmissions(snapshot, reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Definition.Job.Id != job.Id || restored.Definition.Workflows[0].Id != definition.Id {
+		t.Fatalf("restart lost admission: %+v", restored.Definition)
 	}
 }
 
