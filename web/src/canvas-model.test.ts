@@ -11,6 +11,7 @@ describe("canonical Canvas projection", () => {
     expect(graph.nodes.filter((node) => node.data.entityKind === "execution")).toHaveLength(snapshot.executions.length);
     expect(graph.nodes.filter((node) => node.data.entityKind === "artifact")).toHaveLength(snapshot.executions.flatMap((execution) => execution.outputs).length);
     expect(graph.nodes.some((node) => node.data.status === "eligible")).toBe(false);
+    expect(graph.nodes.every((node) => node.initialWidth && node.initialHeight)).toBe(true);
   });
 
   it("keeps Definition mode free of Runtime state", () => {

@@ -96,7 +96,7 @@ export function App() {
         <ReactFlow
           nodes={nodes}
           edges={graph.edges}
-          nodeTypes={{ canvas: GraphNodeCard }}
+          nodeTypes={canvasNodeTypes}
           nodesDraggable={false}
           nodesConnectable={false}
           fitView
@@ -124,6 +124,8 @@ export function App() {
 function GraphNodeCard({ data, selected }: NodeProps<CanvasGraphNode>) {
   return <><Handle type="target" position={Position.Left} /><NodeCardContent data={data} selected={selected} onSelect={data.onSelect as (() => void) | undefined} /><Handle type="source" position={Position.Right} /></>;
 }
+
+const canvasNodeTypes = { canvas: GraphNodeCard };
 
 export function NodeCardContent({ data, selected = false, onSelect }: { data: CanvasNodeData; selected?: boolean; onSelect?: () => void }) {
   const onPortSelect = data.onPortSelect as ((port: ContextPortElement) => void) | undefined;

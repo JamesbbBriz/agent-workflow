@@ -129,7 +129,14 @@ export function compareBundles(left: Bundle, right: Bundle): BundleDifference[] 
 }
 
 function graphNode(id: string, x: number, y: number, entityKind: CanvasEntityKind, title: string, subtitle: string, status: CampaignState, intent?: Intent, hash?: string): CanvasGraphNode {
-  return { id, type: "canvas", position: { x, y }, data: { entityKind, title, subtitle, status, intent, hash } };
+  return {
+    id,
+    type: "canvas",
+    position: { x, y },
+    initialWidth: entityKind === "context" || entityKind === "artifact" ? 210 : 238,
+    initialHeight: 88,
+    data: { entityKind, title, subtitle, status, intent, hash },
+  };
 }
 
 function graphEdge(source: string, target: string, label: string): Edge {
