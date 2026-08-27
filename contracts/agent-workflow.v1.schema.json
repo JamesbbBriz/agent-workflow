@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow.dev/contracts/agent-workflow.v1.schema.json",
+  "title": "WorkflowDefinition",
+  "$ref": "#/$defs/WorkflowDefinition",
+  "$defs": {
+    "Identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "minLength": 1,
+      "maxLength": 96
+    },
+    "SHA256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "IntentCard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "kind", "title", "summary", "objective", "success_signals", "non_goals", "completion", "no_action_when"],
+      "properties": {
+        "schema_version": { "type": "integer", "enum": [1] },
+        "kind": { "enum": ["job", "campaign", "workflow"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "objective": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "success_signals": { "$ref": "#/$defs/NonEmptyStrings" },
+        "non_goals": { "$ref": "#/$defs/NonEmptyStrings" },
+        "completion": { "$ref": "#/$defs/NonEmptyStrings" },
+        "no_action_when": { "$ref": "#/$defs/NonEmptyStrings" },
+        "consumers": { "$ref": "#/$defs/Strings" },
+        "tags": { "$ref": "#/$defs/Strings" },
+        "descriptor_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "Strings": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 300 },
+      "uniqueItems": true
+    },
+    "NonEmptyStrings": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 },
+      "uniqueItems": true
+    },
+    "Budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_attempts", "max_actions", "max_candidates"],
+      "properties": {
+        "max_attempts": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "max_actions": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "max_candidates": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "max_duration_seconds": { "type": "integer", "minimum": 1, "maximum": 2592000 }
+      }
+    },
+    "Scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject_type", "subject_ids"],
+      "properties": {
+        "subject_type": { "$ref": "#/$defs/Identifier" },
+        "subject_ids": { "$ref": "#/$defs/NonEmptyStrings" },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 200 }
+        }
+      }
+    },
+    "ContextRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "selector", "pack_type", "schema_version", "required", "allow_partial"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" },
+        "selector": { "$ref": "#/$defs/Identifier" },
+        "pack_type": { "$ref": "#/$defs/Identifier" },
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "required": { "type": "boolean" },
+        "allow_partial": { "type": "boolean" },
+        "max_age_seconds": { "type": "integer", "minimum": 1, "maximum": 31536000 },
+        "subject_key": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "edition_id": { "type": "string", "minLength": 1, "maxLength": 160 }
+      }
+    },
+    "Slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "artifact_type", "min_items", "max_items"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" },
+        "artifact_type": { "$ref": "#/$defs/Identifier" },
+        "min_items": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "max_items": { "type": "integer", "minimum": 1, "maximum": 1000 }
+      }
+    },
+    "NodeDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "executor", "depends_on", "context", "capabilities", "input_slots", "output_slots", "budget"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" },
+        "kind": { "enum": ["deterministic", "agent", "approval", "wait", "terminal"] },
+        "executor": { "type": "string", "pattern": "^[a-z][a-z0-9-]*@[1-9][0-9]*$" },
+        "depends_on": { "$ref": "#/$defs/Strings" },
+        "context": { "type": "array", "items": { "$ref": "#/$defs/ContextRequirement" } },
+        "capabilities": { "$ref": "#/$defs/Strings" },
+        "input_slots": { "type": "array", "items": { "$ref": "#/$defs/Slot" } },
+        "output_slots": { "type": "array", "items": { "$ref": "#/$defs/Slot" } },
+        "budget": { "$ref": "#/$defs/Budget" },
+        "deadline_seconds": { "type": "integer", "minimum": 1, "maximum": 2592000 },
+        "blocker_codes": { "$ref": "#/$defs/Strings" }
+      }
+    },
+    "WorkflowDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "version", "intent", "default_context", "nodes", "outputs", "completion", "blockers"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["workflow_definition"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "id": { "$ref": "#/$defs/Identifier" },
+        "version": { "type": "integer", "minimum": 1 },
+        "intent": { "$ref": "#/$defs/IntentCard" },
+        "default_context": { "type": "array", "items": { "$ref": "#/$defs/ContextRequirement" } },
+        "nodes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NodeDefinition" } },
+        "outputs": { "type": "array", "items": { "$ref": "#/$defs/Slot" } },
+        "completion": { "$ref": "#/$defs/NonEmptyStrings" },
+        "blockers": { "$ref": "#/$defs/Strings" },
+        "definition_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "JobDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "intent", "scope", "budget", "campaign_archetypes"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["job_definition"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "id": { "$ref": "#/$defs/Identifier" },
+        "intent": { "$ref": "#/$defs/IntentCard" },
+        "scope": { "$ref": "#/$defs/Scope" },
+        "budget": { "$ref": "#/$defs/Budget" },
+        "campaign_archetypes": { "$ref": "#/$defs/NonEmptyStrings" },
+        "definition_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "EvidenceFrontier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cutoff", "source_hashes"],
+      "properties": {
+        "cutoff": { "type": "string", "format": "date-time" },
+        "source_hashes": { "type": "array", "items": { "$ref": "#/$defs/SHA256" }, "uniqueItems": true }
+      }
+    },
+    "CampaignDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "job_id", "archetype", "intent", "scope", "evidence_frontier", "workflow_plan", "budget"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["campaign_definition"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "id": { "$ref": "#/$defs/Identifier" },
+        "job_id": { "$ref": "#/$defs/Identifier" },
+        "archetype": { "$ref": "#/$defs/Identifier" },
+        "intent": { "$ref": "#/$defs/IntentCard" },
+        "scope": { "$ref": "#/$defs/Scope" },
+        "evidence_frontier": { "$ref": "#/$defs/EvidenceFrontier" },
+        "workflow_plan": { "$ref": "#/$defs/NonEmptyStrings" },
+        "budget": { "$ref": "#/$defs/Budget" },
+        "definition_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "ArtifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "artifact_type", "schema_version", "sha256", "media_type"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "kind": { "enum": ["context_pack", "action_artifact", "receipt"] },
+        "artifact_type": { "$ref": "#/$defs/Identifier" },
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "sha256": { "$ref": "#/$defs/SHA256" },
+        "media_type": { "type": "string", "minLength": 1, "maxLength": 120 }
+      }
+    },
+    "ContextPackEdition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "pack_type", "pack_schema_version", "authority", "scope", "captured_at", "expires_at", "coverage", "content", "content_sha256", "provenance"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["context_pack_edition"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "pack_type": { "$ref": "#/$defs/Identifier" },
+        "pack_schema_version": { "type": "integer", "minimum": 1 },
+        "authority": { "enum": ["canonical", "external_observation", "derived"] },
+        "scope": { "$ref": "#/$defs/Scope" },
+        "captured_at": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "coverage": { "enum": ["complete", "partial"] },
+        "content": { "type": ["object", "array"] },
+        "content_sha256": { "$ref": "#/$defs/SHA256" },
+        "provenance": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ArtifactRef" } },
+        "supersedes_edition_id": { "type": "string", "minLength": 1, "maxLength": 160 }
+      }
+    },
+    "ContextBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "job_id", "campaign_id", "workflow_ref", "node_id", "evidence_cutoff", "entries", "degraded", "bundle_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["context_bundle"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "job_id": { "$ref": "#/$defs/Identifier" },
+        "campaign_id": { "$ref": "#/$defs/Identifier" },
+        "workflow_ref": { "type": "string", "pattern": "^[a-z][a-z0-9-]*@[1-9][0-9]*$" },
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "evidence_cutoff": { "type": "string", "format": "date-time" },
+        "entries": { "type": "array", "items": { "$ref": "#/$defs/ArtifactRef" } },
+        "degraded": { "type": "boolean" },
+        "missing_optional": { "$ref": "#/$defs/Strings" },
+        "bundle_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "CapabilityManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "capabilities", "manifest_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["capability_manifest"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "authority"],
+            "properties": {
+              "name": { "$ref": "#/$defs/Identifier" },
+              "authority": { "enum": ["read", "local_mutation", "canonical_mutation", "external_mutation", "system_recovery"] }
+            }
+          }
+        },
+        "manifest_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "ActionArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "artifact_type", "job_id", "campaign_id", "workflow_ref", "node_id", "input_hashes", "content", "content_sha256", "approval_state"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["action_artifact"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "artifact_type": { "$ref": "#/$defs/Identifier" },
+        "job_id": { "$ref": "#/$defs/Identifier" },
+        "campaign_id": { "$ref": "#/$defs/Identifier" },
+        "workflow_ref": { "type": "string", "pattern": "^[a-z][a-z0-9-]*@[1-9][0-9]*$" },
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "input_hashes": { "type": "array", "items": { "$ref": "#/$defs/SHA256" }, "minItems": 1, "uniqueItems": true },
+        "content": { "type": ["object", "array"] },
+        "content_sha256": { "$ref": "#/$defs/SHA256" },
+        "approval_state": { "enum": ["not_required", "pending", "approved", "rejected", "stale"] }
+      }
+    },
+    "Receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "receipt_type", "aggregate_id", "aggregate_version", "occurred_at", "input_hashes", "output_hashes", "previous_receipt_hash", "receipt_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["receipt"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "receipt_type": { "enum": ["compile", "admission", "pack_edition", "invocation", "provider_execution", "result", "approval", "terminal"] },
+        "aggregate_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "aggregate_version": { "type": "integer", "minimum": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "actor": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "input_hashes": { "type": "array", "items": { "$ref": "#/$defs/SHA256" }, "uniqueItems": true },
+        "output_hashes": { "type": "array", "items": { "$ref": "#/$defs/SHA256" }, "uniqueItems": true },
+        "previous_receipt_hash": { "anyOf": [{ "$ref": "#/$defs/SHA256" }, { "type": "null" }] },
+        "receipt_hash": { "$ref": "#/$defs/SHA256" },
+        "payload": { "type": "object" }
+      }
+    },
+    "ReplayBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "aggregate_id", "cutoff_receipt_hash", "receipts", "bundle_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["replay_bundle"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "aggregate_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "cutoff_receipt_hash": { "$ref": "#/$defs/SHA256" },
+        "receipts": { "type": "array", "items": { "$ref": "#/$defs/Receipt" } },
+        "bundle_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    }
+  }
+}
