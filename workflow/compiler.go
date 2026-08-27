@@ -66,6 +66,11 @@ func compileWorkflow(definition contractsv1.WorkflowDefinition, registry *Regist
 }
 
 func compileNodeContext(defaults, explicit []contractsv1.ContextRequirement, registry *Registry) ([]contractsv1.ContextRequirement, error) {
+	intentRequirement := contractsv1.ContextRequirement{
+		Id: "intent-chain", Selector: "intent-chain", PackType: "intent-chain",
+		SchemaVersion: 1, Required: true, AllowPartial: false,
+	}
+	defaults = append([]contractsv1.ContextRequirement{intentRequirement}, defaults...)
 	byID := make(map[string]contractsv1.ContextRequirement, len(defaults)+len(explicit))
 	order := make([]string, 0, len(defaults)+len(explicit))
 	for _, requirement := range append(append([]contractsv1.ContextRequirement(nil), defaults...), explicit...) {

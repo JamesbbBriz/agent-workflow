@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -34,7 +36,7 @@ func sealReceipt(aggregateID string, version int, receiptType contractsv1.Receip
 	} else {
 		receipt.PreviousReceiptHash = *previous
 	}
-	hash, err := Digest(receipt)
+	hash, err := receiptDigest(receipt)
 	if err != nil {
 		return contractsv1.Receipt{}, fmt.Errorf("seal receipt: %w", err)
 	}
@@ -43,4 +45,18 @@ func sealReceipt(aggregateID string, version int, receiptType contractsv1.Receip
 		return contractsv1.Receipt{}, err
 	}
 	return receipt, nil
+}
+
+func receiptDigest(receipt contractsv1.Receipt) (string, error) {
+	body, err := json.Marshal(receipt)
+	if err != nil {
+		return "", err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var wire any
+	if err := decoder.Decode(&wire); err != nil {
+		return "", err
+	}
+	return Digest(wire)
 }

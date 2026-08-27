@@ -56,11 +56,54 @@ func OpenFileLedger(path string) (*FileLedger, error) {
 			return nil, fmt.Errorf("close ledger directory: %w", err)
 		}
 	}
+	if err := recoverTornTail(path); err != nil {
+		return nil, err
+	}
 	ledger := &FileLedger{path: path}
 	if _, err := ledger.load(); err != nil {
 		return nil, err
 	}
 	return ledger, nil
+}
+
+func recoverTornTail(path string) error {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("inspect ledger tail: %w", err)
+	}
+	if len(body) == 0 || body[len(body)-1] == '\n' {
+		return nil
+	}
+	start := bytes.LastIndexByte(body, '\n') + 1
+	var receipt contractsv1.Receipt
+	if err := contract.DecodeDefinition("Receipt", body[start:], &receipt); err == nil {
+		file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			return fmt.Errorf("recover ledger tail: %w", err)
+		}
+		if _, err := file.Write([]byte{'\n'}); err != nil {
+			file.Close()
+			return fmt.Errorf("recover ledger tail: %w", err)
+		}
+		if err := file.Sync(); err != nil {
+			file.Close()
+			return fmt.Errorf("sync recovered ledger: %w", err)
+		}
+		return file.Close()
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("recover ledger tail: %w", err)
+	}
+	if err := file.Truncate(int64(start)); err != nil {
+		file.Close()
+		return fmt.Errorf("truncate torn ledger tail: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return fmt.Errorf("sync truncated ledger: %w", err)
+	}
+	return file.Close()
 }
 
 // ponytail: this is a single-writer crash-durable ledger; use a database or OS
@@ -165,9 +208,9 @@ func validateNextReceipt(current []contractsv1.Receipt, receipt contractsv1.Rece
 	}
 	expected := receipt.ReceiptHash
 	receipt.ReceiptHash = ""
-	hash, err := Digest(receipt)
+	hash, err := receiptDigest(receipt)
 	if err != nil || contractsv1.SHA256(hash) != expected {
-		return errors.New("receipt hash does not match canonical content")
+		return fmt.Errorf("receipt hash does not match canonical content: got %s want %s", hash, expected)
 	}
 	return nil
 }

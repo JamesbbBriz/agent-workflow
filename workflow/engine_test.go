@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 	"time"
@@ -85,12 +86,42 @@ func TestFileLedgerSurvivesCoreRestartAndRedelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, reopened).RunNode(context.Background(), request)
+	restartedProvider := &memoProvider{results: make(map[string][]contractsv1.ActionArtifact)}
+	second, err := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), restartedProvider, reopened).RunNode(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if provider.work != 1 || first.Replay.BundleHash != second.Replay.BundleHash {
-		t.Fatalf("restart redelivery diverged: work=%d first=%s second=%s", provider.work, first.Replay.BundleHash, second.Replay.BundleHash)
+	if provider.work != 1 || restartedProvider.work != 0 || first.Replay.BundleHash != second.Replay.BundleHash {
+		t.Fatalf("restart redelivery diverged: first_work=%d restarted_work=%d first=%s second=%s", provider.work, restartedProvider.work, first.Replay.BundleHash, second.Replay.BundleHash)
+	}
+	material, err := workflow.MaterializeReplay(second.Replay, outputCatalog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if material.Invocation.Playbook.Objective == "" || material.Invocation.IntentChain.PackType != "intent-chain" || len(material.Artifacts) != 1 {
+		t.Fatalf("replay did not reconstruct the provider boundary: %+v", material)
+	}
+}
+
+func TestCompilerInjectsRequiredIntentChainAndPlaybook(t *testing.T) {
+	t.Parallel()
+	definition := loadExample(t)
+	definition.DefaultContext = definition.DefaultContext[1:]
+	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &memoProvider{results: make(map[string][]contractsv1.ActionArtifact)}
+	_, err = workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger()).RunNode(
+		context.Background(), workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research", OccurredAt: cutoff},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(provider.last.Playbook, definition.Intent) || provider.last.IntentChain.PackType != "intent-chain" {
+		t.Fatalf("provider did not receive the immutable playbook and intent chain: %+v", provider.last)
 	}
 }
 
@@ -151,8 +182,9 @@ func TestContextPackAuthorityFailsClosedBeforeProviderExecution(t *testing.T) {
 			provider := &memoProvider{results: make(map[string][]contractsv1.ActionArtifact)}
 			engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger())
 			_, err = engine.RunNode(context.Background(), workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research", OccurredAt: cutoff})
-			if err == nil {
-				t.Fatal("invalid context pack was accepted")
+			var blocker *workflow.NeedsContextError
+			if !errors.As(err, &blocker) || blocker.Reasons["project-brief"] == "" {
+				t.Fatalf("invalid required context did not become a typed blocker: %v", err)
 			}
 			if provider.work != 0 {
 				t.Fatal("provider ran with invalid context")
@@ -320,6 +352,7 @@ type memoProvider struct {
 	work    int
 	results map[string][]contractsv1.ActionArtifact
 	content any
+	last    workflow.Invocation
 }
 
 func (p *memoProvider) Execute(_ context.Context, invocation workflow.Invocation) ([]contractsv1.ActionArtifact, error) {
@@ -327,6 +360,7 @@ func (p *memoProvider) Execute(_ context.Context, invocation workflow.Invocation
 		return result, nil
 	}
 	p.work++
+	p.last = invocation
 	content := p.content
 	if content == nil {
 		content = map[string]any{"recommendation": "Keep the bounded workflow."}

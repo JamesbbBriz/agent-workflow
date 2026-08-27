@@ -16,10 +16,19 @@ var ErrContextUnavailable = errors.New("context unavailable")
 
 type NeedsContextError struct {
 	Requirements []string
+	Reasons      map[string]string
 }
 
 func (e *NeedsContextError) Error() string {
 	return "needs_context: " + fmt.Sprint(e.Requirements)
+}
+
+func needsContext(requirement contractsv1.ContextRequirement, err error) *NeedsContextError {
+	reason := "unavailable"
+	if err != nil && !errors.Is(err, ErrContextUnavailable) {
+		reason = "unusable"
+	}
+	return &NeedsContextError{Requirements: []string{string(requirement.Id)}, Reasons: map[string]string{string(requirement.Id): reason}}
 }
 
 type Producer interface {
@@ -169,9 +178,15 @@ func resolveContext(ctx context.Context, registry *Registry, request RunRequest,
 			continue
 		}
 		if err != nil {
+			if requirement.Required {
+				return result, needsContext(requirement, err)
+			}
 			return result, fmt.Errorf("resolve context %q: %w", requirement.Id, err)
 		}
 		if err := validatePack(pack, requirement, request.Campaign.Scope, request.Campaign.EvidenceFrontier.Cutoff); err != nil {
+			if requirement.Required {
+				return result, needsContext(requirement, err)
+			}
 			return result, fmt.Errorf("context %q: %w", requirement.Id, err)
 		}
 		packHash, err := Digest(pack)
@@ -186,7 +201,11 @@ func resolveContext(ctx context.Context, registry *Registry, request RunRequest,
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		return result, &NeedsContextError{Requirements: missing}
+		reasons := make(map[string]string, len(missing))
+		for _, requirement := range missing {
+			reasons[requirement] = "unavailable"
+		}
+		return result, &NeedsContextError{Requirements: missing, Reasons: reasons}
 	}
 	result.Bundle.Kind = contractsv1.ContextBundleKindContextBundle
 	result.Bundle.SchemaVersion = 1
