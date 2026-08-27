@@ -23,6 +23,7 @@ type Handler struct {
 	now    func() time.Time
 	mu     sync.Mutex
 	canvas *contractsv1.CanvasSnapshot
+	webMCP *webMCPGate
 }
 
 func New(core *workflow.AuthoringCore, now func() time.Time) http.Handler {
@@ -38,6 +39,18 @@ func NewWithCanvas(core *workflow.AuthoringCore, now func() time.Time, snapshot 
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if h.webMCP != nil && r.Method == http.MethodGet && r.URL.Path == "/v1/webmcp/session" {
+		h.serveWebMCPSession(w, r)
+		return
+	}
+	if h.webMCP != nil && r.Header.Get(webMCPToolHeader) != "" {
+		h.serveWebMCP(w, r)
+		return
+	}
+	h.serve(w, r)
+}
+
+func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/canvas":
 		h.mu.Lock()
@@ -99,7 +112,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.write(w, nil, err)
 			return
 		}
-		admission, err := h.core.Confirm(request.Preview, request.Actor, h.now().UTC())
+		admission, err := h.core.ConfirmWithAudit(request.Preview, request.Actor, h.now().UTC(), webMCPAdmissionAudit(r.Context()))
 		if err != nil {
 			h.write(w, nil, err)
 			return

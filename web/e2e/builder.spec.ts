@@ -1,5 +1,30 @@
 import { expect, test } from "@playwright/test";
 
+test("registers WebMCP and confirms only an exact Core preview", async ({ page }) => {
+  await page.addInitScript(() => {
+    const tools: Record<string, { execute(input: unknown): Promise<unknown> | unknown }> = {};
+    Object.defineProperty(window, "__webMCPTools", { value: tools });
+    Object.defineProperty(document, "modelContext", { value: {
+      registerTool: async (tool: { name: string; execute(input: unknown): Promise<unknown> | unknown }, options?: { signal?: AbortSignal }) => {
+        tools[tool.name] = tool;
+        options?.signal?.addEventListener("abort", () => { delete tools[tool.name]; });
+      },
+    } });
+  });
+  await page.goto("/");
+  await expect.poll(() => page.evaluate(() => Object.keys((window as unknown as { __webMCPTools: object }).__webMCPTools).length)).toBe(5);
+
+  const result = await page.evaluate(async () => {
+    const tools = (window as unknown as { __webMCPTools: Record<string, { execute(input: unknown): Promise<unknown> }> }).__webMCPTools;
+    const canvas = await tools.inspect_current_canvas.execute({});
+    const preview = await tools.preview_workflow_admission.execute({
+      job: canvas.definition.job, campaign: canvas.definition.campaign, workflow: canvas.definition.workflows[0],
+    });
+    return tools.confirm_authorized_action.execute({ preview: preview.preview });
+  });
+  expect(result.canvas.definition.workflow_states["research-review@1"]).toBe("admitted");
+});
+
 test("restores a canonical approval after page reload", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: /Recommendation, Completed/ }).click();

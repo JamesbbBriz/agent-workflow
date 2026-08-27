@@ -66,6 +66,19 @@ npm run web:dev
 
 The browser keeps unfinished drafts in local storage. The Builder reads the Go Core catalog, lints and expands the exact Node contracts, then requires a revision-bound preview token before the Core admits an immutable Workflow version. Pending Action Artifacts can be opened from the Runtime Canvas for a separate preview/confirm human decision. Only the Core writes admission and approval receipts; the GUI projects their Replay.
 
+To opt into the browser's experimental `document.modelContext` API for this exact local page origin:
+
+```bash
+go run ./cmd/agent-workflow builder \
+  --listen 127.0.0.1:4321 \
+  --ledger .agent-workflow/builder.jsonl \
+  --canvas web/public/canvas.response.json \
+  --web-origin http://127.0.0.1:5173 \
+  --webmcp-audit .agent-workflow/webmcp-audit.jsonl
+```
+
+The adapter registers five page-scoped inspect, explain, preview, navigation, and exact-confirm tools. It feature-detects the current WebMCP Community Group draft, uses no polyfill, and remains absent when the browser does not implement `document.modelContext`. All calls still cross the Go Core and produce a correlated local audit trail; see [ADR 0003](docs/adr/0003-experimental-webmcp-adapter.md).
+
 Generate Go and TypeScript bindings from the canonical schema:
 
 ```bash
@@ -97,7 +110,7 @@ See [Architecture](docs/architecture.md), [Security](SECURITY.md), [Compatibilit
 
 ## Status
 
-The v1 public contract is under active development. WebMCP support is planned as an optional experimental browser adapter and is not a Core dependency.
+The v1 public contract is under active development. WebMCP support is an optional experimental browser adapter and is not a Core dependency.
 
 ## License
 

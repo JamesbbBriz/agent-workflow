@@ -250,7 +250,20 @@ func (c *AuthoringCore) Preview(job contractsv1.JobDefinition, campaign contract
 	return preview, report, nil
 }
 
+type AdmissionAudit struct {
+	SchemaVersion int    `json:"schema_version"`
+	RequestID     string `json:"request_id"`
+	Subject       string `json:"subject"`
+	PageOrigin    string `json:"page_origin"`
+	Tool          string `json:"tool"`
+	InputsSHA256  string `json:"inputs_sha256"`
+}
+
 func (c *AuthoringCore) Confirm(preview contractsv1.WorkflowAdmissionPreview, actor string, occurredAt time.Time) (contractsv1.WorkflowAdmission, error) {
+	return c.ConfirmWithAudit(preview, actor, occurredAt, nil)
+}
+
+func (c *AuthoringCore) ConfirmWithAudit(preview contractsv1.WorkflowAdmissionPreview, actor string, occurredAt time.Time, audit *AdmissionAudit) (contractsv1.WorkflowAdmission, error) {
 	actor = strings.TrimSpace(actor)
 	aggregate := workflowDefinitionAggregate(string(preview.Workflow.Id))
 	if existing, ok := c.existingAdmission(aggregate, preview.PreviewHash); ok {
@@ -283,6 +296,9 @@ func (c *AuthoringCore) Confirm(preview contractsv1.WorkflowAdmissionPreview, ac
 		previous = &hash
 	}
 	payload := map[string]any{"job": preview.Job, "campaign": preview.Campaign, "workflow": preview.Workflow, "job_hash": preview.JobHash, "campaign_hash": preview.CampaignHash, "definition_hash": preview.DefinitionHash, "compile_hash": preview.CompileHash, "preview_hash": preview.PreviewHash}
+	if audit != nil {
+		payload["webmcp_audit"] = *audit
+	}
 	receipt, err := sealActorReceipt(aggregate, current+1, contractsv1.ReceiptReceiptTypeAdmission, actor, occurredAt, previous, []contractsv1.SHA256{preview.JobHash, preview.CampaignHash, preview.DefinitionHash, preview.CompileHash, preview.CatalogHash}, []contractsv1.SHA256{preview.PreviewHash}, payload)
 	if err != nil {
 		return contractsv1.WorkflowAdmission{}, err
