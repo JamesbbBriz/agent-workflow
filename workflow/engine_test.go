@@ -187,7 +187,7 @@ func (p *lateProvider) Poll(context.Context, string) (workflow.ProviderResult, b
 		WorkflowRef: p.invocation.WorkflowRef, NodeId: p.invocation.Node.Id, InputHashes: p.invocation.InputHashes,
 		Content: content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: contractsv1.ActionArtifactApprovalStatePending,
 	}
-	return workflow.ProviderResult{IdempotencyKey: p.invocation.IdempotencyKey, CompletedAt: time.Now().UTC(), Artifacts: []contractsv1.ActionArtifact{artifact}}, true, nil
+	return workflow.ProviderResult{IdempotencyKey: p.invocation.IdempotencyKey, CompletedAt: p.invocation.Deadline.Add(-time.Nanosecond), Artifacts: []contractsv1.ActionArtifact{artifact}}, true, nil
 }
 func (*lateProvider) Cancel(context.Context, string) error { return nil }
 func (p *pendingProvider) Cancel(context.Context, string) error {

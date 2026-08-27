@@ -268,7 +268,15 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 	if err := validateProviderResult(providerResult, invocation); err != nil {
 		return RunResult{}, err
 	}
-	if providerResult.CompletedAt.After(invocation.Deadline) {
+	deadlinePassed := !time.Now().Before(invocation.Deadline)
+	acknowledged := false
+	if deadlinePassed {
+		acknowledged, err = providerAcknowledged(replay, invocation, providerResult)
+		if err != nil {
+			return RunResult{}, err
+		}
+	}
+	if providerResult.CompletedAt.After(invocation.Deadline) || (deadlinePassed && !acknowledged) {
 		cancelContext, cancel := context.WithTimeout(ctx, 5*time.Second)
 		_ = e.provider.Cancel(cancelContext, invocation.IdempotencyKey)
 		cancel()
@@ -289,6 +297,26 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		return RunResult{}, err
 	}
 	return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: artifacts, Replay: replay}, nil
+}
+
+func providerAcknowledged(replay contractsv1.ReplayBundle, invocation Invocation, result ProviderResult) (bool, error) {
+	receipt, ok := receiptByType(replay, contractsv1.ReceiptReceiptTypeProviderExecution)
+	if !ok {
+		return false, nil
+	}
+	var key string
+	if err := decodePayload(receipt.Payload["idempotency_key"], &key); err != nil {
+		return false, err
+	}
+	var completedAt time.Time
+	if err := decodePayload(receipt.Payload["completed_at"], &completedAt); err != nil {
+		return false, err
+	}
+	hashes, err := actionArtifactHashes(result.Artifacts)
+	if err != nil {
+		return false, err
+	}
+	return key == invocation.IdempotencyKey && completedAt.Equal(result.CompletedAt) && !completedAt.After(invocation.Deadline) && reflect.DeepEqual(receipt.OutputHashes, hashes), nil
 }
 
 func validateProviderResult(result ProviderResult, invocation Invocation) error {
@@ -312,15 +340,10 @@ func (e *Engine) appendDeadlineTerminal(aggregateID string, occurredAt time.Time
 
 func (e *Engine) finishInvocation(aggregateID string, occurredAt time.Time, invocation Invocation, providerResult ProviderResult, replay contractsv1.ReplayBundle) error {
 	artifacts := providerResult.Artifacts
-	artifactHashes := make([]contractsv1.SHA256, 0, len(artifacts))
-	for _, artifact := range artifacts {
-		hash, err := Digest(artifact)
-		if err != nil {
-			return err
-		}
-		artifactHashes = append(artifactHashes, contractsv1.SHA256(hash))
+	artifactHashes, err := actionArtifactHashes(artifacts)
+	if err != nil {
+		return err
 	}
-	sort.Slice(artifactHashes, func(i, j int) bool { return artifactHashes[i] < artifactHashes[j] })
 	invocationReceipt, ok := receiptByType(replay, contractsv1.ReceiptReceiptTypeInvocation)
 	if !ok {
 		return errors.New("replay has no invocation receipt")
@@ -335,6 +358,19 @@ func (e *Engine) finishInvocation(aggregateID string, occurredAt time.Time, invo
 		}
 	}
 	return nil
+}
+
+func actionArtifactHashes(artifacts []contractsv1.ActionArtifact) ([]contractsv1.SHA256, error) {
+	hashes := make([]contractsv1.SHA256, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		hash, err := Digest(artifact)
+		if err != nil {
+			return nil, err
+		}
+		hashes = append(hashes, contractsv1.SHA256(hash))
+	}
+	sort.Slice(hashes, func(i, j int) bool { return hashes[i] < hashes[j] })
+	return hashes, nil
 }
 
 func hasReceipt(bundle contractsv1.ReplayBundle, receiptType contractsv1.ReceiptReceiptType) bool {
