@@ -25,36 +25,40 @@ func ProjectWithAdmissions(job contractsv1.JobDefinition, campaign contractsv1.C
 	return project(job, campaign, definitions, admissions, true, inputs...)
 }
 
-// MergeAdmissionReadback keeps trusted runtime evidence when only the current
-// definition/admission projection changes inside the same Campaign.
+// MergeAdmissionReadback keeps trusted runtime evidence only while the Job and
+// Campaign definitions remain unchanged.
 func MergeAdmissionReadback(current, admitted contractsv1.CanvasSnapshot) contractsv1.CanvasSnapshot {
 	if current.Definition.Job.Id != admitted.Definition.Job.Id || current.Definition.Campaign.Id != admitted.Definition.Campaign.Id {
 		return admitted
 	}
 	previousStates := current.Definition.WorkflowStates
-	current.Definition = admitted.Definition
-	planned := make(map[string]bool, len(current.Definition.Campaign.WorkflowPlan))
-	for _, ref := range current.Definition.Campaign.WorkflowPlan {
+	merged := admitted
+	if reflect.DeepEqual(current.Definition.Job, admitted.Definition.Job) && reflect.DeepEqual(current.Definition.Campaign, admitted.Definition.Campaign) {
+		merged = current
+		merged.Definition = admitted.Definition
+		if admitted.GeneratedAt.After(merged.GeneratedAt) {
+			merged.GeneratedAt = admitted.GeneratedAt
+		}
+	}
+	planned := make(map[string]bool, len(merged.Definition.Campaign.WorkflowPlan))
+	for _, ref := range merged.Definition.Campaign.WorkflowPlan {
 		planned[string(ref)] = true
 	}
 	for ref, status := range previousStates {
 		if status == contractsv1.CanvasEntityStatusAdmitted && planned[ref] {
-			current.Definition.WorkflowStates[ref] = status
+			merged.Definition.WorkflowStates[ref] = status
 		}
 	}
-	if admitted.GeneratedAt.After(current.GeneratedAt) {
-		current.GeneratedAt = admitted.GeneratedAt
-	}
-	for _, replay := range admitted.AdmissionReplays {
+	for _, replay := range current.AdmissionReplays {
 		seen := false
-		for _, existing := range current.AdmissionReplays {
+		for _, existing := range merged.AdmissionReplays {
 			seen = seen || existing.BundleHash == replay.BundleHash
 		}
 		if !seen {
-			current.AdmissionReplays = append(current.AdmissionReplays, replay)
+			merged.AdmissionReplays = append(merged.AdmissionReplays, replay)
 		}
 	}
-	return current
+	return merged
 }
 
 func project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definitions []contractsv1.WorkflowDefinition, admissions []contractsv1.ReplayBundle, requireAdmission bool, inputs ...ExecutionInput) (contractsv1.CanvasSnapshot, error) {

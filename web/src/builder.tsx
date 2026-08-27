@@ -150,6 +150,7 @@ export function BuilderPanel({ snapshot, onClose, onCanvas }: { snapshot: Canvas
 
 export function mergeAdmissionReadback(current: CanvasSnapshot, admitted: CanvasSnapshot): CanvasSnapshot {
   if (current.definition.job.id !== admitted.definition.job.id || current.definition.campaign.id !== admitted.definition.campaign.id) return admitted;
+  if (JSON.stringify(current.definition.job) !== JSON.stringify(admitted.definition.job) || JSON.stringify(current.definition.campaign) !== JSON.stringify(admitted.definition.campaign)) return admitted;
   const admittedWorkflow = admitted.definition.workflows[0];
   const candidates = admittedWorkflow
     ? (current.definition.workflows.some((workflow) => workflow.id === admittedWorkflow.id)

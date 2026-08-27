@@ -65,9 +65,7 @@ func TestBuilderHTTPAdmissionReadbackKeepsTrustedRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	definition := loadDefinition(t)
-	definition.Id = "new-review"
 	job, campaign := envelope.Data.Definition.Job, envelope.Data.Definition.Campaign
-	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"new-review@1"}
 	handler := builderapi.NewWithCanvas(testCore(t), time.Now, &envelope.Data)
 	admissionPreview := preview(t, handler, job, campaign, definition)
 	if response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": admissionPreview}); response.Code != http.StatusOK {
@@ -81,6 +79,38 @@ func TestBuilderHTTPAdmissionReadbackKeepsTrustedRuntime(t *testing.T) {
 	decodeBody(t, read, &response)
 	if len(response.Data.Executions) != len(envelope.Data.Executions) || len(response.Data.Replays) != len(envelope.Data.Replays) {
 		t.Fatalf("admission replaced trusted runtime readback: %s", read.Body.String())
+	}
+}
+
+func TestBuilderHTTPDoesNotRebindRuntimeAcrossDefinitions(t *testing.T) {
+	body, err := os.ReadFile("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Data contractsv1.CanvasSnapshot `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	definition := loadDefinition(t)
+	definition.Id = "rebound-review"
+	job, campaign := envelope.Data.Definition.Job, envelope.Data.Definition.Campaign
+	job.Intent.Title = "Rebound job title"
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"rebound-review@1"}
+	handler := builderapi.NewWithCanvas(testCore(t), time.Now, &envelope.Data)
+	admissionPreview := preview(t, handler, job, campaign, definition)
+	if response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": admissionPreview}); response.Code != http.StatusOK {
+		t.Fatalf("confirm: %s", response.Body.String())
+	}
+	read := httptest.NewRecorder()
+	handler.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/v1/canvas", nil))
+	var response struct {
+		Data contractsv1.CanvasSnapshot `json:"data"`
+	}
+	decodeBody(t, read, &response)
+	if len(response.Data.Executions) != 0 || len(response.Data.Replays) != 0 || response.Data.Definition.Job.Intent.Title != "Rebound job title" {
+		t.Fatalf("historical runtime was rebound to changed definitions: %s", read.Body.String())
 	}
 }
 

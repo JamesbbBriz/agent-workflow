@@ -46,10 +46,12 @@ test("adds a new Workflow identity to an existing Job and Campaign", async ({ pa
   await expect(page.getByText("Ready to admit version 1")).toBeVisible();
   await page.getByRole("button", { name: "Confirm admission" }).click();
   await expect(page.getByRole("button", { name: /Research and review, Admitted/ })).toContainText("new-review@1");
+  await expect(page.getByRole("button", { name: /Recommendation, Completed/ })).toHaveCount(0);
 
   await page.reload();
   await page.getByRole("button", { name: "Definition" }).click();
   await expect(page.getByRole("button", { name: /Research and review, Admitted/ })).toContainText("new-review@1");
+  await expect(page.getByRole("button", { name: /Recommendation, Completed/ })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Build Workflow" }).click();
   await expect(page.getByRole("textbox", { name: "Workflow ID" })).toHaveValue("new-review");

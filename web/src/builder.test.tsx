@@ -29,7 +29,7 @@ describe("Workflow Builder surfaces", () => {
     expect(html).toContain("Approve exact action");
   });
 
-  it("keeps runtime evidence when an admission readback updates the definition", () => {
+  it("does not rebind runtime evidence when an admission changes the definition", () => {
     const admitted = structuredClone(snapshot);
     admitted.executions = [];
     admitted.replays = [];
@@ -38,12 +38,21 @@ describe("Workflow Builder surfaces", () => {
     admitted.definition.workflow_states = { "research-review@2": "admitted" };
     admitted.admission_replays = snapshot.admission_replays;
     const merged = mergeAdmissionReadback(snapshot, admitted);
-    expect(merged.executions).toEqual(snapshot.executions);
-    expect(merged.replays).toEqual(snapshot.replays);
+    expect(merged.executions).toEqual([]);
+    expect(merged.replays).toEqual([]);
     expect(merged.definition.campaign.workflow_plan).toEqual(["research-review@2"]);
     expect(merged.definition.workflows[0].version).toBe(2);
     expect(merged.definition.workflow_states?.["research-review@2"]).toBe("admitted");
     expect(merged.admission_replays).toHaveLength(1);
+  });
+
+  it("keeps runtime evidence when Job and Campaign definitions are unchanged", () => {
+    const admitted = structuredClone(snapshot);
+    admitted.executions = [];
+    admitted.replays = [];
+    const merged = mergeAdmissionReadback(snapshot, admitted);
+    expect(merged.executions).toEqual(snapshot.executions);
+    expect(merged.replays).toEqual(snapshot.replays);
   });
 
   it("replaces the planned Workflow when admission uses a new identity", () => {

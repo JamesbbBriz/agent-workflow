@@ -260,7 +260,7 @@ func TestBuilderRestartRestoresCanonicalAdmissionProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.Definition.Job.Id != job.Id || restored.Definition.Workflows[0].Id != definition.Id || len(restored.Executions) != len(snapshot.Executions) {
+	if restored.Definition.Job.Id != job.Id || restored.Definition.Workflows[0].Id != definition.Id {
 		t.Fatalf("restart lost admission: %+v", restored.Definition)
 	}
 }
