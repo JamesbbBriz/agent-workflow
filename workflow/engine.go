@@ -444,6 +444,36 @@ func MaterializeInvocation(bundle contractsv1.ReplayBundle) (Invocation, error) 
 	return invocation, nil
 }
 
+// VerifyDefinitionBinding proves that displayed definitions are the ones recorded by Replay.
+func VerifyDefinitionBinding(bundle contractsv1.ReplayBundle, job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definition contractsv1.WorkflowDefinition) (Invocation, error) {
+	invocation, err := MaterializeInvocation(bundle)
+	if err != nil {
+		return Invocation{}, err
+	}
+	jobHash, campaignHash, err := aggregateDefinitionHashes(RunRequest{Job: job, Campaign: campaign})
+	if err != nil {
+		return Invocation{}, err
+	}
+	body, err := json.Marshal(definition)
+	if err != nil {
+		return Invocation{}, err
+	}
+	identity, err := contract.ValidateWorkflow(body)
+	if err != nil {
+		return Invocation{}, err
+	}
+	compileReceipt, ok := receiptByType(bundle, contractsv1.ReceiptReceiptTypeCompile)
+	if !ok || len(compileReceipt.InputHashes) != 1 || len(compileReceipt.OutputHashes) != 1 {
+		return Invocation{}, errors.New("replay compile receipt is incomplete")
+	}
+	if len(invocation.InputHashes) != 5 || invocation.InputHashes[0] != jobHash || invocation.InputHashes[1] != campaignHash ||
+		invocation.InputHashes[2] != compileReceipt.OutputHashes[0] || invocation.InputHashes[3] != invocation.Bundle.BundleHash ||
+		invocation.InputHashes[4] != invocation.Capabilities.ManifestHash || compileReceipt.InputHashes[0] != contractsv1.SHA256(identity.Hash) {
+		return Invocation{}, errors.New("replay does not bind the displayed definitions")
+	}
+	return invocation, nil
+}
+
 func materializeProviderResult(bundle contractsv1.ReplayBundle) (ProviderResult, bool, error) {
 	receipt, ok := receiptByType(bundle, contractsv1.ReceiptReceiptTypeResult)
 	if !ok {

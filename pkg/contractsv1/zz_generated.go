@@ -209,6 +209,7 @@ type CanvasContextPort struct {
 
 type CanvasContextStatus string
 
+const CanvasContextStatusConfigured CanvasContextStatus = "configured"
 const CanvasContextStatusDegraded CanvasContextStatus = "degraded"
 const CanvasContextStatusInvalid CanvasContextStatus = "invalid"
 const CanvasContextStatusMissing CanvasContextStatus = "missing"
@@ -518,6 +519,9 @@ type ContextPackRef struct {
 
 	// MediaType corresponds to the JSON schema field "media_type".
 	MediaType string `json:"media_type"`
+
+	// RequirementId corresponds to the JSON schema field "requirement_id".
+	RequirementId *Identifier `json:"requirement_id,omitempty,omitzero"`
 
 	// SchemaVersion corresponds to the JSON schema field "schema_version".
 	SchemaVersion int `json:"schema_version"`

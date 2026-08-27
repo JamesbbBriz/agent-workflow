@@ -199,12 +199,13 @@ export interface Bundle {
 }
 
 export interface EntryElement {
-    artifact_type:  string;
-    id:             string;
-    kind:           EntryKind;
-    media_type:     string;
-    schema_version: number;
-    sha256:         string;
+    artifact_type:   string;
+    id:              string;
+    kind:            EntryKind;
+    media_type:      string;
+    requirement_id?: string;
+    schema_version:  number;
+    sha256:          string;
 }
 
 export type EntryKind = "context_pack";
@@ -260,7 +261,7 @@ export interface ProvenanceElement {
 
 export type ProvenanceKind = "context_pack" | "action_artifact" | "receipt";
 
-export type Status = "resolved" | "missing" | "stale" | "partial" | "degraded" | "invalid";
+export type Status = "configured" | "resolved" | "missing" | "stale" | "partial" | "degraded" | "invalid";
 
 export interface ExecutionReceipt {
     id:           string;

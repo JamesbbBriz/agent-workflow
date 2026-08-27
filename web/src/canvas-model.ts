@@ -33,6 +33,7 @@ export interface CanvasGraph {
 
 export interface BundleDifference {
   artifactType: string;
+  requirementId?: string;
   leftHash?: string;
   rightHash?: string;
   state: "added" | "removed" | "changed";
@@ -56,9 +57,9 @@ export function buildGraph(snapshot: CanvasSnapshot, mode: CanvasMode): CanvasGr
     edges.push(graphEdge(campaignNode, workflowNode, "runs"));
 
     workflow.nodes.forEach((definition, nodeIndex) => {
-      const execution = snapshot.executions.find((item) => item.bundle.workflow_ref === workflowRef && item.node_id === definition.id);
+      const execution = mode === "runtime" ? snapshot.executions.find((item) => item.bundle.workflow_ref === workflowRef && item.node_id === definition.id) : undefined;
       const entityKind: CanvasEntityKind = execution ? "execution" : "node";
-      const status = execution?.status ?? nextNodeStatus(snapshot, workflowRef, definition.id);
+	  const status = execution?.status ?? (mode === "runtime" ? nextNodeStatus(snapshot, workflowRef, definition.id) : "configured");
       const nodeID = `node:${workflowRef}:${definition.id}`;
       nodes.push({
         ...graphNode(nodeID, 960 + nodeIndex * 300, y, entityKind, humanize(definition.id), definition.executor, status),
@@ -73,7 +74,7 @@ export function buildGraph(snapshot: CanvasSnapshot, mode: CanvasMode): CanvasGr
           contextPorts: execution?.context_ports ?? definition.context.map((requirement) => ({
             ...requirement,
             node_id: definition.id,
-            status: "missing" as const,
+			status: "configured" as const,
             producer: requirement.selector,
             consumers: [`${workflowRef}/${definition.id}`],
             evidence_frontier: snapshot.definition.campaign.evidence_frontier,
@@ -106,16 +107,18 @@ export function buildGraph(snapshot: CanvasSnapshot, mode: CanvasMode): CanvasGr
 }
 
 export function compareBundles(left: Bundle, right: Bundle): BundleDifference[] {
-  const leftEntries = new Map(left.entries.map((entry) => [entry.artifact_type, entry]));
-  const rightEntries = new Map(right.entries.map((entry) => [entry.artifact_type, entry]));
+	const leftEntries = new Map(left.entries.map((entry) => [entry.requirement_id ?? `${entry.artifact_type}:${entry.id}`, entry]));
+	const rightEntries = new Map(right.entries.map((entry) => [entry.requirement_id ?? `${entry.artifact_type}:${entry.id}`, entry]));
   const keys = new Set([...leftEntries.keys(), ...rightEntries.keys()]);
   const differences: BundleDifference[] = [];
-  for (const artifactType of [...keys].sort()) {
-    const before = leftEntries.get(artifactType);
-    const after = rightEntries.get(artifactType);
-    if (!before) differences.push({ artifactType, rightHash: after?.sha256, state: "added" });
-    else if (!after) differences.push({ artifactType, leftHash: before.sha256, state: "removed" });
-    else if (before.sha256 !== after.sha256) differences.push({ artifactType, leftHash: before.sha256, rightHash: after.sha256, state: "changed" });
+	for (const key of [...keys].sort()) {
+		const before = leftEntries.get(key);
+		const after = rightEntries.get(key);
+		const artifactType = after?.artifact_type ?? before?.artifact_type ?? key;
+		const requirementId = after?.requirement_id ?? before?.requirement_id;
+		if (!before) differences.push({ artifactType, requirementId, rightHash: after?.sha256, state: "added" });
+		else if (!after) differences.push({ artifactType, requirementId, leftHash: before.sha256, state: "removed" });
+		else if (before.sha256 !== after.sha256) differences.push({ artifactType, requirementId, leftHash: before.sha256, rightHash: after.sha256, state: "changed" });
   }
   return differences;
 }
@@ -132,7 +135,7 @@ function nextNodeStatus(snapshot: CanvasSnapshot, workflowRef: string, nodeID: s
   if (snapshot.next_safe_action.workflow_ref !== workflowRef || snapshot.next_safe_action.node_id !== nodeID) return "configured";
   if (snapshot.next_safe_action.kind === "request_approval") return "awaiting_human";
   if (snapshot.next_safe_action.kind === "request_context") return "blocked";
-  return snapshot.next_safe_action.kind === "start_node" ? "admitted" : "configured";
+  return "configured";
 }
 
 export function humanize(value: string): string {

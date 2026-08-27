@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import {
   Background,
   Controls,
@@ -53,7 +53,11 @@ export function App() {
   const graph = useMemo(() => snapshot ? buildGraph(snapshot, mode) : { nodes: [], edges: [] }, [snapshot, mode]);
   const nodes = useMemo(() => graph.nodes.map((node) => ({
     ...node,
-    data: { ...node.data, onPortSelect: (port: ContextPortElement) => setSelection({ kind: "port", port }) },
+	data: {
+	  ...node.data,
+	  onSelect: () => setSelection({ kind: "node", data: node.data }),
+	  onPortSelect: (port: ContextPortElement) => setSelection({ kind: "port", port }),
+	},
   })), [graph.nodes]);
 
   if (error) return <StateScreen title="Canvas unavailable" detail={error} />;
@@ -90,7 +94,6 @@ export function App() {
           fitViewOptions={{ padding: 0.16 }}
           minZoom={0.35}
           maxZoom={1.5}
-          onNodeClick={(_, node) => setSelection({ kind: "node", data: node.data })}
         >
           <Background gap={24} size={1} />
           <Controls showInteractive={false} />
@@ -108,13 +111,13 @@ export function App() {
 }
 
 function GraphNodeCard({ data, selected }: NodeProps<CanvasGraphNode>) {
-  return <><Handle type="target" position={Position.Left} /><NodeCardContent data={data} selected={selected} /><Handle type="source" position={Position.Right} /></>;
+  return <><Handle type="target" position={Position.Left} /><NodeCardContent data={data} selected={selected} onSelect={data.onSelect as (() => void) | undefined} /><Handle type="source" position={Position.Right} /></>;
 }
 
-export function NodeCardContent({ data, selected = false }: { data: CanvasNodeData; selected?: boolean }) {
+export function NodeCardContent({ data, selected = false, onSelect }: { data: CanvasNodeData; selected?: boolean; onSelect?: () => void }) {
   const onPortSelect = data.onPortSelect as ((port: ContextPortElement) => void) | undefined;
   return (
-    <article className={`graph-node graph-node-${data.entityKind} ${selected ? "is-selected" : ""}`} tabIndex={0} aria-label={`${data.title}, ${humanize(data.status)}`}>
+    <article className={`graph-node graph-node-${data.entityKind} ${selected ? "is-selected" : ""}`} role="button" tabIndex={0} aria-label={`${data.title}, ${humanize(data.status)}`} onClick={onSelect} onKeyDown={(event) => activateCard(event, onSelect)}>
       <div className="node-heading">
         <span className="node-icon" aria-hidden="true">{entityIcon(data.entityKind)}</span>
         <div><strong>{data.title}</strong><small>{data.subtitle}</small></div>
@@ -133,6 +136,12 @@ export function NodeCardContent({ data, selected = false }: { data: CanvasNodeDa
       )}
     </article>
   );
+}
+
+function activateCard(event: KeyboardEvent<HTMLElement>, onSelect?: () => void) {
+  if (event.currentTarget !== event.target || (event.key !== "Enter" && event.key !== " ")) return;
+  event.preventDefault();
+  onSelect?.();
 }
 
 export function DetailPanel({ selection, onClose }: { selection: Selection; onClose: () => void }) {
@@ -212,8 +221,8 @@ function ComparePanel({ snapshot, onClose }: { snapshot: CanvasSnapshot; onClose
         <BundleSelect label="Later" value={rightIndex} snapshot={snapshot} onChange={setRightIndex} />
       </div>
       {differences.length === 0 ? <p className="empty-copy">The exact Context editions are unchanged.</p> : differences.map((item) => (
-        <section className="difference" key={item.artifactType}>
-          <strong>{humanize(item.artifactType)}</strong><span>{humanize(item.state)}</span>
+        <section className="difference" key={`${item.requirementId ?? "legacy"}:${item.artifactType}`}>
+		  <strong>{humanize(item.artifactType)}{item.requirementId ? ` · ${item.requirementId}` : ""}</strong><span>{humanize(item.state)}</span>
           {item.leftHash && <code>{item.leftHash}</code>}
           {item.rightHash && <code>{item.rightHash}</code>}
         </section>

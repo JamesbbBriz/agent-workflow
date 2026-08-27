@@ -39,8 +39,8 @@ func TestCanvasProjectionUsesOnlyCanonicalRuntimeReceipts(t *testing.T) {
 	if len(snapshot.Definition.Workflows) != 1 || len(snapshot.Definition.Workflows[0].Nodes) != 2 || snapshot.Definition.CampaignState != "configured" {
 		t.Fatalf("definition graph was not preserved: %+v", snapshot.Definition)
 	}
-	if snapshot.NextSafeAction.Kind != "request_approval" || snapshot.NextSafeAction.WorkflowRef == nil || *snapshot.NextSafeAction.WorkflowRef != "research-review@1" || snapshot.NextSafeAction.NodeId == nil || *snapshot.NextSafeAction.NodeId != "review" {
-		t.Fatalf("unexpected next safe action: %+v", snapshot.NextSafeAction)
+	if snapshot.NextSafeAction.Kind != "none" || snapshot.NextSafeAction.NodeId != nil {
+		t.Fatalf("Canvas fabricated a next action: %+v", snapshot.NextSafeAction)
 	}
 }
 
@@ -97,6 +97,25 @@ func TestCanvasProjectionRejectsWorkflowOutsideCampaignPlan(t *testing.T) {
 	}
 }
 
+func TestCanvasProjectionRejectsDefinitionsNotBoundByReplay(t *testing.T) {
+	definition := loadExampleWorkflow(t)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	result, err := executeDemo(definition, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, campaign := demoDefinitions(definition, cutoff)
+	job.Intent.Title = "Altered Job"
+	if _, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{Replay: result.Replay, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}}); err == nil {
+		t.Fatal("expected altered Job definition to be rejected")
+	}
+	job, campaign = demoDefinitions(definition, cutoff)
+	definition.Intent.Title = "Altered Workflow"
+	if _, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{Replay: result.Replay, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}}); err == nil {
+		t.Fatal("expected altered Workflow definition to be rejected")
+	}
+}
+
 func TestCanvasProjectionShowsConfiguredGraphWithoutInventingExecution(t *testing.T) {
 	definition := loadExampleWorkflow(t)
 	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
@@ -109,8 +128,34 @@ func TestCanvasProjectionShowsConfiguredGraphWithoutInventingExecution(t *testin
 	if len(snapshot.Executions) != 0 || len(snapshot.Replays) != 0 {
 		t.Fatalf("configured definitions must not fabricate runtime state: %+v", snapshot)
 	}
-	if snapshot.Definition.CampaignState != "configured" || snapshot.NextSafeAction.Kind != "start_node" || snapshot.NextSafeAction.WorkflowRef == nil || *snapshot.NextSafeAction.WorkflowRef != "research-review@1" {
+	if snapshot.Definition.CampaignState != "configured" || snapshot.NextSafeAction.Kind != "none" || snapshot.NextSafeAction.NodeId != nil {
 		t.Fatalf("unexpected configured graph: %+v", snapshot)
+	}
+}
+
+func TestCanvasProjectionDoesNotCompleteBeforeTerminalReceipt(t *testing.T) {
+	definition := loadExampleWorkflow(t)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	result, err := executeDemo(definition, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	partial := result.Replay
+	partial.Receipts = partial.Receipts[:len(partial.Receipts)-1]
+	partial.CutoffReceiptHash = partial.Receipts[len(partial.Receipts)-1].ReceiptHash
+	partial.BundleHash = ""
+	hash, err := workflow.Digest(partial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	partial.BundleHash = contractsv1.SHA256(hash)
+	job, campaign := demoDefinitions(definition, cutoff)
+	snapshot, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{Replay: partial, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Executions[0].Status != "running" {
+		t.Fatalf("result without terminal receipt was presented as %q", snapshot.Executions[0].Status)
 	}
 }
 

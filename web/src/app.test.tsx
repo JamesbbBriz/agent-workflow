@@ -18,8 +18,17 @@ describe("Canvas node accessibility", () => {
       contextPorts: execution.context_ports,
     }} />);
     expect(html).toContain('tabindex="0"');
+	expect(html).toContain('role="button"');
     expect(html).toContain("Research, Completed");
     expect(html).toContain("Project Brief Context, Resolved");
     expect(html).toContain("Required");
+  });
+
+  it("opens Node details with Enter", () => {
+	let selected = false;
+	const card = NodeCardContent({ data: { entityKind: "node", title: "Review", subtitle: "human", status: "configured" }, onSelect: () => { selected = true; } });
+	const target = {};
+	card.props.onKeyDown({ key: "Enter", target, currentTarget: target, preventDefault: () => undefined });
+	expect(selected).toBe(true);
   });
 });

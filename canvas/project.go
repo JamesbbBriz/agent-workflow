@@ -44,7 +44,6 @@ func Project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinit
 	}
 	executions := make([]contractsv1.CanvasExecution, 0, len(inputs))
 	replays := make([]contractsv1.ReplayBundle, 0, len(inputs))
-	completed := make(map[string]bool, len(inputs))
 	seenExecutions := make(map[string]bool, len(inputs))
 	generatedAt := campaign.EvidenceFrontier.Cutoff
 	for _, input := range inputs {
@@ -52,13 +51,17 @@ func Project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinit
 			return contractsv1.CanvasSnapshot{}, fmt.Errorf("execution %q is duplicated in the Canvas projection", input.Replay.AggregateId)
 		}
 		seenExecutions[input.Replay.AggregateId] = true
-		invocation, err := workflow.MaterializeInvocation(input.Replay)
+		candidate, err := workflow.MaterializeInvocation(input.Replay)
 		if err != nil {
 			return contractsv1.CanvasSnapshot{}, err
 		}
-		definition, ok := workflowByRef[invocation.WorkflowRef]
+		definition, ok := workflowByRef[candidate.WorkflowRef]
 		if !ok {
 			return contractsv1.CanvasSnapshot{}, errors.New("execution workflow is not pinned by the Campaign")
+		}
+		invocation, err := workflow.VerifyDefinitionBinding(input.Replay, job, campaign, definition)
+		if err != nil {
+			return contractsv1.CanvasSnapshot{}, err
 		}
 		execution, err := projectExecution(job, campaign, definition, invocation, input)
 		if err != nil {
@@ -66,9 +69,6 @@ func Project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinit
 		}
 		executions = append(executions, execution)
 		replays = append(replays, input.Replay)
-		if execution.Status == contractsv1.CanvasEntityStatusCompleted {
-			completed[executionKey(invocation.WorkflowRef, execution.NodeId)] = true
-		}
 		for _, receipt := range input.Replay.Receipts {
 			if receipt.OccurredAt.After(generatedAt) {
 				generatedAt = receipt.OccurredAt
@@ -83,7 +83,7 @@ func Project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinit
 			Job: job, Campaign: campaign, CampaignState: contractsv1.CanvasEntityStatusConfigured, Workflows: workflows,
 		},
 		Executions: executions, Replays: replays,
-		NextSafeAction: nextSafeAction(workflows, completed),
+		NextSafeAction: contractsv1.CanvasNextSafeAction{Kind: contractsv1.CanvasNextSafeActionKindNone, Reason: "No canonical next action is recorded in this read-only projection."},
 	}
 	if err := contract.ValidateDefinition("CanvasSnapshot", snapshot); err != nil {
 		return contractsv1.CanvasSnapshot{}, fmt.Errorf("canvas snapshot: %w", err)
@@ -108,7 +108,9 @@ func projectExecution(job contractsv1.JobDefinition, campaign contractsv1.Campai
 			return contractsv1.CanvasExecution{}, err
 		}
 		artifacts = material.Artifacts
-		status = contractsv1.CanvasEntityStatusCompleted
+		if terminalStatePresent(input.Replay, "node_completed") {
+			status = contractsv1.CanvasEntityStatusCompleted
+		}
 	} else if receiptTypePresent(input.Replay, contractsv1.ReceiptReceiptTypeTerminal) {
 		status = contractsv1.CanvasEntityStatusTerminal
 	}
@@ -121,13 +123,17 @@ func projectExecution(job contractsv1.JobDefinition, campaign contractsv1.Campai
 			Status: contractsv1.CanvasContextStatusMissing, Producer: requirement.Selector,
 			Consumers: []string{executionKey(invocation.WorkflowRef, invocation.Node.Id)}, EvidenceFrontier: campaign.EvidenceFrontier,
 		}
-		if edition := matchingEdition(requirement, invocation.Context); edition != nil {
+		edition, missingOptional, err := matchingEdition(requirement, invocation)
+		if err != nil {
+			return contractsv1.CanvasExecution{}, err
+		}
+		if edition != nil {
 			port.Edition = edition
 			port.Status = contractsv1.CanvasContextStatusResolved
 			if edition.Coverage == contractsv1.ContextPackEditionCoveragePartial {
 				port.Status = contractsv1.CanvasContextStatusPartial
 			}
-		} else if !requirement.Required {
+		} else if missingOptional || !requirement.Required {
 			port.Status = contractsv1.CanvasContextStatusDegraded
 		}
 		ports = append(ports, port)
@@ -188,18 +194,43 @@ func receiptTypePresent(replay contractsv1.ReplayBundle, receiptType contractsv1
 	return false
 }
 
-func matchingEdition(requirement contractsv1.ContextRequirement, editions []contractsv1.ContextPackEdition) *contractsv1.ContextPackEdition {
-	for i := range editions {
-		edition := editions[i]
-		if edition.PackType != requirement.PackType || edition.PackSchemaVersion != requirement.SchemaVersion {
-			continue
+func terminalStatePresent(replay contractsv1.ReplayBundle, state string) bool {
+	for _, receipt := range replay.Receipts {
+		if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeTerminal && receipt.Payload["state"] == state {
+			return true
 		}
-		if requirement.EditionId != nil && edition.Id != *requirement.EditionId {
-			continue
-		}
-		return &edition
 	}
-	return nil
+	return false
+}
+
+func matchingEdition(requirement contractsv1.ContextRequirement, invocation workflow.Invocation) (*contractsv1.ContextPackEdition, bool, error) {
+	for index, entry := range invocation.Bundle.Entries {
+		if entry.RequirementId != nil && *entry.RequirementId == requirement.Id {
+			edition := invocation.Context[index]
+			if edition.PackType != requirement.PackType || edition.PackSchemaVersion != requirement.SchemaVersion ||
+				(requirement.EditionId != nil && edition.Id != *requirement.EditionId) {
+				return nil, false, fmt.Errorf("Context requirement %q does not match its recorded edition", requirement.Id)
+			}
+			return &edition, false, nil
+		}
+	}
+	for _, missing := range invocation.Bundle.MissingOptional {
+		if missing == string(requirement.Id) {
+			return nil, true, nil
+		}
+	}
+	var match *contractsv1.ContextPackEdition
+	for index, edition := range invocation.Context {
+		if edition.PackType != requirement.PackType || edition.PackSchemaVersion != requirement.SchemaVersion ||
+			(requirement.EditionId != nil && edition.Id != *requirement.EditionId) {
+			continue
+		}
+		if match != nil {
+			return nil, false, fmt.Errorf("legacy Context requirement %q has an ambiguous edition binding", requirement.Id)
+		}
+		match = &invocation.Context[index]
+	}
+	return match, false, nil
 }
 
 func artifactApprovalState(artifacts []contractsv1.ActionArtifact) contractsv1.CanvasExecutionApprovalState {
@@ -219,35 +250,6 @@ func artifactApprovalState(artifacts []contractsv1.ActionArtifact) contractsv1.C
 		}
 	}
 	return state
-}
-
-func nextSafeAction(workflows []contractsv1.WorkflowDefinition, completed map[string]bool) contractsv1.CanvasNextSafeAction {
-	for _, definition := range workflows {
-		workflowRef := contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", definition.Id, definition.Version))
-		for _, node := range definition.Nodes {
-			if completed[executionKey(workflowRef, node.Id)] || !dependenciesCompleted(workflowRef, node.DependsOn, completed) {
-				continue
-			}
-			nodeID := node.Id
-			if node.Kind == contractsv1.NodeDefinitionKindApproval {
-				return contractsv1.CanvasNextSafeAction{Kind: contractsv1.CanvasNextSafeActionKindRequestApproval, WorkflowRef: &workflowRef, NodeId: &nodeID, Reason: "Human approval is required before the workflow can continue."}
-			}
-			if node.Kind == contractsv1.NodeDefinitionKindWait {
-				return contractsv1.CanvasNextSafeAction{Kind: contractsv1.CanvasNextSafeActionKindNone, WorkflowRef: &workflowRef, NodeId: &nodeID, Reason: "The workflow is waiting for its declared external event."}
-			}
-			return contractsv1.CanvasNextSafeAction{Kind: contractsv1.CanvasNextSafeActionKindStartNode, WorkflowRef: &workflowRef, NodeId: &nodeID, Reason: "All declared dependencies are complete."}
-		}
-	}
-	return contractsv1.CanvasNextSafeAction{Kind: contractsv1.CanvasNextSafeActionKindTerminal, Reason: "Every configured node has a canonical completion receipt."}
-}
-
-func dependenciesCompleted(workflowRef contractsv1.WorkflowRef, dependencies []string, completed map[string]bool) bool {
-	for _, dependency := range dependencies {
-		if !completed[executionKey(workflowRef, contractsv1.Identifier(dependency))] {
-			return false
-		}
-	}
-	return true
 }
 
 func executionKey(workflowRef contractsv1.WorkflowRef, nodeID contractsv1.Identifier) string {

@@ -205,6 +205,7 @@
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 160 },
         "kind": { "type": "string", "enum": ["context_pack"] },
+        "requirement_id": { "$ref": "#/$defs/Identifier" },
         "artifact_type": { "$ref": "#/$defs/Identifier" },
         "schema_version": { "type": "integer", "minimum": 1 },
         "sha256": { "$ref": "#/$defs/SHA256" },
@@ -330,7 +331,7 @@
       "enum": ["configured", "eligible", "admitted", "running", "awaiting_human", "blocked", "completed", "terminal"]
     },
     "CanvasContextStatus": {
-      "enum": ["resolved", "missing", "stale", "partial", "degraded", "invalid"]
+      "enum": ["configured", "resolved", "missing", "stale", "partial", "degraded", "invalid"]
     },
     "CanvasReceiptLink": {
       "type": "object",

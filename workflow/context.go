@@ -194,8 +194,9 @@ func resolveContext(ctx context.Context, registry *Registry, request RunRequest,
 			return result, err
 		}
 		result.Packs = append(result.Packs, pack)
+		requirementID := requirement.Id
 		result.Bundle.Entries = append(result.Bundle.Entries, contractsv1.ContextPackRef{
-			Id: pack.Id, Kind: contractsv1.ContextPackRefKindContextPack, ArtifactType: pack.PackType,
+			Id: pack.Id, Kind: contractsv1.ContextPackRefKindContextPack, RequirementId: &requirementID, ArtifactType: pack.PackType,
 			SchemaVersion: pack.PackSchemaVersion, Sha256: contractsv1.SHA256(packHash), MediaType: "application/json",
 		})
 	}
@@ -240,12 +241,19 @@ func VerifyContextBundle(bundle contractsv1.ContextBundle, packs []contractsv1.C
 	if len(bundle.Entries) != len(packs) {
 		return errors.New("context bundle entries do not match the exact pack set")
 	}
+	seenRequirements := make(map[contractsv1.Identifier]bool, len(bundle.Entries))
 	for index, pack := range packs {
 		hash, err := Digest(pack)
 		if err != nil {
 			return err
 		}
 		entry := bundle.Entries[index]
+		if entry.RequirementId != nil {
+			if seenRequirements[*entry.RequirementId] {
+				return errors.New("context bundle requirement binding is duplicated")
+			}
+			seenRequirements[*entry.RequirementId] = true
+		}
 		if entry.Id != pack.Id || entry.ArtifactType != pack.PackType || entry.SchemaVersion != pack.PackSchemaVersion || entry.Sha256 != contractsv1.SHA256(hash) {
 			return errors.New("context bundle pack reference does not match")
 		}
