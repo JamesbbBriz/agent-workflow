@@ -260,6 +260,9 @@ func VerifyContextBundle(bundle contractsv1.ContextBundle, packs []contractsv1.C
 }
 
 func validatePack(pack contractsv1.ContextPackEdition, requirement contractsv1.ContextRequirement, scope contractsv1.Scope, cutoff time.Time) error {
+	if err := validateBoundedJSON("context pack content", pack.Content); err != nil {
+		return err
+	}
 	if err := contract.ValidateDefinition("ContextPackEdition", pack); err != nil {
 		return err
 	}

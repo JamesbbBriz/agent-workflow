@@ -136,7 +136,7 @@ func TestDemoRunsOneContextBoundNodeAndReturnsReplay(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
 		t.Fatalf("decode demo response: %v\n%s", err, stdout.String())
 	}
-	if !response.OK || len(response.Data.Artifacts) != 1 || len(response.Data.Replay.Receipts) != 5 {
+	if !response.OK || len(response.Data.Artifacts) != 1 || len(response.Data.Replay.Receipts) != 7 {
 		t.Fatalf("unexpected demo response: %s", stdout.String())
 	}
 }

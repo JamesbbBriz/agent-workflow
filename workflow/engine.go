@@ -125,14 +125,21 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 		return RunResult{}, err
 	}
 	if replay, err := e.ledger.Replay(aggregateID); err == nil {
-		material, err := MaterializeReplay(replay, e.outputs)
-		if err != nil {
+		if invocation, ok, err := materializeInvocation(replay); err != nil {
 			return RunResult{}, err
+		} else if ok {
+			if err := validateReplayBinding(invocation, request, compiled, node, jobHash, campaignHash); err != nil {
+				return RunResult{}, err
+			}
+			if hasReceipt(replay, contractsv1.ReceiptReceiptTypeTerminal) {
+				material, err := MaterializeReplay(replay, e.outputs)
+				if err != nil {
+					return RunResult{}, err
+				}
+				return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: material.Artifacts, Replay: replay}, nil
+			}
+			return e.resumeInvocation(ctx, aggregateID, request.OccurredAt, compiled, invocation, replay)
 		}
-		if err := validateReplayBinding(material.Invocation, request, compiled, node, jobHash, campaignHash); err != nil {
-			return RunResult{}, err
-		}
-		return RunResult{Compiled: compiled, Bundle: material.Invocation.Bundle, Artifacts: material.Artifacts, Replay: replay}, nil
 	} else if !errors.Is(err, ErrReplayEmpty) {
 		return RunResult{}, err
 	}
@@ -175,6 +182,42 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 		Bundle: resolved.Bundle, Capabilities: manifest, Budget: node.Definition.Budget, Deadline: deadline,
 		InputHashes: []contractsv1.SHA256{jobHash, campaignHash, compiled.CompileHash, resolved.Bundle.BundleHash, manifest.ManifestHash},
 	}
+	preReceipts, err := preExecutionReceipts(aggregateID, request.OccurredAt, compileReceipt, invocation)
+	if err != nil {
+		return RunResult{}, err
+	}
+	for _, receipt := range preReceipts {
+		if err := e.ledger.Append(receipt); err != nil {
+			return RunResult{}, err
+		}
+	}
+	replay, err := e.ledger.Replay(aggregateID)
+	if err != nil {
+		return RunResult{}, err
+	}
+	return e.resumeInvocation(ctx, aggregateID, request.OccurredAt, compiled, invocation, replay)
+}
+
+func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occurredAt time.Time, compiled CompiledWorkflow, invocation Invocation, replay contractsv1.ReplayBundle) (RunResult, error) {
+	if artifacts, ok, err := materializeArtifacts(replay); err != nil {
+		return RunResult{}, err
+	} else if ok {
+		if err := validateArtifacts(artifacts, invocation, e.outputs); err != nil {
+			return RunResult{}, err
+		}
+		if err := e.finishInvocation(aggregateID, occurredAt, invocation, artifacts, replay); err != nil {
+			return RunResult{}, err
+		}
+		completed, err := e.ledger.Replay(aggregateID)
+		if err != nil {
+			return RunResult{}, err
+		}
+		return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: artifacts, Replay: completed}, nil
+	}
+	duration := time.Until(invocation.Deadline)
+	if duration <= 0 {
+		duration = time.Nanosecond
+	}
 	providerContext, cancel := context.WithTimeout(ctx, duration)
 	defer cancel()
 	artifacts, err := e.provider.Execute(providerContext, invocation)
@@ -184,29 +227,82 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 	if err := validateArtifacts(artifacts, invocation, e.outputs); err != nil {
 		return RunResult{}, err
 	}
+	if err := e.finishInvocation(aggregateID, occurredAt, invocation, artifacts, replay); err != nil {
+		return RunResult{}, err
+	}
+	replay, err = e.ledger.Replay(aggregateID)
+	if err != nil {
+		return RunResult{}, err
+	}
+	return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: artifacts, Replay: replay}, nil
+}
+
+func (e *Engine) finishInvocation(aggregateID string, occurredAt time.Time, invocation Invocation, artifacts []contractsv1.ActionArtifact, replay contractsv1.ReplayBundle) error {
 	artifactHashes := make([]contractsv1.SHA256, 0, len(artifacts))
 	for _, artifact := range artifacts {
 		hash, err := Digest(artifact)
 		if err != nil {
-			return RunResult{}, err
+			return err
 		}
 		artifactHashes = append(artifactHashes, contractsv1.SHA256(hash))
 	}
 	sort.Slice(artifactHashes, func(i, j int) bool { return artifactHashes[i] < artifactHashes[j] })
-	receipts, err := executionReceipts(aggregateID, request.OccurredAt, compileReceipt, invocation, artifacts, artifactHashes)
+	invocationReceipt, ok := receiptByType(replay, contractsv1.ReceiptReceiptTypeInvocation)
+	if !ok {
+		return errors.New("replay has no invocation receipt")
+	}
+	receipts, err := postExecutionReceipts(aggregateID, occurredAt, invocationReceipt, invocation, artifacts, artifactHashes)
 	if err != nil {
-		return RunResult{}, err
+		return err
 	}
 	for _, receipt := range receipts {
 		if err := e.ledger.Append(receipt); err != nil {
-			return RunResult{}, err
+			return err
 		}
 	}
-	replay, err := e.ledger.Replay(aggregateID)
-	if err != nil {
-		return RunResult{}, err
+	return nil
+}
+
+func hasReceipt(bundle contractsv1.ReplayBundle, receiptType contractsv1.ReceiptReceiptType) bool {
+	_, ok := receiptByType(bundle, receiptType)
+	return ok
+}
+
+func receiptByType(bundle contractsv1.ReplayBundle, receiptType contractsv1.ReceiptReceiptType) (contractsv1.Receipt, bool) {
+	for _, receipt := range bundle.Receipts {
+		if receipt.ReceiptType == receiptType {
+			return receipt, true
+		}
 	}
-	return RunResult{Compiled: compiled, Bundle: resolved.Bundle, Artifacts: artifacts, Replay: replay}, nil
+	return contractsv1.Receipt{}, false
+}
+
+func materializeInvocation(bundle contractsv1.ReplayBundle) (Invocation, bool, error) {
+	if err := VerifyReplay(bundle); err != nil {
+		return Invocation{}, false, err
+	}
+	for _, receipt := range bundle.Receipts {
+		if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeInvocation {
+			var invocation Invocation
+			if err := decodePayload(receipt.Payload["invocation"], &invocation); err != nil {
+				return Invocation{}, false, fmt.Errorf("materialize invocation: %w", err)
+			}
+			return invocation, true, nil
+		}
+	}
+	return Invocation{}, false, nil
+}
+
+func materializeArtifacts(bundle contractsv1.ReplayBundle) ([]contractsv1.ActionArtifact, bool, error) {
+	receipt, ok := receiptByType(bundle, contractsv1.ReceiptReceiptTypeResult)
+	if !ok {
+		return nil, false, nil
+	}
+	var artifacts []contractsv1.ActionArtifact
+	if err := decodePayload(receipt.Payload["artifacts"], &artifacts); err != nil {
+		return nil, false, fmt.Errorf("materialize artifacts: %w", err)
+	}
+	return artifacts, true, nil
 }
 
 func contextPackByType(packs []contractsv1.ContextPackEdition, packType string) (contractsv1.ContextPackEdition, bool) {
@@ -354,6 +450,9 @@ func validateArtifacts(artifacts []contractsv1.ActionArtifact, invocation Invoca
 	}
 	ids := make(map[string]struct{})
 	for _, artifact := range artifacts {
+		if err := validateBoundedJSON("action artifact content", artifact.Content); err != nil {
+			return err
+		}
 		if err := contract.ValidateDefinition("ActionArtifact", artifact); err != nil {
 			return err
 		}
@@ -399,33 +498,50 @@ func validateArtifacts(artifacts []contractsv1.ActionArtifact, invocation Invoca
 	return nil
 }
 
-func executionReceipts(aggregateID string, occurredAt time.Time, compileReceipt contractsv1.Receipt, invocation Invocation, artifacts []contractsv1.ActionArtifact, artifactHashes []contractsv1.SHA256) ([]contractsv1.Receipt, error) {
+func preExecutionReceipts(aggregateID string, occurredAt time.Time, compileReceipt contractsv1.Receipt, invocation Invocation) ([]contractsv1.Receipt, error) {
 	receipts := []contractsv1.Receipt{compileReceipt}
 	previous := compileReceipt.ReceiptHash
-	invocationReceipt, err := sealReceipt(aggregateID, 2, contractsv1.ReceiptReceiptTypeInvocation, occurredAt, &previous,
+	for _, pack := range invocation.Context {
+		packHash, err := Digest(pack)
+		if err != nil {
+			return nil, err
+		}
+		packReceipt, err := sealReceipt(aggregateID, len(receipts)+1, contractsv1.ReceiptReceiptTypePackEdition, occurredAt, &previous,
+			[]contractsv1.SHA256{pack.ContentSha256}, []contractsv1.SHA256{contractsv1.SHA256(packHash)}, map[string]any{"pack": pack})
+		if err != nil {
+			return nil, err
+		}
+		receipts = append(receipts, packReceipt)
+		previous = packReceipt.ReceiptHash
+	}
+	invocationReceipt, err := sealReceipt(aggregateID, len(receipts)+1, contractsv1.ReceiptReceiptTypeInvocation, occurredAt, &previous,
 		invocation.InputHashes, nil,
 		map[string]any{"invocation": invocation})
 	if err != nil {
 		return nil, err
 	}
-	receipts = append(receipts, invocationReceipt)
-	previous = invocationReceipt.ReceiptHash
-	providerReceipt, err := sealReceipt(aggregateID, 3, contractsv1.ReceiptReceiptTypeProviderExecution, occurredAt, &previous,
+	return append(receipts, invocationReceipt), nil
+}
+
+func postExecutionReceipts(aggregateID string, occurredAt time.Time, previousReceipt contractsv1.Receipt, invocation Invocation, artifacts []contractsv1.ActionArtifact, artifactHashes []contractsv1.SHA256) ([]contractsv1.Receipt, error) {
+	version := previousReceipt.AggregateVersion + 1
+	previous := previousReceipt.ReceiptHash
+	providerReceipt, err := sealReceipt(aggregateID, version, contractsv1.ReceiptReceiptTypeProviderExecution, occurredAt, &previous,
 		[]contractsv1.SHA256{contractsv1.SHA256(invocation.IdempotencyKey)}, artifactHashes,
 		map[string]any{"node_id": invocation.Node.Id})
 	if err != nil {
 		return nil, err
 	}
-	receipts = append(receipts, providerReceipt)
+	receipts := []contractsv1.Receipt{providerReceipt}
 	previous = providerReceipt.ReceiptHash
-	resultReceipt, err := sealReceipt(aggregateID, 4, contractsv1.ReceiptReceiptTypeResult, occurredAt, &previous,
+	resultReceipt, err := sealReceipt(aggregateID, version+1, contractsv1.ReceiptReceiptTypeResult, occurredAt, &previous,
 		artifactHashes, artifactHashes, map[string]any{"accepted": true, "artifacts": artifacts})
 	if err != nil {
 		return nil, err
 	}
 	receipts = append(receipts, resultReceipt)
 	previous = resultReceipt.ReceiptHash
-	terminalReceipt, err := sealReceipt(aggregateID, 5, contractsv1.ReceiptReceiptTypeTerminal, occurredAt, &previous,
+	terminalReceipt, err := sealReceipt(aggregateID, version+2, contractsv1.ReceiptReceiptTypeTerminal, occurredAt, &previous,
 		artifactHashes, nil, map[string]any{"state": "node_completed"})
 	if err != nil {
 		return nil, err
@@ -512,6 +628,25 @@ func MaterializeReplay(bundle contractsv1.ReplayBundle, outputs OutputCatalog) (
 	}
 	if err := VerifyContextBundle(material.Invocation.Bundle, material.Invocation.Context); err != nil {
 		return ReplayMaterial{}, err
+	}
+	for _, pack := range material.Invocation.Context {
+		found := false
+		for _, receipt := range bundle.Receipts {
+			if receipt.ReceiptType != contractsv1.ReceiptReceiptTypePackEdition {
+				continue
+			}
+			var recorded contractsv1.ContextPackEdition
+			if err := decodePayload(receipt.Payload["pack"], &recorded); err != nil {
+				return ReplayMaterial{}, err
+			}
+			if reflect.DeepEqual(recorded, pack) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ReplayMaterial{}, fmt.Errorf("context pack %q has no exact edition receipt", pack.Id)
+		}
 	}
 	intent, ok := contextPackByType(material.Invocation.Context, "intent-chain")
 	if !ok || !reflect.DeepEqual(intent, material.Invocation.IntentChain) {

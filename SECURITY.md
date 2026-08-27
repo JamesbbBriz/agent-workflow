@@ -11,7 +11,7 @@ Report vulnerabilities privately through GitHub Security Advisories for this rep
 ## Trust boundary
 
 - The Go Core is the only canonical mutation authority.
-- Provider Agents receive exact staged inputs and a Capability Manifest; they do not receive ambient shell, filesystem, database, browser, or credential authority.
+- Provider Agents receive exact staged inputs and a Capability Manifest. This library does not sandbox arbitrary in-process Go implementations of `Provider`; deployments must put provider code behind a sandboxed adapter that exposes no ambient shell, filesystem, database, browser, or credential authority.
 - Context and artifact bytes are size-bounded, strictly decoded, root-confined where applicable, and SHA-256 verified before use.
 - Unknown schema versions and fields fail closed.
 - Consequential actions require explicit preview/confirm or human approval bound to exact hashes and revisions.

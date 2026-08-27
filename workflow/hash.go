@@ -7,6 +7,19 @@ import (
 	"fmt"
 )
 
+const maxContentBytes = 1 << 20
+
+func validateBoundedJSON(label string, value any) error {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", label, err)
+	}
+	if len(body) > maxContentBytes {
+		return fmt.Errorf("%s exceeds %d bytes", label, maxContentBytes)
+	}
+	return nil
+}
+
 func Digest(value any) (string, error) {
 	body, err := json.Marshal(value)
 	if err != nil {

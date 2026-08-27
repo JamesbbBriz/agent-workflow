@@ -105,6 +105,9 @@ func validateSlotFlow(definition contractsv1.WorkflowDefinition) error {
 	for _, node := range definition.Nodes {
 		nodes[string(node.Id)] = node
 		for _, output := range node.OutputSlots {
+			if output.ArtifactKind != nil && *output.ArtifactKind == contractsv1.SlotArtifactKindContextPack {
+				return fmt.Errorf("node %q output slot %q uses reserved context_pack output support", node.Id, output.Id)
+			}
 			if owner, exists := globalOutputIDs[string(output.Id)]; exists {
 				return fmt.Errorf("output slot %q is declared by both %q and %q", output.Id, owner, node.Id)
 			}

@@ -24,7 +24,7 @@ Workflow-level Context defaults are an authoring convenience. Compilation expand
 
 Missing required Context becomes `needs_context`. Missing optional Context may produce a degraded Context Bundle if the Node contract permits it. No Node may silently widen its context to an entire project or reinterpret later evidence.
 
-The v1 compiler uses a static Go registry. `CatalogProducer` selects an immutable Pack edition as of the Campaign evidence cutoff; `IntentProducer` deterministically materializes the Job → Campaign → Workflow Intent chain from the compile receipt. Node outputs declare Context Pack or Action Artifact kind and their downstream consumers; compilation rejects unknown consumers and broken direct-dependency slot flows.
+The v1 compiler uses a static Go registry. `CatalogProducer` selects an immutable Pack edition as of the Campaign evidence cutoff; `IntentProducer` deterministically materializes the Job → Campaign → Workflow Intent chain from the compile receipt. Node outputs declare their downstream consumers; v1 executes Action Artifact outputs and rejects the reserved Context Pack output kind before provider work. Compilation also rejects unknown consumers and broken direct-dependency slot flows.
 
 ## Audit chain
 
