@@ -15,6 +15,7 @@ go vet ./...
 go build ./...
 npm ci
 npm run check:generated
+npm run check:types
 git diff --check
 ```
 

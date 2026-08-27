@@ -39,7 +39,7 @@ type ActionArtifact struct {
 	SchemaVersion ActionArtifactSchemaVersion `json:"schema_version"`
 
 	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
-	WorkflowRef string `json:"workflow_ref"`
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
 }
 
 type ActionArtifactApprovalState string
@@ -157,7 +157,7 @@ type CampaignDefinition struct {
 	Scope Scope `json:"scope"`
 
 	// WorkflowPlan corresponds to the JSON schema field "workflow_plan".
-	WorkflowPlan NonEmptyStrings `json:"workflow_plan"`
+	WorkflowPlan []WorkflowRef `json:"workflow_plan"`
 }
 
 type CampaignDefinitionKind string
@@ -216,7 +216,7 @@ type ContextBundle struct {
 	Degraded bool `json:"degraded"`
 
 	// Entries corresponds to the JSON schema field "entries".
-	Entries []ArtifactRef `json:"entries"`
+	Entries []ContextPackRef `json:"entries"`
 
 	// EvidenceCutoff corresponds to the JSON schema field "evidence_cutoff".
 	EvidenceCutoff time.Time `json:"evidence_cutoff"`
@@ -240,7 +240,7 @@ type ContextBundle struct {
 	SchemaVersion ContextBundleSchemaVersion `json:"schema_version"`
 
 	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
-	WorkflowRef string `json:"workflow_ref"`
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
 }
 
 type ContextBundleKind string
@@ -310,6 +310,30 @@ type ContextPackEditionKind string
 const ContextPackEditionKindContextPackEdition ContextPackEditionKind = "context_pack_edition"
 
 type ContextPackEditionSchemaVersion int
+
+type ContextPackRef struct {
+	// ArtifactType corresponds to the JSON schema field "artifact_type".
+	ArtifactType Identifier `json:"artifact_type"`
+
+	// Id corresponds to the JSON schema field "id".
+	Id string `json:"id"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ContextPackRefKind `json:"kind"`
+
+	// MediaType corresponds to the JSON schema field "media_type".
+	MediaType string `json:"media_type"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion int `json:"schema_version"`
+
+	// Sha256 corresponds to the JSON schema field "sha256".
+	Sha256 SHA256 `json:"sha256"`
+}
+
+type ContextPackRefKind string
+
+const ContextPackRefKindContextPack ContextPackRefKind = "context_pack"
 
 type ContextRequirement struct {
 	// AllowPartial corresponds to the JSON schema field "allow_partial".
@@ -394,21 +418,7 @@ const IntentCardKindCampaign IntentCardKind = "campaign"
 const IntentCardKindJob IntentCardKind = "job"
 const IntentCardKindWorkflow IntentCardKind = "workflow"
 
-type ReceiptPreviousReceiptHash_0 = SHA256
-
-type ScopeLabels map[string]string
-
 type IntentCardSchemaVersion int
-
-type Strings []string
-
-type NonEmptyStrings []string
-
-type JobDefinitionKind string
-
-const JobDefinitionKindJobDefinition JobDefinitionKind = "job_definition"
-
-type JobDefinitionSchemaVersion int
 
 type JobDefinition struct {
 	// Budget corresponds to the JSON schema field "budget".
@@ -436,27 +446,11 @@ type JobDefinition struct {
 	Scope Scope `json:"scope"`
 }
 
-type Slot struct {
-	// ArtifactType corresponds to the JSON schema field "artifact_type".
-	ArtifactType Identifier `json:"artifact_type"`
+type JobDefinitionKind string
 
-	// Id corresponds to the JSON schema field "id".
-	Id Identifier `json:"id"`
+const JobDefinitionKindJobDefinition JobDefinitionKind = "job_definition"
 
-	// MaxItems corresponds to the JSON schema field "max_items".
-	MaxItems int `json:"max_items"`
-
-	// MinItems corresponds to the JSON schema field "min_items".
-	MinItems int `json:"min_items"`
-}
-
-type NodeDefinitionKind string
-
-const NodeDefinitionKindDeterministic NodeDefinitionKind = "deterministic"
-const NodeDefinitionKindAgent NodeDefinitionKind = "agent"
-const NodeDefinitionKindApproval NodeDefinitionKind = "approval"
-const NodeDefinitionKindWait NodeDefinitionKind = "wait"
-const NodeDefinitionKindTerminal NodeDefinitionKind = "terminal"
+type JobDefinitionSchemaVersion int
 
 type NodeDefinition struct {
 	// BlockerCodes corresponds to the JSON schema field "blocker_codes".
@@ -493,35 +487,15 @@ type NodeDefinition struct {
 	OutputSlots []Slot `json:"output_slots"`
 }
 
-type ReceiptKind string
+type NodeDefinitionKind string
 
-const ReceiptKindReceipt ReceiptKind = "receipt"
+const NodeDefinitionKindAgent NodeDefinitionKind = "agent"
+const NodeDefinitionKindApproval NodeDefinitionKind = "approval"
+const NodeDefinitionKindDeterministic NodeDefinitionKind = "deterministic"
+const NodeDefinitionKindTerminal NodeDefinitionKind = "terminal"
+const NodeDefinitionKindWait NodeDefinitionKind = "wait"
 
-type ReceiptPayload map[string]interface{}
-
-type Scope struct {
-	// Labels corresponds to the JSON schema field "labels".
-	Labels ScopeLabels `json:"labels,omitempty,omitzero"`
-
-	// SubjectIds corresponds to the JSON schema field "subject_ids".
-	SubjectIds NonEmptyStrings `json:"subject_ids"`
-
-	// SubjectType corresponds to the JSON schema field "subject_type".
-	SubjectType Identifier `json:"subject_type"`
-}
-
-type ReceiptReceiptType string
-
-const ReceiptReceiptTypeCompile ReceiptReceiptType = "compile"
-const ReceiptReceiptTypeAdmission ReceiptReceiptType = "admission"
-const ReceiptReceiptTypePackEdition ReceiptReceiptType = "pack_edition"
-const ReceiptReceiptTypeInvocation ReceiptReceiptType = "invocation"
-const ReceiptReceiptTypeProviderExecution ReceiptReceiptType = "provider_execution"
-const ReceiptReceiptTypeResult ReceiptReceiptType = "result"
-const ReceiptReceiptTypeApproval ReceiptReceiptType = "approval"
-const ReceiptReceiptTypeTerminal ReceiptReceiptType = "terminal"
-
-type ReceiptSchemaVersion int
+type NonEmptyStrings []string
 
 type Receipt struct {
 	// Actor corresponds to the JSON schema field "actor".
@@ -565,11 +539,24 @@ type Receipt struct {
 	SchemaVersion ReceiptSchemaVersion `json:"schema_version"`
 }
 
-type ReplayBundleKind string
+type ReceiptKind string
 
-const ReplayBundleKindReplayBundle ReplayBundleKind = "replay_bundle"
+const ReceiptKindReceipt ReceiptKind = "receipt"
 
-type ReplayBundleSchemaVersion int
+type ReceiptPayload map[string]interface{}
+
+type ReceiptReceiptType string
+
+const ReceiptReceiptTypeAdmission ReceiptReceiptType = "admission"
+const ReceiptReceiptTypeApproval ReceiptReceiptType = "approval"
+const ReceiptReceiptTypeCompile ReceiptReceiptType = "compile"
+const ReceiptReceiptTypeInvocation ReceiptReceiptType = "invocation"
+const ReceiptReceiptTypePackEdition ReceiptReceiptType = "pack_edition"
+const ReceiptReceiptTypeProviderExecution ReceiptReceiptType = "provider_execution"
+const ReceiptReceiptTypeResult ReceiptReceiptType = "result"
+const ReceiptReceiptTypeTerminal ReceiptReceiptType = "terminal"
+
+type ReceiptSchemaVersion int
 
 type ReplayBundle struct {
 	// AggregateId corresponds to the JSON schema field "aggregate_id".
@@ -591,11 +578,44 @@ type ReplayBundle struct {
 	SchemaVersion ReplayBundleSchemaVersion `json:"schema_version"`
 }
 
-type WorkflowDefinitionKind string
+type ReplayBundleKind string
 
-const WorkflowDefinitionKindWorkflowDefinition WorkflowDefinitionKind = "workflow_definition"
+const ReplayBundleKindReplayBundle ReplayBundleKind = "replay_bundle"
 
-type WorkflowDefinitionSchemaVersion int
+type ReplayBundleSchemaVersion int
+
+type SHA256 string
+
+type Scope struct {
+	// Labels corresponds to the JSON schema field "labels".
+	Labels ScopeLabels `json:"labels,omitempty,omitzero"`
+
+	// SubjectIds corresponds to the JSON schema field "subject_ids".
+	SubjectIds NonEmptyStrings `json:"subject_ids"`
+
+	// SubjectType corresponds to the JSON schema field "subject_type".
+	SubjectType Identifier `json:"subject_type"`
+}
+
+type ScopeLabels map[string]string
+
+type ReceiptPreviousReceiptHash_0 = SHA256
+
+type Slot struct {
+	// ArtifactType corresponds to the JSON schema field "artifact_type".
+	ArtifactType Identifier `json:"artifact_type"`
+
+	// Id corresponds to the JSON schema field "id".
+	Id Identifier `json:"id"`
+
+	// MaxItems corresponds to the JSON schema field "max_items".
+	MaxItems int `json:"max_items"`
+
+	// MinItems corresponds to the JSON schema field "min_items".
+	MinItems int `json:"min_items"`
+}
+
+type Strings []string
 
 type WorkflowDefinition struct {
 	// Blockers corresponds to the JSON schema field "blockers".
@@ -632,4 +652,10 @@ type WorkflowDefinition struct {
 	Version int `json:"version"`
 }
 
-type SHA256 string
+type WorkflowDefinitionKind string
+
+const WorkflowDefinitionKindWorkflowDefinition WorkflowDefinitionKind = "workflow_definition"
+
+type WorkflowDefinitionSchemaVersion int
+
+type WorkflowRef string

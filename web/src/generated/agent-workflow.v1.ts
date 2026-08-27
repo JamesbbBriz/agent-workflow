@@ -51,7 +51,7 @@ export interface Budget {
 }
 
 export interface EvidenceFrontier {
-    cutoff:        Date;
+    cutoff:        string;
     source_hashes: string[];
 }
 
@@ -102,7 +102,7 @@ export interface ContextBundle {
     campaign_id:       string;
     degraded:          boolean;
     entries:           EntryElement[];
-    evidence_cutoff:   Date;
+    evidence_cutoff:   string;
     id:                string;
     job_id:            string;
     kind:              ContextBundleKind;
@@ -121,22 +121,22 @@ export interface EntryElement {
     sha256:         string;
 }
 
-export type EntryKind = "context_pack" | "action_artifact" | "receipt";
+export type EntryKind = "context_pack";
 
 export type ContextBundleKind = "context_bundle";
 
 export interface ContextPackEdition {
     authority:              ContextPackEditionAuthority;
-    captured_at:            Date;
+    captured_at:            string;
     content:                unknown[] | { [key: string]: unknown };
     content_sha256:         string;
     coverage:               Coverage;
-    expires_at:             Date;
+    expires_at:             string;
     id:                     string;
     kind:                   ContextPackEditionKind;
     pack_schema_version:    number;
     pack_type:              string;
-    provenance:             [EntryElement, ...EntryElement[]];
+    provenance:             [ProvenanceElement, ...ProvenanceElement[]];
     schema_version:         number;
     scope:                  Scope;
     supersedes_edition_id?: string;
@@ -147,6 +147,17 @@ export type ContextPackEditionAuthority = "canonical" | "external_observation" |
 export type Coverage = "complete" | "partial";
 
 export type ContextPackEditionKind = "context_pack_edition";
+
+export interface ProvenanceElement {
+    artifact_type:  string;
+    id:             string;
+    kind:           ProvenanceKind;
+    media_type:     string;
+    schema_version: number;
+    sha256:         string;
+}
+
+export type ProvenanceKind = "context_pack" | "action_artifact" | "receipt";
 
 export interface JobDefinition {
     budget:              Budget;
@@ -168,7 +179,7 @@ export interface Receipt {
     id:                    string;
     input_hashes:          string[];
     kind:                  ReceiptKind;
-    occurred_at:           Date;
+    occurred_at:           string;
     output_hashes:         string[];
     payload?:              { [key: string]: unknown };
     previous_receipt_hash: null | string;

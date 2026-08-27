@@ -4,10 +4,12 @@
   "scripts": {
     "generate": "npm run generate:go && npm run generate:ts",
     "generate:go": "mkdir -p pkg/contractsv1 && go run github.com/atombender/go-jsonschema@v0.24.1 --package contractsv1 --struct-name-from-title --only-models --tags json --output pkg/contractsv1/zz_generated.go contracts/codegen.v1.schema.json",
-    "generate:ts": "mkdir -p web/src/generated && quicktype --lang typescript --just-types --src contracts/codegen.v1.schema.json --src-lang schema --out web/src/generated/agent-workflow.v1.ts",
-    "check:generated": "npm run generate && git diff --exit-code -- pkg/contractsv1/zz_generated.go web/src/generated/agent-workflow.v1.ts"
+    "generate:ts": "mkdir -p web/src/generated && quicktype --lang typescript --just-types --no-date-times --src contracts/codegen.v1.schema.json --src-lang schema --out web/src/generated/agent-workflow.v1.ts",
+    "check:generated": "sh scripts/check-generated.sh",
+    "check:types": "tsc --noEmit --strict --skipLibCheck --target ES2022 --moduleResolution node web/src/contract-parity.ts"
   },
   "devDependencies": {
-    "quicktype": "26.0.0"
+    "quicktype": "26.0.0",
+    "typescript": "5.9.2"
   }
 }
