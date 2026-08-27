@@ -11,9 +11,11 @@
     "check:types": "tsc --noEmit -p web/tsconfig.json",
     "web:dev": "vite --config web/vite.config.ts",
     "web:build": "vite build --config web/vite.config.ts",
-    "web:test": "vitest run --config web/vite.config.ts"
+    "web:test": "vitest run --config web/vite.config.ts",
+    "web:e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",

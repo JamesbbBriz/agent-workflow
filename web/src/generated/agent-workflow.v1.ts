@@ -1,14 +1,20 @@
 export interface AgentWorkflowV1 {
-    action_artifact?:      ActionArtifact;
-    campaign_definition?:  CampaignDefinition;
-    canvas_snapshot?:      CanvasSnapshot;
-    capability_manifest?:  CapabilityManifest;
-    context_bundle?:       Bundle;
-    context_pack_edition?: Edition;
-    job_definition?:       Job;
-    receipt?:              ReplayBundleReceipt;
-    replay_bundle?:        ReplayBundleElement;
-    workflow_definition?:  WorkflowDefinitionElement;
+    action_artifact?:            ActionArtifact;
+    approval_brief?:             ApprovalBrief;
+    approval_preview?:           ApprovalPreview;
+    authoring_catalog?:          AuthoringCatalog;
+    campaign_definition?:        CampaignDefinition;
+    canvas_snapshot?:            CanvasSnapshot;
+    capability_manifest?:        CapabilityManifest;
+    context_bundle?:             Bundle;
+    context_pack_edition?:       Edition;
+    job_definition?:             Job;
+    receipt?:                    ReplayBundleReceipt;
+    replay_bundle?:              ReplayBundleElement;
+    workflow_admission?:         WorkflowAdmission;
+    workflow_admission_preview?: WorkflowAdmissionPreview;
+    workflow_definition?:        WorkflowDefinitionElement;
+    workflow_lint_report?:       WorkflowLintReport;
 }
 
 export interface ActionArtifact {
@@ -29,6 +35,89 @@ export interface ActionArtifact {
 export type ApprovalState = "not_required" | "pending" | "approved" | "rejected" | "stale";
 
 export type ActionArtifactKind = "action_artifact";
+
+export interface ApprovalBrief {
+    action:                ActionArtifact;
+    evidence:              [EvidenceElement, ...EvidenceElement[]];
+    id:                    string;
+    kind:                  ApprovalBriefKind;
+    options:               [OptionElement, OptionElement, ...OptionElement[]];
+    recommendation:        string;
+    recommended_option_id: string;
+    risks:                 [string, ...string[]];
+    schema_version:        number;
+    title:                 string;
+}
+
+export interface EvidenceElement {
+    artifact_type:  string;
+    id:             string;
+    kind:           EvidenceKind;
+    media_type:     string;
+    schema_version: number;
+    sha256:         string;
+}
+
+export type EvidenceKind = "context_pack" | "action_artifact" | "receipt";
+
+export type ApprovalBriefKind = "approval_brief";
+
+export interface OptionElement {
+    decision:  Decision;
+    id:        string;
+    label:     string;
+    tradeoffs: [string, ...string[]];
+}
+
+export type Decision = "approve" | "reject";
+
+export interface ApprovalPreview {
+    actor:               string;
+    base_revision:       number;
+    brief:               ApprovalBrief;
+    brief_hash:          string;
+    commit_token:        string;
+    kind:                ApprovalPreviewKind;
+    preview_hash:        string;
+    schema_version:      number;
+    source_aggregate_id: string;
+}
+
+export type ApprovalPreviewKind = "approval_preview";
+
+export interface AuthoringCatalog {
+    approval_policies: string[];
+    blockers:          string[];
+    capabilities:      CapabilityElement[];
+    catalog_hash:      string;
+    executors:         ExecutorElement[];
+    kind:              AuthoringCatalogKind;
+    output_schemas:    string[];
+    producers:         ProducerElement[];
+    schema_version:    number;
+}
+
+export interface CapabilityElement {
+    authority: CapabilityAuthority;
+    name:      string;
+}
+
+export type CapabilityAuthority = "read" | "local_mutation" | "canonical_mutation" | "external_mutation" | "system_recovery";
+
+export interface ExecutorElement {
+    node_kind: NodeKindEnum;
+    ref:       string;
+}
+
+export type NodeKindEnum = "deterministic" | "agent" | "approval" | "wait" | "terminal";
+
+export type AuthoringCatalogKind = "authoring_catalog";
+
+export interface ProducerElement {
+    pack_type:      string;
+    schema_version: number;
+    selector:       string;
+}
 
 export interface CampaignDefinition {
     archetype:         string;
@@ -82,20 +171,54 @@ export interface Scope {
 }
 
 export interface CanvasSnapshot {
-    definition:       Definition;
-    executions:       ExecutionElement[];
-    generated_at:     string;
-    kind:             CanvasSnapshotKind;
-    next_safe_action: NextSafeAction;
-    replays:          ReplayBundleElement[];
-    schema_version:   number;
+    admission_replays?: ReplayBundleElement[];
+    approval_replays?:  ReplayBundleElement[];
+    definition:         Definition;
+    executions:         ExecutionElement[];
+    generated_at:       string;
+    kind:               CanvasSnapshotKind;
+    next_safe_action:   NextSafeAction;
+    replays:            ReplayBundleElement[];
+    schema_version:     number;
 }
 
+export interface ReplayBundleElement {
+    aggregate_id:        string;
+    bundle_hash:         string;
+    cutoff_receipt_hash: string;
+    kind:                ReplayBundleKind;
+    receipts:            ReplayBundleReceipt[];
+    schema_version:      number;
+}
+
+export type ReplayBundleKind = "replay_bundle";
+
+export interface ReplayBundleReceipt {
+    actor?:                string;
+    aggregate_id:          string;
+    aggregate_version:     number;
+    id:                    string;
+    input_hashes:          string[];
+    kind:                  ReceiptKind;
+    occurred_at:           string;
+    output_hashes:         string[];
+    payload?:              { [key: string]: unknown };
+    previous_receipt_hash: null | string;
+    receipt_hash:          string;
+    receipt_type:          ReceiptType;
+    schema_version:        number;
+}
+
+export type ReceiptKind = "receipt";
+
+export type ReceiptType = "compile" | "admission" | "pack_edition" | "invocation" | "provider_execution" | "result" | "approval" | "terminal";
+
 export interface Definition {
-    campaign:       CampaignDefinition;
-    campaign_state: CampaignState;
-    job:            Job;
-    workflows:      [WorkflowDefinitionElement, ...WorkflowDefinitionElement[]];
+    campaign:         CampaignDefinition;
+    campaign_state:   CampaignState;
+    job:              Job;
+    workflow_states?: { [key: string]: CampaignState };
+    workflows:        [WorkflowDefinitionElement, ...WorkflowDefinitionElement[]];
 }
 
 export type CampaignState = "configured" | "eligible" | "admitted" | "running" | "awaiting_human" | "blocked" | "completed" | "terminal";
@@ -142,6 +265,7 @@ export interface DefaultContextElement {
 export type WorkflowDefinitionKind = "workflow_definition";
 
 export interface NodeElement {
+    approval_policy?:  string;
     blocker_codes?:    string[];
     budget:            Budget;
     capabilities:      string[];
@@ -151,7 +275,7 @@ export interface NodeElement {
     executor:          string;
     id:                string;
     input_slots:       OutputElement[];
-    kind:              NodeKind;
+    kind:              NodeKindEnum;
     output_slots:      OutputElement[];
 }
 
@@ -166,8 +290,6 @@ export interface OutputElement {
 }
 
 export type ArtifactKind = "context_pack" | "action_artifact";
-
-export type NodeKind = "deterministic" | "agent" | "approval" | "wait" | "terminal";
 
 export interface ExecutionElement {
     aggregate_id:     string;
@@ -228,7 +350,7 @@ export interface ContextPortElement {
 }
 
 export interface Edition {
-    authority:              ContextPackEditionAuthority;
+    authority:              AuthorityElement;
     captured_at:            string;
     content:                unknown[] | { [key: string]: unknown };
     content_sha256:         string;
@@ -238,28 +360,17 @@ export interface Edition {
     kind:                   ContextPackEditionKind;
     pack_schema_version:    number;
     pack_type:              string;
-    provenance:             [ProvenanceElement, ...ProvenanceElement[]];
+    provenance:             [EvidenceElement, ...EvidenceElement[]];
     schema_version:         number;
     scope:                  Scope;
     supersedes_edition_id?: string;
 }
 
-export type ContextPackEditionAuthority = "canonical" | "external_observation" | "derived";
+export type AuthorityElement = "canonical" | "external_observation" | "derived";
 
 export type Coverage = "complete" | "partial";
 
 export type ContextPackEditionKind = "context_pack_edition";
-
-export interface ProvenanceElement {
-    artifact_type:  string;
-    id:             string;
-    kind:           ProvenanceKind;
-    media_type:     string;
-    schema_version: number;
-    sha256:         string;
-}
-
-export type ProvenanceKind = "context_pack" | "action_artifact" | "receipt";
 
 export type Status = "configured" | "resolved" | "missing" | "stale" | "partial" | "degraded" | "invalid";
 
@@ -269,8 +380,6 @@ export interface ExecutionReceipt {
     receipt_hash: string;
     receipt_type: ReceiptType;
 }
-
-export type ReceiptType = "compile" | "admission" | "pack_edition" | "invocation" | "provider_execution" | "result" | "approval" | "terminal";
 
 export type CanvasSnapshotKind = "canvas_snapshot";
 
@@ -282,35 +391,6 @@ export interface NextSafeAction {
 }
 
 export type NextSafeActionKind = "none" | "start_node" | "request_context" | "request_approval" | "retry" | "terminal";
-
-export interface ReplayBundleElement {
-    aggregate_id:        string;
-    bundle_hash:         string;
-    cutoff_receipt_hash: string;
-    kind:                ReplayBundleKind;
-    receipts:            ReplayBundleReceipt[];
-    schema_version:      number;
-}
-
-export type ReplayBundleKind = "replay_bundle";
-
-export interface ReplayBundleReceipt {
-    actor?:                string;
-    aggregate_id:          string;
-    aggregate_version:     number;
-    id:                    string;
-    input_hashes:          string[];
-    kind:                  ReceiptKind;
-    occurred_at:           string;
-    output_hashes:         string[];
-    payload?:              { [key: string]: unknown };
-    previous_receipt_hash: null | string;
-    receipt_hash:          string;
-    receipt_type:          ReceiptType;
-    schema_version:        number;
-}
-
-export type ReceiptKind = "receipt";
 
 export interface CapabilityManifest {
     capabilities:   Capability[];
@@ -325,6 +405,64 @@ export interface Capability {
     name:      string;
 }
 
-export type CapabilityAuthority = "read" | "local_mutation" | "canonical_mutation" | "external_mutation" | "system_recovery";
-
 export type CapabilityManifestKind = "capability_manifest";
+
+export interface WorkflowAdmission {
+    campaign:        CampaignDefinition;
+    campaign_hash:   string;
+    compile_hash:    string;
+    definition_hash: string;
+    job:             Job;
+    job_hash:        string;
+    kind:            WorkflowAdmissionKind;
+    preview_hash:    string;
+    receipt:         ReplayBundleReceipt;
+    revision:        number;
+    schema_version:  number;
+    workflow:        WorkflowDefinitionElement;
+}
+
+export type WorkflowAdmissionKind = "workflow_admission";
+
+export interface WorkflowAdmissionPreview {
+    actor:           string;
+    base_revision:   number;
+    campaign:        CampaignDefinition;
+    campaign_hash:   string;
+    catalog_hash:    string;
+    commit_token:    string;
+    compile_hash:    string;
+    definition_hash: string;
+    expanded_nodes:  [ExpandedNodeElement, ...ExpandedNodeElement[]];
+    job:             Job;
+    job_hash:        string;
+    kind:            WorkflowAdmissionPreviewKind;
+    preview_hash:    string;
+    schema_version:  number;
+    workflow:        WorkflowDefinitionElement;
+}
+
+export interface ExpandedNodeElement {
+    context_authorities: AuthorityElement[];
+    definition:          NodeElement;
+}
+
+export type WorkflowAdmissionPreviewKind = "workflow_admission_preview";
+
+export interface WorkflowLintReport {
+    issues:         IssueElement[];
+    kind:           WorkflowLintReportKind;
+    schema_version: number;
+    valid:          boolean;
+}
+
+export interface IssueElement {
+    code:     string;
+    message:  string;
+    path:     string;
+    severity: Severity;
+}
+
+export type Severity = "error" | "warning";
+
+export type WorkflowLintReportKind = "workflow_lint_report";

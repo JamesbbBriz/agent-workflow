@@ -3,6 +3,7 @@ import type {
   Bundle,
   CampaignState,
   CanvasSnapshot,
+  ActionArtifact,
   ContextPortElement,
   ExecutionElement,
   Intent,
@@ -22,6 +23,7 @@ export interface CanvasNodeData extends Record<string, unknown> {
   execution?: ExecutionElement;
   contextPorts?: ContextPortElement[];
   hash?: string;
+  artifact?: ActionArtifact;
 }
 
 export type CanvasGraphNode = Node<CanvasNodeData, "canvas">;
@@ -53,7 +55,7 @@ export function buildGraph(snapshot: CanvasSnapshot, mode: CanvasMode): CanvasGr
     const workflowRef = `${workflow.id}@${workflow.version}`;
     const workflowNode = `workflow:${workflowRef}`;
     const y = 100 + workflowIndex * 360;
-    nodes.push(graphNode(workflowNode, 640, y, "workflow", workflow.intent.title, workflowRef, "configured", workflow.intent));
+    nodes.push(graphNode(workflowNode, 640, y, "workflow", workflow.intent.title, workflowRef, snapshot.definition.workflow_states?.[workflowRef] ?? "configured", workflow.intent));
     edges.push(graphEdge(campaignNode, workflowNode, "runs"));
 
     workflow.nodes.forEach((definition, nodeIndex) => {
@@ -97,7 +99,10 @@ export function buildGraph(snapshot: CanvasSnapshot, mode: CanvasMode): CanvasGr
         });
         execution.outputs.forEach((artifact, artifactIndex) => {
           const artifactID = `artifact:${artifact.id}`;
-          nodes.push(graphNode(artifactID, 1260 + nodeIndex * 300, y + 190 + artifactIndex * 110, "artifact", humanize(artifact.artifact_type), artifact.approval_state, execution.status, undefined, artifact.content_sha256));
+          const artifactNode = graphNode(artifactID, 1260 + nodeIndex * 300, y + 190 + artifactIndex * 110, "artifact", humanize(artifact.artifact_type), artifact.approval_state, execution.status, undefined, artifact.content_sha256);
+          artifactNode.data.artifact = artifact;
+          artifactNode.data.execution = execution;
+          nodes.push(artifactNode);
           edges.push(graphEdge(nodeID, artifactID, "produced"));
         });
       }
@@ -124,7 +129,14 @@ export function compareBundles(left: Bundle, right: Bundle): BundleDifference[] 
 }
 
 function graphNode(id: string, x: number, y: number, entityKind: CanvasEntityKind, title: string, subtitle: string, status: CampaignState, intent?: Intent, hash?: string): CanvasGraphNode {
-  return { id, type: "canvas", position: { x, y }, data: { entityKind, title, subtitle, status, intent, hash } };
+  return {
+    id,
+    type: "canvas",
+    position: { x, y },
+    initialWidth: entityKind === "context" || entityKind === "artifact" ? 210 : 238,
+    initialHeight: 88,
+    data: { entityKind, title, subtitle, status, intent, hash },
+  };
 }
 
 function graphEdge(source: string, target: string, label: string): Edge {

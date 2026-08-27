@@ -23,7 +23,7 @@ func TestCanvasProjectionUsesOnlyCanonicalRuntimeReceipts(t *testing.T) {
 	}
 
 	job, campaign := demoDefinitions(definition, cutoff)
-	snapshot, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{
+	snapshot, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{
 		Replay:  result.Replay,
 		Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation},
 	})
@@ -72,7 +72,7 @@ func TestCanvasProjectionRejectsTamperedReplay(t *testing.T) {
 	}
 	result.Replay.Receipts[0].ReceiptHash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	job, campaign := demoDefinitions(definition, cutoff)
-	if _, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{
+	if _, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{
 		Replay:  result.Replay,
 		Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation},
 	}); err == nil {
@@ -89,7 +89,7 @@ func TestCanvasProjectionRejectsWorkflowOutsideCampaignPlan(t *testing.T) {
 	}
 	job, campaign := demoDefinitions(definition, cutoff)
 	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"other-workflow@1"}
-	if _, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{
+	if _, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{
 		Replay:  result.Replay,
 		Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation},
 	}); err == nil {
@@ -106,12 +106,12 @@ func TestCanvasProjectionRejectsDefinitionsNotBoundByReplay(t *testing.T) {
 	}
 	job, campaign := demoDefinitions(definition, cutoff)
 	job.Intent.Title = "Altered Job"
-	if _, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{Replay: result.Replay, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}}); err == nil {
+	if _, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{Replay: result.Replay, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}}); err == nil {
 		t.Fatal("expected altered Job definition to be rejected")
 	}
 	job, campaign = demoDefinitions(definition, cutoff)
 	definition.Intent.Title = "Altered Workflow"
-	if _, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{Replay: result.Replay, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}}); err == nil {
+	if _, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{Replay: result.Replay, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}}); err == nil {
 		t.Fatal("expected altered Workflow definition to be rejected")
 	}
 }
@@ -140,22 +140,176 @@ func TestCanvasProjectionDoesNotCompleteBeforeTerminalReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	partial := result.Replay
-	partial.Receipts = partial.Receipts[:len(partial.Receipts)-1]
-	partial.CutoffReceiptHash = partial.Receipts[len(partial.Receipts)-1].ReceiptHash
-	partial.BundleHash = ""
-	hash, err := workflow.Digest(partial)
+	partial, err := workflow.ReplayPrefix(result.Replay, len(result.Replay.Receipts)-1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	partial.BundleHash = contractsv1.SHA256(hash)
 	job, campaign := demoDefinitions(definition, cutoff)
-	snapshot, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{Replay: partial, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}})
+	snapshot, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{Replay: partial, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if snapshot.Executions[0].Status != "running" {
 		t.Fatalf("result without terminal receipt was presented as %q", snapshot.Executions[0].Status)
+	}
+}
+
+func TestBuilderRestartRestoresCanonicalApprovalProjection(t *testing.T) {
+	sources, snapshot, err := loadCanvasSources("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "builder.jsonl")
+	ledger, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := demoAuthoringCore(ledger, sources, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := snapshot.Replays[0]
+	var result contractsv1.Receipt
+	for _, receipt := range source.Receipts {
+		if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeResult {
+			result = receipt
+		}
+	}
+	brief := contractsv1.ApprovalBrief{Kind: contractsv1.ApprovalBriefKindApprovalBrief, SchemaVersion: 1, Title: "Approve exact action?", Action: snapshot.Executions[0].Outputs[0], Evidence: []contractsv1.ArtifactRef{{Id: result.Id, Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "result", SchemaVersion: 1, Sha256: result.ReceiptHash, MediaType: "application/json"}}, Options: []contractsv1.ApprovalOption{{Id: "approve", Label: "Approve", Decision: contractsv1.ApprovalOptionDecisionApprove, Tradeoffs: []string{"Changes the target"}}, {Id: "reject", Label: "Reject", Decision: contractsv1.ApprovalOptionDecisionReject, Tradeoffs: []string{"No change"}}}, RecommendedOptionId: "approve", Recommendation: "Approve the reviewed action.", Risks: []string{"Public impact"}}
+	preview, err := core.PreviewApproval(brief, "reviewer@example.com", source.AggregateId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.ConfirmApproval(preview, "reviewer@example.com", "approve", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := restoreCanvasApprovals(snapshot, reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Executions[0].Outputs[0].ApprovalState != contractsv1.ActionArtifactApprovalStateApproved {
+		t.Fatal("restart did not restore the canonical approval")
+	}
+}
+
+func TestApprovalVisibilityRejectsMalformedReplay(t *testing.T) {
+	if _, err := approvalActionVisible(contractsv1.CanvasSnapshot{}, contractsv1.ReplayBundle{}); err == nil {
+		t.Fatal("malformed approval replay was treated as an unrelated valid decision")
+	}
+}
+
+func TestLoadCanvasSourcesRejectsMalformedAdmissionReplay(t *testing.T) {
+	body, err := os.ReadFile("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Data contractsv1.CanvasSnapshot `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	envelope.Data.AdmissionReplays[0].Receipts[0].ReceiptHash = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	body, err = json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "canvas.json")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadCanvasSources(path); err == nil {
+		t.Fatal("malformed canonical admission Replay was trusted")
+	}
+}
+
+func TestBuilderRestartRestoresCanonicalAdmissionProjection(t *testing.T) {
+	sources, snapshot, err := loadCanvasSources("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "builder.jsonl")
+	ledger, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := demoAuthoringCore(ledger, sources, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := loadExampleWorkflow(t)
+	definition.Id = "restart-review"
+	job, campaign := snapshot.Definition.Job, snapshot.Definition.Campaign
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"restart-review@1"}
+	preview, _, err := core.Preview(job, campaign, definition, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Confirm(preview, "operator@example.com", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := restoreCanvasAdmissions(snapshot, reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Definition.Job.Id != job.Id || restored.Definition.Workflows[0].Id != definition.Id {
+		t.Fatalf("restart lost admission: %+v", restored.Definition)
+	}
+}
+
+func TestBuilderRestartDoesNotRebindAdmissionAcrossCampaignPlanChanges(t *testing.T) {
+	sources, snapshot, err := loadCanvasSources("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "builder.jsonl")
+	ledger, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := demoAuthoringCore(ledger, sources, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, campaign := snapshot.Definition.Job, snapshot.Definition.Campaign
+	first := loadExampleWorkflow(t)
+	first.Id = "first-review"
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"first-review@1"}
+	preview, _, err := core.Preview(job, campaign, first, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Confirm(preview, "operator@example.com", time.Date(2026, 8, 28, 1, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	second := loadExampleWorkflow(t)
+	second.Id = "second-review"
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"first-review@1", "second-review@1"}
+	preview, _, err = core.Preview(job, campaign, second, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Confirm(preview, "operator@example.com", time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := restoreCanvasAdmissions(snapshot, reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Definition.WorkflowStates["first-review@1"] == contractsv1.CanvasEntityStatusAdmitted || restored.Definition.WorkflowStates["second-review@1"] != contractsv1.CanvasEntityStatusAdmitted || len(restored.AdmissionReplays) != 1 {
+		t.Fatalf("historical admission was rebound across Campaign definitions: %+v", restored.Definition.WorkflowStates)
 	}
 }
 

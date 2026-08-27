@@ -6,3 +6,6 @@
 /output/
 /web/node_modules/
 /.codebase-memory/
+/.agent-workflow/
+/test-results/
+/playwright-report/

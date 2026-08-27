@@ -17,10 +17,12 @@ import {
   LockKey,
   Package,
   WarningCircle,
+  Wrench,
   X,
 } from "@phosphor-icons/react";
 import type { CanvasSnapshot, ContextPortElement } from "./generated/agent-workflow.v1";
 import { buildGraph, compareBundles, humanize, type CanvasGraphNode, type CanvasMode, type CanvasNodeData } from "./canvas-model";
+import { ApprovalPanel, BuilderPanel } from "./builder";
 import "./styles.css";
 
 type Selection = { kind: "node"; data: CanvasNodeData } | { kind: "port"; port: ContextPortElement };
@@ -36,9 +38,15 @@ export function App() {
   const [mode, setMode] = useState<CanvasMode>("runtime");
   const [selection, setSelection] = useState<Selection>();
   const [comparing, setComparing] = useState(false);
+  const [building, setBuilding] = useState(false);
+  const [approving, setApproving] = useState<CanvasNodeData>();
 
   useEffect(() => {
-    fetch("/canvas.response.json")
+    fetch("/v1/canvas")
+      .then((response) => {
+        if (!response.ok) return fetch("/canvas.response.json");
+        return response;
+      })
       .then((response) => {
         if (!response.ok) throw new Error("Canvas data is unavailable.");
         return response.json() as Promise<CanvasResponse>;
@@ -81,13 +89,14 @@ export function App() {
         <button className="compare-button" disabled={!canCompare} title={canCompare ? "Compare two Context Bundles" : "Two executions are required"} onClick={() => setComparing(true)}>
           <ArrowsLeftRight size={18} /> Compare Context
         </button>
+        <button className="builder-button" onClick={() => setBuilding(true)}><Wrench size={18} /> Build Workflow</button>
       </header>
 
       <section className="canvas-stage" aria-label={`${mode} workflow Canvas`}>
         <ReactFlow
           nodes={nodes}
           edges={graph.edges}
-          nodeTypes={{ canvas: GraphNodeCard }}
+          nodeTypes={canvasNodeTypes}
           nodesDraggable={false}
           nodesConnectable={false}
           fitView
@@ -100,8 +109,10 @@ export function App() {
         </ReactFlow>
       </section>
 
-      {selection && <DetailPanel selection={selection} onClose={() => setSelection(undefined)} />}
+      {selection && <DetailPanel selection={selection} onClose={() => setSelection(undefined)} onApprove={(data) => { setSelection(undefined); setApproving(data); }} />}
       {comparing && canCompare && <ComparePanel snapshot={snapshot} onClose={() => setComparing(false)} />}
+      {building && <BuilderPanel snapshot={snapshot} onClose={() => setBuilding(false)} onCanvas={setSnapshot} />}
+      {approving?.artifact && <ApprovalPanel snapshot={snapshot} artifact={approving.artifact} onClose={() => setApproving(undefined)} onCanvas={(next) => { setSnapshot(next); setApproving(undefined); }} />}
       <footer className="next-action" aria-label="Next safe action">
         <strong>{humanize(snapshot.next_safe_action.kind)}</strong>
         <span>{snapshot.next_safe_action.reason}</span>
@@ -113,6 +124,8 @@ export function App() {
 function GraphNodeCard({ data, selected }: NodeProps<CanvasGraphNode>) {
   return <><Handle type="target" position={Position.Left} /><NodeCardContent data={data} selected={selected} onSelect={data.onSelect as (() => void) | undefined} /><Handle type="source" position={Position.Right} /></>;
 }
+
+const canvasNodeTypes = { canvas: GraphNodeCard };
 
 export function NodeCardContent({ data, selected = false, onSelect }: { data: CanvasNodeData; selected?: boolean; onSelect?: () => void }) {
   const onPortSelect = data.onPortSelect as ((port: ContextPortElement) => void) | undefined;
@@ -144,14 +157,14 @@ function activateCard(event: KeyboardEvent<HTMLElement>, onSelect?: () => void) 
   onSelect?.();
 }
 
-export function DetailPanel({ selection, onClose }: { selection: Selection; onClose: () => void }) {
+export function DetailPanel({ selection, onClose, onApprove }: { selection: Selection; onClose: () => void; onApprove?: (data: CanvasNodeData) => void }) {
   const isPort = selection.kind === "port";
   const title = isPort ? humanize(selection.port.pack_type) : selection.data.title;
   return (
     <aside className="detail-panel" aria-label={`${title} details`}>
       <button className="icon-button" aria-label="Close details" onClick={onClose}><X size={18} /></button>
       <h2>{title}</h2>
-      {isPort ? <PortDetails port={selection.port} /> : <NodeDetails data={selection.data} />}
+      {isPort ? <PortDetails port={selection.port} /> : <NodeDetails data={selection.data} onApprove={onApprove} />}
     </aside>
   );
 }
@@ -179,7 +192,7 @@ function PortDetails({ port }: { port: ContextPortElement }) {
   );
 }
 
-function NodeDetails({ data }: { data: CanvasNodeData }) {
+function NodeDetails({ data, onApprove }: { data: CanvasNodeData; onApprove?: (data: CanvasNodeData) => void }) {
   return (
     <dl className="fact-grid">
       <Fact label="State" value={humanize(data.status)} />
@@ -204,6 +217,7 @@ function NodeDetails({ data }: { data: CanvasNodeData }) {
         <Fact label="Audit trail" value={data.execution.receipts.map((receipt) => `${receipt.receipt_type}: ${receipt.receipt_hash}`).join("\n")} mono />
       </>}
       {data.hash && <Fact label="Exact hash" value={data.hash} mono />}
+      {data.artifact?.approval_state === "pending" && <button className="approval-open" onClick={() => onApprove?.(data)}>Review exact action</button>}
     </dl>
   );
 }

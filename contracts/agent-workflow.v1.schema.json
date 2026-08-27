@@ -117,6 +117,7 @@
         "output_slots": { "type": "array", "items": { "$ref": "#/$defs/Slot" } },
         "budget": { "$ref": "#/$defs/Budget" },
         "deadline_seconds": { "type": "integer", "minimum": 1, "maximum": 2592000 },
+        "approval_policy": { "$ref": "#/$defs/Identifier" },
         "blocker_codes": { "$ref": "#/$defs/Strings" }
       }
     },
@@ -327,6 +328,166 @@
         "bundle_hash": { "$ref": "#/$defs/SHA256" }
       }
     },
+    "CatalogExecutor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "node_kind"],
+      "properties": {
+        "ref": { "$ref": "#/$defs/WorkflowRef" },
+        "node_kind": { "enum": ["deterministic", "agent", "approval", "wait", "terminal"] }
+      }
+    },
+    "CatalogProducer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selector", "pack_type", "schema_version"],
+      "properties": {
+        "selector": { "$ref": "#/$defs/Identifier" },
+        "pack_type": { "$ref": "#/$defs/Identifier" },
+        "schema_version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "CatalogCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "authority"],
+      "properties": {
+        "name": { "$ref": "#/$defs/Identifier" },
+        "authority": { "enum": ["read", "local_mutation", "canonical_mutation", "external_mutation", "system_recovery"] }
+      }
+    },
+    "AuthoringCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "executors", "producers", "capabilities", "output_schemas", "blockers", "approval_policies", "catalog_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["authoring_catalog"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "executors": { "type": "array", "items": { "$ref": "#/$defs/CatalogExecutor" }, "uniqueItems": true },
+        "producers": { "type": "array", "items": { "$ref": "#/$defs/CatalogProducer" }, "uniqueItems": true },
+        "capabilities": { "type": "array", "items": { "$ref": "#/$defs/CatalogCapability" }, "uniqueItems": true },
+        "output_schemas": { "type": "array", "items": { "$ref": "#/$defs/WorkflowRef" }, "uniqueItems": true },
+        "blockers": { "$ref": "#/$defs/Strings" },
+        "approval_policies": { "$ref": "#/$defs/Strings" },
+        "catalog_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "WorkflowLintIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity", "code", "path", "message"],
+      "properties": {
+        "severity": { "enum": ["error", "warning"] },
+        "code": { "$ref": "#/$defs/Identifier" },
+        "path": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "WorkflowLintReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "valid", "issues"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["workflow_lint_report"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "valid": { "type": "boolean" },
+        "issues": { "type": "array", "items": { "$ref": "#/$defs/WorkflowLintIssue" } }
+      }
+    },
+    "ExpandedNodeContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["definition", "context_authorities"],
+      "properties": {
+        "definition": { "$ref": "#/$defs/NodeDefinition" },
+        "context_authorities": { "type": "array", "items": { "enum": ["canonical", "external_observation", "derived"] } }
+      }
+    },
+    "WorkflowAdmissionPreview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "actor", "base_revision", "job", "campaign", "workflow", "expanded_nodes", "job_hash", "campaign_hash", "definition_hash", "compile_hash", "catalog_hash", "preview_hash", "commit_token"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["workflow_admission_preview"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "actor": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "base_revision": { "type": "integer", "minimum": 0 },
+        "job": { "$ref": "#/$defs/JobDefinition" },
+        "campaign": { "$ref": "#/$defs/CampaignDefinition" },
+        "workflow": { "$ref": "#/$defs/WorkflowDefinition" },
+        "expanded_nodes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ExpandedNodeContract" } },
+        "job_hash": { "$ref": "#/$defs/SHA256" },
+        "campaign_hash": { "$ref": "#/$defs/SHA256" },
+        "definition_hash": { "$ref": "#/$defs/SHA256" },
+        "compile_hash": { "$ref": "#/$defs/SHA256" },
+        "catalog_hash": { "$ref": "#/$defs/SHA256" },
+        "preview_hash": { "$ref": "#/$defs/SHA256" },
+        "commit_token": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "WorkflowAdmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "job", "campaign", "workflow", "revision", "job_hash", "campaign_hash", "definition_hash", "compile_hash", "preview_hash", "receipt"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["workflow_admission"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "job": { "$ref": "#/$defs/JobDefinition" },
+        "campaign": { "$ref": "#/$defs/CampaignDefinition" },
+        "workflow": { "$ref": "#/$defs/WorkflowDefinition" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "job_hash": { "$ref": "#/$defs/SHA256" },
+        "campaign_hash": { "$ref": "#/$defs/SHA256" },
+        "definition_hash": { "$ref": "#/$defs/SHA256" },
+        "compile_hash": { "$ref": "#/$defs/SHA256" },
+        "preview_hash": { "$ref": "#/$defs/SHA256" },
+        "receipt": { "$ref": "#/$defs/Receipt" }
+      }
+    },
+    "ApprovalOption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "decision", "tradeoffs"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "decision": { "enum": ["approve", "reject"] },
+        "tradeoffs": { "$ref": "#/$defs/NonEmptyStrings" }
+      }
+    },
+    "ApprovalBrief": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "title", "evidence", "options", "recommended_option_id", "recommendation", "risks", "action"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["approval_brief"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "id": { "$ref": "#/$defs/Identifier" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ArtifactRef" } },
+        "options": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/ApprovalOption" } },
+        "recommended_option_id": { "$ref": "#/$defs/Identifier" },
+        "recommendation": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "risks": { "$ref": "#/$defs/NonEmptyStrings" },
+        "action": { "$ref": "#/$defs/ActionArtifact" }
+      }
+    },
+    "ApprovalPreview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "actor", "base_revision", "source_aggregate_id", "brief", "brief_hash", "preview_hash", "commit_token"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["approval_preview"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "actor": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "base_revision": { "type": "integer", "minimum": 0 },
+        "source_aggregate_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "brief": { "$ref": "#/$defs/ApprovalBrief" },
+        "brief_hash": { "$ref": "#/$defs/SHA256" },
+        "preview_hash": { "$ref": "#/$defs/SHA256" },
+        "commit_token": { "$ref": "#/$defs/SHA256" }
+      }
+    },
     "CanvasEntityStatus": {
       "enum": ["configured", "eligible", "admitted", "running", "awaiting_human", "blocked", "completed", "terminal"]
     },
@@ -389,6 +550,11 @@
         "job": { "$ref": "#/$defs/JobDefinition" },
         "campaign": { "$ref": "#/$defs/CampaignDefinition" },
         "campaign_state": { "$ref": "#/$defs/CanvasEntityStatus" },
+        "workflow_states": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[a-z][a-z0-9-]*@[1-9][0-9]*$" },
+          "additionalProperties": { "$ref": "#/$defs/CanvasEntityStatus" }
+        },
         "workflows": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/WorkflowDefinition" } }
       }
     },
@@ -414,7 +580,9 @@
         "definition": { "$ref": "#/$defs/CanvasDefinitionGraph" },
         "executions": { "type": "array", "items": { "$ref": "#/$defs/CanvasExecution" } },
         "next_safe_action": { "$ref": "#/$defs/CanvasNextSafeAction" },
-        "replays": { "type": "array", "items": { "$ref": "#/$defs/ReplayBundle" } }
+        "replays": { "type": "array", "items": { "$ref": "#/$defs/ReplayBundle" } },
+        "admission_replays": { "type": "array", "items": { "$ref": "#/$defs/ReplayBundle" } },
+        "approval_replays": { "type": "array", "items": { "$ref": "#/$defs/ReplayBundle" } }
       }
     }
   }

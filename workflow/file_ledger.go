@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/JamesbbBriz/agent-workflow/internal/contract"
@@ -155,6 +156,35 @@ func (l *FileLedger) Replay(aggregateID string) (contractsv1.ReplayBundle, error
 		return contractsv1.ReplayBundle{}, err
 	}
 	return replayBundle(aggregateID, all[aggregateID])
+}
+
+func (l *FileLedger) ReplaysByReceiptType(receiptType contractsv1.ReceiptReceiptType) ([]contractsv1.ReplayBundle, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	all, err := l.load()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(all))
+	for id, receipts := range all {
+		matched := len(receipts) > 0
+		for _, receipt := range receipts {
+			matched = matched && receipt.ReceiptType == receiptType
+		}
+		if matched {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	replays := make([]contractsv1.ReplayBundle, 0, len(ids))
+	for _, id := range ids {
+		replay, err := replayBundle(id, all[id])
+		if err != nil {
+			return nil, err
+		}
+		replays = append(replays, replay)
+	}
+	return replays, nil
 }
 
 func (l *FileLedger) load() (map[string][]contractsv1.Receipt, error) {

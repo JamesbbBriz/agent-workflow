@@ -7,10 +7,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/JamesbbBriz/agent-workflow/canvas"
+	"github.com/JamesbbBriz/agent-workflow/internal/builderapi"
 	"github.com/JamesbbBriz/agent-workflow/internal/contract"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 	"github.com/JamesbbBriz/agent-workflow/workflow"
@@ -26,7 +30,7 @@ type response struct {
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas> [options]")
+		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder> [options]")
 		return 2
 	}
 	switch args[0] {
@@ -36,10 +40,212 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runDemo(args[1:], stdout, stderr)
 	case "canvas":
 		return runCanvas(args[1:], stdout, stderr)
+	case "builder":
+		return runBuilder(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas> [options]")
+		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder> [options]")
 		return 2
 	}
+}
+
+func runBuilder(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("builder", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	listenAddress := flags.String("listen", "127.0.0.1:4321", "loopback listen address")
+	ledgerPath := flags.String("ledger", ".agent-workflow/builder.jsonl", "canonical admission ledger")
+	canvasPath := flags.String("canvas", "", "verified Canvas snapshot supplying approval source Replays")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "builder accepts only --listen, --ledger, and --canvas")
+		return 2
+	}
+	host, _, err := net.SplitHostPort(*listenAddress)
+	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+		return writeError(stdout, stderr, true, "invalid_listen_address", errors.New("builder must listen on an explicit loopback IP"))
+	}
+	ledger, err := workflow.OpenFileLedger(*ledgerPath)
+	if err != nil {
+		return writeError(stdout, stderr, true, "ledger_unavailable", err)
+	}
+	sources := workflow.NewMemoryLedger()
+	var sourceCanvas *contractsv1.CanvasSnapshot
+	if *canvasPath != "" {
+		sources, sourceCanvas, err = loadCanvasSources(*canvasPath)
+		if err != nil {
+			return writeError(stdout, stderr, true, "canvas_unavailable", err)
+		}
+	}
+	core, err := demoAuthoringCore(ledger, sources, sourceCanvas)
+	if err != nil {
+		return writeError(stdout, stderr, true, "builder_unavailable", err)
+	}
+	if sourceCanvas != nil {
+		sourceCanvas, err = restoreCanvasAdmissions(sourceCanvas, ledger)
+		if err != nil {
+			return writeError(stdout, stderr, true, "canvas_unavailable", err)
+		}
+		sourceCanvas, err = restoreCanvasApprovals(sourceCanvas, ledger)
+		if err != nil {
+			return writeError(stdout, stderr, true, "canvas_unavailable", err)
+		}
+	}
+	listener, err := net.Listen("tcp", *listenAddress)
+	if err != nil {
+		return writeError(stdout, stderr, true, "listen_failed", errors.New("builder listener is unavailable"))
+	}
+	fmt.Fprintf(stdout, "builder listening on http://%s\n", listener.Addr())
+	server := &http.Server{Handler: builderapi.NewWithCanvas(core, time.Now, sourceCanvas), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return writeError(stdout, stderr, true, "serve_failed", errors.New("builder server stopped"))
+	}
+	return 0
+}
+
+func restoreCanvasAdmissions(snapshot *contractsv1.CanvasSnapshot, ledger *workflow.FileLedger) (*contractsv1.CanvasSnapshot, error) {
+	replays, err := ledger.ReplaysByReceiptType(contractsv1.ReceiptReceiptTypeAdmission)
+	if err != nil || len(replays) == 0 {
+		return snapshot, err
+	}
+	type event struct {
+		admission contractsv1.WorkflowAdmission
+		replay    contractsv1.ReplayBundle
+		at        time.Time
+		hash      contractsv1.SHA256
+	}
+	events := make([]event, 0)
+	for _, replay := range replays {
+		for version, receipt := range replay.Receipts {
+			admission, err := workflow.MaterializeAdmission(replay, version+1)
+			if err != nil {
+				return nil, err
+			}
+			events = append(events, event{admission: admission, replay: replay, at: receipt.OccurredAt, hash: receipt.ReceiptHash})
+		}
+	}
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].at.Equal(events[j].at) {
+			return events[i].hash < events[j].hash
+		}
+		return events[i].at.Before(events[j].at)
+	})
+	current := *snapshot
+	definitionsByRef := map[contractsv1.WorkflowRef]contractsv1.WorkflowDefinition{}
+	for _, definition := range current.Definition.Workflows {
+		definitionsByRef[contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", definition.Id, definition.Version))] = definition
+	}
+	for _, item := range events {
+		ref := contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", item.admission.Workflow.Id, item.admission.Workflow.Version))
+		definitionsByRef[ref] = item.admission.Workflow
+		definitions := make([]contractsv1.WorkflowDefinition, 0, len(item.admission.Campaign.WorkflowPlan))
+		for _, planned := range item.admission.Campaign.WorkflowPlan {
+			if definition, ok := definitionsByRef[planned]; ok {
+				definitions = append(definitions, definition)
+			}
+		}
+		next, err := canvas.ProjectWithAdmissions(item.admission.Job, item.admission.Campaign, definitions, []contractsv1.ReplayBundle{item.replay})
+		if err != nil {
+			return nil, err
+		}
+		current = canvas.MergeAdmissionReadback(current, next)
+	}
+	return &current, nil
+}
+
+func restoreCanvasApprovals(snapshot *contractsv1.CanvasSnapshot, ledger *workflow.FileLedger) (*contractsv1.CanvasSnapshot, error) {
+	approvals, err := ledger.ReplaysByReceiptType(contractsv1.ReceiptReceiptTypeApproval)
+	if err != nil {
+		return nil, err
+	}
+	for _, approval := range approvals {
+		next, err := canvas.ApplyApproval(*snapshot, approval)
+		if err != nil {
+			visible, visibilityErr := approvalActionVisible(*snapshot, approval)
+			if visibilityErr != nil {
+				return nil, visibilityErr
+			}
+			if !visible {
+				continue
+			}
+			return nil, err
+		}
+		snapshot = &next
+	}
+	return snapshot, nil
+}
+
+func approvalActionVisible(snapshot contractsv1.CanvasSnapshot, approval contractsv1.ReplayBundle) (bool, error) {
+	if err := workflow.VerifyReplay(approval); err != nil || len(approval.Receipts) != 1 {
+		return false, errors.New("approval replay is invalid")
+	}
+	body, err := json.Marshal(approval.Receipts[0].Payload["brief"])
+	if err != nil {
+		return false, errors.New("approval brief is invalid")
+	}
+	var brief contractsv1.ApprovalBrief
+	if json.Unmarshal(body, &brief) != nil || contract.ValidateDefinition("ApprovalBrief", brief) != nil {
+		return false, errors.New("approval brief is invalid")
+	}
+	for _, execution := range snapshot.Executions {
+		for _, output := range execution.Outputs {
+			if output.Id == brief.Action.Id {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func demoAuthoringCore(ledger, sources workflow.Ledger, snapshot *contractsv1.CanvasSnapshot) (*workflow.AuthoringCore, error) {
+	var projectBriefs []contractsv1.ContextPackEdition
+	if snapshot != nil {
+		for _, execution := range snapshot.Executions {
+			for _, port := range execution.ContextPorts {
+				if port.Selector == "project-brief" && port.Edition != nil {
+					projectBriefs = append(projectBriefs, *port.Edition)
+				}
+			}
+		}
+	}
+	registry, err := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1, projectBriefs...))
+	if err != nil {
+		return nil, err
+	}
+	return workflow.NewAuthoringCoreWithSources(registry,
+		workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval},
+		workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead},
+		workflow.OutputCatalog{"recommendation@1": validateRecommendation, "review-decision@1": func(any) error { return nil }},
+		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger, sources), nil
+}
+
+func loadCanvasSources(path string) (workflow.Ledger, *contractsv1.CanvasSnapshot, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, errors.New("Canvas source file is unavailable")
+	}
+	var envelope struct {
+		Data contractsv1.CanvasSnapshot `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || contract.ValidateDefinition("CanvasSnapshot", envelope.Data) != nil {
+		return nil, nil, errors.New("Canvas source file is invalid")
+	}
+	for _, replays := range [][]contractsv1.ReplayBundle{envelope.Data.Replays, envelope.Data.AdmissionReplays, envelope.Data.ApprovalReplays} {
+		for _, replay := range replays {
+			if err := workflow.VerifyReplay(replay); err != nil {
+				return nil, nil, errors.New("Canvas source Replay is invalid")
+			}
+		}
+	}
+	ledger := workflow.NewMemoryLedger()
+	for _, replay := range envelope.Data.Replays {
+		for _, receipt := range replay.Receipts {
+			if err := ledger.Append(receipt); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	return ledger, &envelope.Data, nil
 }
 
 func runCanvas(args []string, stdout, stderr io.Writer) int {
@@ -74,7 +280,7 @@ func runCanvas(args []string, stdout, stderr io.Writer) int {
 		return writeError(stdout, stderr, true, "canvas_failed", err)
 	}
 	job, campaign := demoDefinitions(definition, cutoff.UTC())
-	snapshot, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{
+	snapshot, err := canvas.ProjectWithAdmissions(job, campaign, []contractsv1.WorkflowDefinition{definition}, []contractsv1.ReplayBundle{result.AdmissionReplay}, canvas.ExecutionInput{
 		Replay:  result.Replay,
 		Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation},
 	})
@@ -184,11 +390,24 @@ func executeDemo(definition contractsv1.WorkflowDefinition, cutoff time.Time) (w
 		return workflow.RunResult{}, err
 	}
 	job, campaign := demoDefinitions(definition, cutoff)
+	ledger := workflow.NewMemoryLedger()
+	authoring := workflow.NewAuthoringCore(registry,
+		workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval},
+		workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead},
+		workflow.OutputCatalog{"recommendation@1": validateRecommendation, "review-decision@1": func(any) error { return nil }},
+		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger)
+	preview, _, err := authoring.Preview(job, campaign, definition, "demo-operator")
+	if err != nil {
+		return workflow.RunResult{}, err
+	}
+	if _, err := authoring.Confirm(preview, "demo-operator", cutoff); err != nil {
+		return workflow.RunResult{}, err
+	}
 	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{
 		"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead,
 	}, workflow.OutputCatalog{
 		"recommendation@1": validateRecommendation,
-	}, &demoProvider{results: make(map[string]workflow.ProviderResult)}, workflow.NewMemoryLedger())
+	}, &demoProvider{results: make(map[string]workflow.ProviderResult)}, ledger)
 	return engine.RunNode(context.Background(), workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 
 	"github.com/JamesbbBriz/agent-workflow/internal/contract"
@@ -17,6 +18,50 @@ type ExecutionInput struct {
 }
 
 func Project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definitions []contractsv1.WorkflowDefinition, inputs ...ExecutionInput) (contractsv1.CanvasSnapshot, error) {
+	return project(job, campaign, definitions, nil, false, inputs...)
+}
+
+func ProjectWithAdmissions(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definitions []contractsv1.WorkflowDefinition, admissions []contractsv1.ReplayBundle, inputs ...ExecutionInput) (contractsv1.CanvasSnapshot, error) {
+	return project(job, campaign, definitions, admissions, true, inputs...)
+}
+
+// MergeAdmissionReadback keeps trusted runtime evidence only while the Job and
+// Campaign definitions remain unchanged.
+func MergeAdmissionReadback(current, admitted contractsv1.CanvasSnapshot) contractsv1.CanvasSnapshot {
+	if current.Definition.Job.Id != admitted.Definition.Job.Id || current.Definition.Campaign.Id != admitted.Definition.Campaign.Id {
+		return admitted
+	}
+	if !reflect.DeepEqual(current.Definition.Job, admitted.Definition.Job) || !reflect.DeepEqual(current.Definition.Campaign, admitted.Definition.Campaign) {
+		return admitted
+	}
+	previousStates := current.Definition.WorkflowStates
+	merged := current
+	merged.Definition = admitted.Definition
+	if admitted.GeneratedAt.After(merged.GeneratedAt) {
+		merged.GeneratedAt = admitted.GeneratedAt
+	}
+	planned := make(map[string]bool, len(merged.Definition.Campaign.WorkflowPlan))
+	for _, ref := range merged.Definition.Campaign.WorkflowPlan {
+		planned[string(ref)] = true
+	}
+	for ref, status := range previousStates {
+		if status == contractsv1.CanvasEntityStatusAdmitted && planned[ref] {
+			merged.Definition.WorkflowStates[ref] = status
+		}
+	}
+	for _, replay := range current.AdmissionReplays {
+		seen := false
+		for _, existing := range merged.AdmissionReplays {
+			seen = seen || existing.BundleHash == replay.BundleHash
+		}
+		if !seen {
+			merged.AdmissionReplays = append(merged.AdmissionReplays, replay)
+		}
+	}
+	return merged
+}
+
+func project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definitions []contractsv1.WorkflowDefinition, admissions []contractsv1.ReplayBundle, requireAdmission bool, inputs ...ExecutionInput) (contractsv1.CanvasSnapshot, error) {
 	if err := contract.ValidateDefinition("JobDefinition", job); err != nil {
 		return contractsv1.CanvasSnapshot{}, err
 	}
@@ -32,6 +77,8 @@ func Project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinit
 		return contractsv1.CanvasSnapshot{}, err
 	}
 	workflowByRef := make(map[contractsv1.WorkflowRef]contractsv1.WorkflowDefinition, len(workflows))
+	workflowStates := map[string]contractsv1.CanvasEntityStatus{}
+	admissionByRef := map[contractsv1.WorkflowRef]contractsv1.ReplayBundle{}
 	for _, definition := range workflows {
 		body, err := json.Marshal(definition)
 		if err != nil {
@@ -41,6 +88,29 @@ func Project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinit
 			return contractsv1.CanvasSnapshot{}, err
 		}
 		workflowByRef[contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", definition.Id, definition.Version))] = definition
+	}
+	for _, replay := range admissions {
+		for version := range replay.Receipts {
+			admission, err := workflow.MaterializeAdmission(replay, version+1)
+			if err != nil {
+				return contractsv1.CanvasSnapshot{}, err
+			}
+			ref := contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", admission.Workflow.Id, admission.Workflow.Version))
+			definition, ok := workflowByRef[ref]
+			if !ok || definition.Id != admission.Workflow.Id || definition.Version != admission.Workflow.Version {
+				continue
+			}
+			if !reflect.DeepEqual(admission.Job, job) || !reflect.DeepEqual(admission.Campaign, campaign) {
+				return contractsv1.CanvasSnapshot{}, errors.New("Canvas definitions do not match their Workflow admission")
+			}
+			body, _ := json.Marshal(definition)
+			identity, err := contract.ValidateWorkflow(body)
+			if err != nil || identity.Hash != string(admission.DefinitionHash) {
+				return contractsv1.CanvasSnapshot{}, errors.New("Canvas definition does not match its admission receipt")
+			}
+			workflowStates[string(ref)] = contractsv1.CanvasEntityStatusAdmitted
+			admissionByRef[ref] = replay
+		}
 	}
 	executions := make([]contractsv1.CanvasExecution, 0, len(inputs))
 	replays := make([]contractsv1.ReplayBundle, 0, len(inputs))
@@ -59,7 +129,16 @@ func Project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinit
 		if !ok {
 			return contractsv1.CanvasSnapshot{}, errors.New("execution workflow is not pinned by the Campaign")
 		}
-		invocation, err := workflow.VerifyDefinitionBinding(input.Replay, job, campaign, definition)
+		var invocation workflow.Invocation
+		if requireAdmission {
+			admissionReplay, ok := admissionByRef[candidate.WorkflowRef]
+			if !ok {
+				return contractsv1.CanvasSnapshot{}, errors.New("execution has no canonical Workflow admission")
+			}
+			invocation, err = workflow.VerifyDefinitionBindingWithAdmission(input.Replay, admissionReplay, job, campaign, definition)
+		} else {
+			invocation, err = workflow.VerifyDefinitionBinding(input.Replay, job, campaign, definition)
+		}
 		if err != nil {
 			return contractsv1.CanvasSnapshot{}, err
 		}
@@ -80,9 +159,9 @@ func Project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinit
 	snapshot := contractsv1.CanvasSnapshot{
 		Kind: contractsv1.CanvasSnapshotKindCanvasSnapshot, SchemaVersion: 1, GeneratedAt: generatedAt,
 		Definition: contractsv1.CanvasDefinitionGraph{
-			Job: job, Campaign: campaign, CampaignState: contractsv1.CanvasEntityStatusConfigured, Workflows: workflows,
+			Job: job, Campaign: campaign, CampaignState: contractsv1.CanvasEntityStatusConfigured, WorkflowStates: workflowStates, Workflows: workflows,
 		},
-		Executions: executions, Replays: replays,
+		Executions: executions, Replays: replays, AdmissionReplays: admissions,
 		NextSafeAction: contractsv1.CanvasNextSafeAction{Kind: contractsv1.CanvasNextSafeActionKindNone, Reason: "No canonical next action is recorded in this read-only projection."},
 	}
 	if err := contract.ValidateDefinition("CanvasSnapshot", snapshot); err != nil {
