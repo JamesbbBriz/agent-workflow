@@ -1,13 +1,14 @@
 export interface AgentWorkflowV1 {
     action_artifact?:      ActionArtifact;
     campaign_definition?:  CampaignDefinition;
+    canvas_snapshot?:      CanvasSnapshot;
     capability_manifest?:  CapabilityManifest;
-    context_bundle?:       ContextBundle;
-    context_pack_edition?: ContextPackEdition;
-    job_definition?:       JobDefinition;
-    receipt?:              Receipt;
-    replay_bundle?:        ReplayBundle;
-    workflow_definition?:  WorkflowDefinition;
+    context_bundle?:       Bundle;
+    context_pack_edition?: Edition;
+    job_definition?:       Job;
+    receipt?:              ReplayBundleReceipt;
+    replay_bundle?:        ReplayBundleElement;
+    workflow_definition?:  WorkflowDefinitionElement;
 }
 
 export interface ActionArtifact {
@@ -80,86 +81,26 @@ export interface Scope {
     subject_type: string;
 }
 
-export interface CapabilityManifest {
-    capabilities:   Capability[];
-    id:             string;
-    kind:           CapabilityManifestKind;
-    manifest_hash:  string;
-    schema_version: number;
+export interface CanvasSnapshot {
+    definition:       Definition;
+    executions:       ExecutionElement[];
+    generated_at:     string;
+    kind:             CanvasSnapshotKind;
+    next_safe_action: NextSafeAction;
+    replays:          ReplayBundleElement[];
+    schema_version:   number;
 }
 
-export interface Capability {
-    authority: CapabilityAuthority;
-    name:      string;
+export interface Definition {
+    campaign:       CampaignDefinition;
+    campaign_state: CampaignState;
+    job:            Job;
+    workflows:      [WorkflowDefinitionElement, ...WorkflowDefinitionElement[]];
 }
 
-export type CapabilityAuthority = "read" | "local_mutation" | "canonical_mutation" | "external_mutation" | "system_recovery";
+export type CampaignState = "configured" | "eligible" | "admitted" | "running" | "awaiting_human" | "blocked" | "completed" | "terminal";
 
-export type CapabilityManifestKind = "capability_manifest";
-
-export interface ContextBundle {
-    bundle_hash:       string;
-    campaign_id:       string;
-    degraded:          boolean;
-    entries:           EntryElement[];
-    evidence_cutoff:   string;
-    id:                string;
-    job_id:            string;
-    kind:              ContextBundleKind;
-    missing_optional?: string[];
-    node_id:           string;
-    schema_version:    number;
-    workflow_ref:      string;
-}
-
-export interface EntryElement {
-    artifact_type:  string;
-    id:             string;
-    kind:           EntryKind;
-    media_type:     string;
-    schema_version: number;
-    sha256:         string;
-}
-
-export type EntryKind = "context_pack";
-
-export type ContextBundleKind = "context_bundle";
-
-export interface ContextPackEdition {
-    authority:              ContextPackEditionAuthority;
-    captured_at:            string;
-    content:                unknown[] | { [key: string]: unknown };
-    content_sha256:         string;
-    coverage:               Coverage;
-    expires_at:             string;
-    id:                     string;
-    kind:                   ContextPackEditionKind;
-    pack_schema_version:    number;
-    pack_type:              string;
-    provenance:             [ProvenanceElement, ...ProvenanceElement[]];
-    schema_version:         number;
-    scope:                  Scope;
-    supersedes_edition_id?: string;
-}
-
-export type ContextPackEditionAuthority = "canonical" | "external_observation" | "derived";
-
-export type Coverage = "complete" | "partial";
-
-export type ContextPackEditionKind = "context_pack_edition";
-
-export interface ProvenanceElement {
-    artifact_type:  string;
-    id:             string;
-    kind:           ProvenanceKind;
-    media_type:     string;
-    schema_version: number;
-    sha256:         string;
-}
-
-export type ProvenanceKind = "context_pack" | "action_artifact" | "receipt";
-
-export interface JobDefinition {
+export interface Job {
     budget:              Budget;
     campaign_archetypes: [string, ...string[]];
     definition_hash?:    string;
@@ -172,38 +113,7 @@ export interface JobDefinition {
 
 export type JobDefinitionKind = "job_definition";
 
-export interface Receipt {
-    actor?:                string;
-    aggregate_id:          string;
-    aggregate_version:     number;
-    id:                    string;
-    input_hashes:          string[];
-    kind:                  ReceiptKind;
-    occurred_at:           string;
-    output_hashes:         string[];
-    payload?:              { [key: string]: unknown };
-    previous_receipt_hash: null | string;
-    receipt_hash:          string;
-    receipt_type:          ReceiptType;
-    schema_version:        number;
-}
-
-export type ReceiptKind = "receipt";
-
-export type ReceiptType = "compile" | "admission" | "pack_edition" | "invocation" | "provider_execution" | "result" | "approval" | "terminal";
-
-export interface ReplayBundle {
-    aggregate_id:        string;
-    bundle_hash:         string;
-    cutoff_receipt_hash: string;
-    kind:                ReplayBundleKind;
-    receipts:            Receipt[];
-    schema_version:      number;
-}
-
-export type ReplayBundleKind = "replay_bundle";
-
-export interface WorkflowDefinition {
+export interface WorkflowDefinitionElement {
     blockers:         string[];
     completion:       [string, ...string[]];
     default_context:  DefaultContextElement[];
@@ -258,3 +168,163 @@ export interface OutputElement {
 export type ArtifactKind = "context_pack" | "action_artifact";
 
 export type NodeKind = "deterministic" | "agent" | "approval" | "wait" | "terminal";
+
+export interface ExecutionElement {
+    aggregate_id:     string;
+    approval_state:   ApprovalState;
+    blocker_code?:    string;
+    blocker_message?: string;
+    bundle:           Bundle;
+    context_ports:    ContextPortElement[];
+    deadline:         string;
+    node_id:          string;
+    outputs:          ActionArtifact[];
+    receipts:         ExecutionReceipt[];
+    status:           CampaignState;
+}
+
+export interface Bundle {
+    bundle_hash:       string;
+    campaign_id:       string;
+    degraded:          boolean;
+    entries:           EntryElement[];
+    evidence_cutoff:   string;
+    id:                string;
+    job_id:            string;
+    kind:              ContextBundleKind;
+    missing_optional?: string[];
+    node_id:           string;
+    schema_version:    number;
+    workflow_ref:      string;
+}
+
+export interface EntryElement {
+    artifact_type:   string;
+    id:              string;
+    kind:            EntryKind;
+    media_type:      string;
+    requirement_id?: string;
+    schema_version:  number;
+    sha256:          string;
+}
+
+export type EntryKind = "context_pack";
+
+export type ContextBundleKind = "context_bundle";
+
+export interface ContextPortElement {
+    allow_partial:     boolean;
+    consumers:         string[];
+    edition?:          Edition;
+    evidence_frontier: EvidenceFrontier;
+    id:                string;
+    node_id:           string;
+    pack_type:         string;
+    producer:          string;
+    required:          boolean;
+    schema_version:    number;
+    selector:          string;
+    status:            Status;
+}
+
+export interface Edition {
+    authority:              ContextPackEditionAuthority;
+    captured_at:            string;
+    content:                unknown[] | { [key: string]: unknown };
+    content_sha256:         string;
+    coverage:               Coverage;
+    expires_at:             string;
+    id:                     string;
+    kind:                   ContextPackEditionKind;
+    pack_schema_version:    number;
+    pack_type:              string;
+    provenance:             [ProvenanceElement, ...ProvenanceElement[]];
+    schema_version:         number;
+    scope:                  Scope;
+    supersedes_edition_id?: string;
+}
+
+export type ContextPackEditionAuthority = "canonical" | "external_observation" | "derived";
+
+export type Coverage = "complete" | "partial";
+
+export type ContextPackEditionKind = "context_pack_edition";
+
+export interface ProvenanceElement {
+    artifact_type:  string;
+    id:             string;
+    kind:           ProvenanceKind;
+    media_type:     string;
+    schema_version: number;
+    sha256:         string;
+}
+
+export type ProvenanceKind = "context_pack" | "action_artifact" | "receipt";
+
+export type Status = "configured" | "resolved" | "missing" | "stale" | "partial" | "degraded" | "invalid";
+
+export interface ExecutionReceipt {
+    id:           string;
+    occurred_at:  string;
+    receipt_hash: string;
+    receipt_type: ReceiptType;
+}
+
+export type ReceiptType = "compile" | "admission" | "pack_edition" | "invocation" | "provider_execution" | "result" | "approval" | "terminal";
+
+export type CanvasSnapshotKind = "canvas_snapshot";
+
+export interface NextSafeAction {
+    kind:          NextSafeActionKind;
+    node_id?:      string;
+    reason:        string;
+    workflow_ref?: string;
+}
+
+export type NextSafeActionKind = "none" | "start_node" | "request_context" | "request_approval" | "retry" | "terminal";
+
+export interface ReplayBundleElement {
+    aggregate_id:        string;
+    bundle_hash:         string;
+    cutoff_receipt_hash: string;
+    kind:                ReplayBundleKind;
+    receipts:            ReplayBundleReceipt[];
+    schema_version:      number;
+}
+
+export type ReplayBundleKind = "replay_bundle";
+
+export interface ReplayBundleReceipt {
+    actor?:                string;
+    aggregate_id:          string;
+    aggregate_version:     number;
+    id:                    string;
+    input_hashes:          string[];
+    kind:                  ReceiptKind;
+    occurred_at:           string;
+    output_hashes:         string[];
+    payload?:              { [key: string]: unknown };
+    previous_receipt_hash: null | string;
+    receipt_hash:          string;
+    receipt_type:          ReceiptType;
+    schema_version:        number;
+}
+
+export type ReceiptKind = "receipt";
+
+export interface CapabilityManifest {
+    capabilities:   Capability[];
+    id:             string;
+    kind:           CapabilityManifestKind;
+    manifest_hash:  string;
+    schema_version: number;
+}
+
+export interface Capability {
+    authority: CapabilityAuthority;
+    name:      string;
+}
+
+export type CapabilityAuthority = "read" | "local_mutation" | "canonical_mutation" | "external_mutation" | "system_recovery";
+
+export type CapabilityManifestKind = "capability_manifest";

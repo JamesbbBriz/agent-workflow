@@ -63,6 +63,9 @@ type AgentWorkflowContractCatalog struct {
 	// CampaignDefinition corresponds to the JSON schema field "campaign_definition".
 	CampaignDefinition *CampaignDefinition `json:"campaign_definition,omitempty,omitzero"`
 
+	// CanvasSnapshot corresponds to the JSON schema field "canvas_snapshot".
+	CanvasSnapshot *CanvasSnapshot `json:"canvas_snapshot,omitempty,omitzero"`
+
 	// CapabilityManifest corresponds to the JSON schema field "capability_manifest".
 	CapabilityManifest *CapabilityManifest `json:"capability_manifest,omitempty,omitzero"`
 
@@ -165,6 +168,199 @@ type CampaignDefinitionKind string
 const CampaignDefinitionKindCampaignDefinition CampaignDefinitionKind = "campaign_definition"
 
 type CampaignDefinitionSchemaVersion int
+
+type CanvasContextPort struct {
+	// AllowPartial corresponds to the JSON schema field "allow_partial".
+	AllowPartial bool `json:"allow_partial"`
+
+	// Consumers corresponds to the JSON schema field "consumers".
+	Consumers Strings `json:"consumers"`
+
+	// Edition corresponds to the JSON schema field "edition".
+	Edition *ContextPackEdition `json:"edition,omitempty,omitzero"`
+
+	// EvidenceFrontier corresponds to the JSON schema field "evidence_frontier".
+	EvidenceFrontier EvidenceFrontier `json:"evidence_frontier"`
+
+	// Id corresponds to the JSON schema field "id".
+	Id Identifier `json:"id"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// PackType corresponds to the JSON schema field "pack_type".
+	PackType Identifier `json:"pack_type"`
+
+	// Producer corresponds to the JSON schema field "producer".
+	Producer Identifier `json:"producer"`
+
+	// Required corresponds to the JSON schema field "required".
+	Required bool `json:"required"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion int `json:"schema_version"`
+
+	// Selector corresponds to the JSON schema field "selector".
+	Selector Identifier `json:"selector"`
+
+	// Status corresponds to the JSON schema field "status".
+	Status CanvasContextStatus `json:"status"`
+}
+
+type CanvasContextStatus string
+
+const CanvasContextStatusConfigured CanvasContextStatus = "configured"
+const CanvasContextStatusDegraded CanvasContextStatus = "degraded"
+const CanvasContextStatusInvalid CanvasContextStatus = "invalid"
+const CanvasContextStatusMissing CanvasContextStatus = "missing"
+const CanvasContextStatusPartial CanvasContextStatus = "partial"
+const CanvasContextStatusResolved CanvasContextStatus = "resolved"
+const CanvasContextStatusStale CanvasContextStatus = "stale"
+
+type CanvasDefinitionGraph struct {
+	// Campaign corresponds to the JSON schema field "campaign".
+	Campaign CampaignDefinition `json:"campaign"`
+
+	// CampaignState corresponds to the JSON schema field "campaign_state".
+	CampaignState CanvasEntityStatus `json:"campaign_state"`
+
+	// Job corresponds to the JSON schema field "job".
+	Job JobDefinition `json:"job"`
+
+	// Workflows corresponds to the JSON schema field "workflows".
+	Workflows []WorkflowDefinition `json:"workflows"`
+}
+
+type CanvasEntityStatus string
+
+const CanvasEntityStatusAdmitted CanvasEntityStatus = "admitted"
+const CanvasEntityStatusAwaitingHuman CanvasEntityStatus = "awaiting_human"
+const CanvasEntityStatusBlocked CanvasEntityStatus = "blocked"
+const CanvasEntityStatusCompleted CanvasEntityStatus = "completed"
+const CanvasEntityStatusConfigured CanvasEntityStatus = "configured"
+const CanvasEntityStatusEligible CanvasEntityStatus = "eligible"
+const CanvasEntityStatusRunning CanvasEntityStatus = "running"
+const CanvasEntityStatusTerminal CanvasEntityStatus = "terminal"
+
+type CanvasExecution struct {
+	// AggregateId corresponds to the JSON schema field "aggregate_id".
+	AggregateId string `json:"aggregate_id"`
+
+	// ApprovalState corresponds to the JSON schema field "approval_state".
+	ApprovalState CanvasExecutionApprovalState `json:"approval_state"`
+
+	// BlockerCode corresponds to the JSON schema field "blocker_code".
+	BlockerCode *Identifier `json:"blocker_code,omitempty,omitzero"`
+
+	// BlockerMessage corresponds to the JSON schema field "blocker_message".
+	BlockerMessage *string `json:"blocker_message,omitempty,omitzero"`
+
+	// Bundle corresponds to the JSON schema field "bundle".
+	Bundle ContextBundle `json:"bundle"`
+
+	// ContextPorts corresponds to the JSON schema field "context_ports".
+	ContextPorts []CanvasContextPort `json:"context_ports"`
+
+	// Deadline corresponds to the JSON schema field "deadline".
+	Deadline time.Time `json:"deadline"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// Outputs corresponds to the JSON schema field "outputs".
+	Outputs []ActionArtifact `json:"outputs"`
+
+	// Receipts corresponds to the JSON schema field "receipts".
+	Receipts []CanvasReceiptLink `json:"receipts"`
+
+	// Status corresponds to the JSON schema field "status".
+	Status CanvasEntityStatus `json:"status"`
+}
+
+type CanvasExecutionApprovalState string
+
+const CanvasExecutionApprovalStateApproved CanvasExecutionApprovalState = "approved"
+const CanvasExecutionApprovalStateNotRequired CanvasExecutionApprovalState = "not_required"
+const CanvasExecutionApprovalStatePending CanvasExecutionApprovalState = "pending"
+const CanvasExecutionApprovalStateRejected CanvasExecutionApprovalState = "rejected"
+const CanvasExecutionApprovalStateStale CanvasExecutionApprovalState = "stale"
+
+type CanvasNextSafeAction struct {
+	// Kind corresponds to the JSON schema field "kind".
+	Kind CanvasNextSafeActionKind `json:"kind"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId *Identifier `json:"node_id,omitempty,omitzero"`
+
+	// Reason corresponds to the JSON schema field "reason".
+	Reason string `json:"reason"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef *WorkflowRef `json:"workflow_ref,omitempty,omitzero"`
+}
+
+type CanvasNextSafeActionKind string
+
+const CanvasNextSafeActionKindNone CanvasNextSafeActionKind = "none"
+const CanvasNextSafeActionKindRequestApproval CanvasNextSafeActionKind = "request_approval"
+const CanvasNextSafeActionKindRequestContext CanvasNextSafeActionKind = "request_context"
+const CanvasNextSafeActionKindRetry CanvasNextSafeActionKind = "retry"
+const CanvasNextSafeActionKindStartNode CanvasNextSafeActionKind = "start_node"
+const CanvasNextSafeActionKindTerminal CanvasNextSafeActionKind = "terminal"
+
+type CanvasReceiptLink struct {
+	// Id corresponds to the JSON schema field "id".
+	Id string `json:"id"`
+
+	// OccurredAt corresponds to the JSON schema field "occurred_at".
+	OccurredAt time.Time `json:"occurred_at"`
+
+	// ReceiptHash corresponds to the JSON schema field "receipt_hash".
+	ReceiptHash SHA256 `json:"receipt_hash"`
+
+	// ReceiptType corresponds to the JSON schema field "receipt_type".
+	ReceiptType CanvasReceiptLinkReceiptType `json:"receipt_type"`
+}
+
+type CanvasReceiptLinkReceiptType string
+
+const CanvasReceiptLinkReceiptTypeAdmission CanvasReceiptLinkReceiptType = "admission"
+const CanvasReceiptLinkReceiptTypeApproval CanvasReceiptLinkReceiptType = "approval"
+const CanvasReceiptLinkReceiptTypeCompile CanvasReceiptLinkReceiptType = "compile"
+const CanvasReceiptLinkReceiptTypeInvocation CanvasReceiptLinkReceiptType = "invocation"
+const CanvasReceiptLinkReceiptTypePackEdition CanvasReceiptLinkReceiptType = "pack_edition"
+const CanvasReceiptLinkReceiptTypeProviderExecution CanvasReceiptLinkReceiptType = "provider_execution"
+const CanvasReceiptLinkReceiptTypeResult CanvasReceiptLinkReceiptType = "result"
+const CanvasReceiptLinkReceiptTypeTerminal CanvasReceiptLinkReceiptType = "terminal"
+
+type CanvasSnapshot struct {
+	// Definition corresponds to the JSON schema field "definition".
+	Definition CanvasDefinitionGraph `json:"definition"`
+
+	// Executions corresponds to the JSON schema field "executions".
+	Executions []CanvasExecution `json:"executions"`
+
+	// GeneratedAt corresponds to the JSON schema field "generated_at".
+	GeneratedAt time.Time `json:"generated_at"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind CanvasSnapshotKind `json:"kind"`
+
+	// NextSafeAction corresponds to the JSON schema field "next_safe_action".
+	NextSafeAction CanvasNextSafeAction `json:"next_safe_action"`
+
+	// Replays corresponds to the JSON schema field "replays".
+	Replays []ReplayBundle `json:"replays"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion CanvasSnapshotSchemaVersion `json:"schema_version"`
+}
+
+type CanvasSnapshotKind string
+
+const CanvasSnapshotKindCanvasSnapshot CanvasSnapshotKind = "canvas_snapshot"
+
+type CanvasSnapshotSchemaVersion int
 
 type CapabilityManifest struct {
 	// Capabilities corresponds to the JSON schema field "capabilities".
@@ -323,6 +519,9 @@ type ContextPackRef struct {
 
 	// MediaType corresponds to the JSON schema field "media_type".
 	MediaType string `json:"media_type"`
+
+	// RequirementId corresponds to the JSON schema field "requirement_id".
+	RequirementId *Identifier `json:"requirement_id,omitempty,omitzero"`
 
 	// SchemaVersion corresponds to the JSON schema field "schema_version".
 	SchemaVersion int `json:"schema_version"`
@@ -625,11 +824,6 @@ type Slot struct {
 type SlotArtifactKind string
 
 const SlotArtifactKindActionArtifact SlotArtifactKind = "action_artifact"
-
-type WorkflowRef string
-
-type ReceiptPreviousReceiptHash_0 = SHA256
-
 const SlotArtifactKindContextPack SlotArtifactKind = "context_pack"
 
 type Strings []string
@@ -672,5 +866,9 @@ type WorkflowDefinition struct {
 type WorkflowDefinitionKind string
 
 const WorkflowDefinitionKindWorkflowDefinition WorkflowDefinitionKind = "workflow_definition"
+
+type WorkflowRef string
+
+type ReceiptPreviousReceiptHash_0 = SHA256
 
 type WorkflowDefinitionSchemaVersion int

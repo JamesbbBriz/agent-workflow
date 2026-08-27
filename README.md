@@ -35,7 +35,24 @@ go run ./cmd/agent-workflow demo \
   --json
 ```
 
-The demo expands Workflow Context defaults into the `research` Node, resolves an exact catalog Pack and a derived Intent-chain Pack, builds a Capability Manifest, invokes one bounded provider, validates its Action Artifact, and returns a five-receipt Replay. It uses the process-local ledger; `OpenFileLedger` provides a small single-writer, crash-durable JSONL option.
+The demo expands Workflow Context defaults into the `research` Node, resolves an exact catalog Pack and a derived Intent-chain Pack, builds a Capability Manifest, invokes one bounded provider, validates its Action Artifact, and returns a seven-receipt Replay. It uses the process-local ledger; `OpenFileLedger` provides a small single-writer, crash-durable JSONL option.
+
+Project the same canonical definitions and Replay into the generated read-only Canvas API:
+
+```bash
+go run ./cmd/agent-workflow canvas \
+  --file examples/research-review.workflow.json \
+  --at 2026-08-27T00:00:00Z
+```
+
+Open the full-screen React Flow Canvas:
+
+```bash
+npm run fixture:canvas
+npm run web:dev
+```
+
+Definition mode shows the exact configured graph. Runtime mode adds only executions, Context Pack editions, Action Artifacts, blockers, approval gates, and receipts present in the Core projection. The GUI cannot create, approve, or mutate canonical state.
 
 Generate Go and TypeScript bindings from the canonical schema:
 

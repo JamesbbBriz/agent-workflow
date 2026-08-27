@@ -3,3 +3,6 @@
 /.DS_Store
 /coverage.out
 /web/dist/
+/output/
+/web/node_modules/
+/.codebase-memory/

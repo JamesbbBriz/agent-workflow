@@ -117,6 +117,9 @@ func TestExpiredProviderPollBecomesOneTerminalReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := workflow.MaterializeInvocation(replay); err != nil {
+		t.Fatalf("terminal replay lost its canonical invocation: %v", err)
+	}
 	if provider.cancelled != 1 || replay.Receipts[len(replay.Receipts)-1].Payload["state"] != "deadline_expired" {
 		t.Fatalf("deadline terminal did not converge: cancelled=%d replay=%+v", provider.cancelled, replay)
 	}

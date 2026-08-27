@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/JamesbbBriz/agent-workflow/canvas"
 	"github.com/JamesbbBriz/agent-workflow/internal/contract"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 	"github.com/JamesbbBriz/agent-workflow/workflow"
@@ -25,7 +26,7 @@ type response struct {
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo> [options]")
+		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas> [options]")
 		return 2
 	}
 	switch args[0] {
@@ -33,10 +34,58 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runValidate(args[1:], stdout, stderr)
 	case "demo":
 		return runDemo(args[1:], stdout, stderr)
+	case "canvas":
+		return runCanvas(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo> [options]")
+		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas> [options]")
 		return 2
 	}
+}
+
+func runCanvas(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("canvas", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	file := flags.String("file", "", "workflow definition JSON")
+	at := flags.String("at", "", "pinned evidence cutoff in RFC3339")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *file == "" || *at == "" || flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "canvas requires exactly one --file and --at")
+		return 2
+	}
+	cutoff, err := time.Parse(time.RFC3339, *at)
+	if err != nil {
+		return writeError(stdout, stderr, true, "invalid_time", errors.New("canvas time must be RFC3339"))
+	}
+	body, err := os.ReadFile(*file)
+	if err != nil {
+		return writeError(stdout, stderr, true, "input_unavailable", errors.New("workflow file is unavailable"))
+	}
+	if _, err := contract.ValidateWorkflow(body); err != nil {
+		return writeError(stdout, stderr, true, "invalid_workflow", err)
+	}
+	var definition contractsv1.WorkflowDefinition
+	if err := json.Unmarshal(body, &definition); err != nil {
+		return writeError(stdout, stderr, true, "invalid_workflow", errors.New("workflow file is invalid"))
+	}
+	result, err := executeDemo(definition, cutoff.UTC())
+	if err != nil {
+		return writeError(stdout, stderr, true, "canvas_failed", err)
+	}
+	job, campaign := demoDefinitions(definition, cutoff.UTC())
+	snapshot, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{
+		Replay:  result.Replay,
+		Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation},
+	})
+	if err != nil {
+		return writeError(stdout, stderr, true, "canvas_failed", err)
+	}
+	_ = json.NewEncoder(stdout).Encode(struct {
+		OK   bool                       `json:"ok"`
+		Data contractsv1.CanvasSnapshot `json:"data"`
+	}{OK: true, Data: snapshot})
+	return 0
 }
 
 func runValidate(args []string, stdout, stderr io.Writer) int {
@@ -134,23 +183,28 @@ func executeDemo(definition contractsv1.WorkflowDefinition, cutoff time.Time) (w
 	if err != nil {
 		return workflow.RunResult{}, err
 	}
-	job := contractsv1.JobDefinition{
-		Kind: contractsv1.JobDefinitionKindJobDefinition, SchemaVersion: 1, Id: "example-job",
-		Intent: demoIntent(contractsv1.IntentCardKindJob, "Example research job"), Scope: scope,
-		Budget: contractsv1.Budget{MaxAttempts: 2, MaxActions: 1, MaxCandidates: 3}, CampaignArchetypes: []string{"research"},
-	}
-	campaign := contractsv1.CampaignDefinition{
-		Kind: contractsv1.CampaignDefinitionKindCampaignDefinition, SchemaVersion: 1, Id: "example-campaign", JobId: job.Id,
-		Archetype: "research", Intent: demoIntent(contractsv1.IntentCardKindCampaign, "Example evidence campaign"), Scope: scope,
-		EvidenceFrontier: contractsv1.EvidenceFrontier{Cutoff: cutoff, SourceHashes: []contractsv1.SHA256{}}, WorkflowPlan: []contractsv1.WorkflowRef{contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", definition.Id, definition.Version))},
-		Budget: job.Budget,
-	}
+	job, campaign := demoDefinitions(definition, cutoff)
 	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{
 		"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead,
 	}, workflow.OutputCatalog{
 		"recommendation@1": validateRecommendation,
 	}, &demoProvider{results: make(map[string]workflow.ProviderResult)}, workflow.NewMemoryLedger())
 	return engine.RunNode(context.Background(), workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
+}
+
+func demoDefinitions(definition contractsv1.WorkflowDefinition, cutoff time.Time) (contractsv1.JobDefinition, contractsv1.CampaignDefinition) {
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"example-project"}}
+	job := contractsv1.JobDefinition{
+		Kind: contractsv1.JobDefinitionKindJobDefinition, SchemaVersion: 1, Id: "example-job",
+		Intent: demoIntent(contractsv1.IntentCardKindJob, "Example research job"), Scope: scope,
+		Budget: contractsv1.Budget{MaxAttempts: 2, MaxActions: 1, MaxCandidates: 3}, CampaignArchetypes: []string{"research"},
+	}
+	return job, contractsv1.CampaignDefinition{
+		Kind: contractsv1.CampaignDefinitionKindCampaignDefinition, SchemaVersion: 1, Id: "example-campaign", JobId: job.Id,
+		Archetype: "research", Intent: demoIntent(contractsv1.IntentCardKindCampaign, "Example evidence campaign"), Scope: scope,
+		EvidenceFrontier: contractsv1.EvidenceFrontier{Cutoff: cutoff, SourceHashes: []contractsv1.SHA256{}}, WorkflowPlan: []contractsv1.WorkflowRef{contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", definition.Id, definition.Version))},
+		Budget: job.Budget,
+	}
 }
 
 func demoIntent(kind contractsv1.IntentCardKind, title string) contractsv1.IntentCard {

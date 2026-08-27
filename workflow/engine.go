@@ -403,6 +403,77 @@ func materializeInvocation(bundle contractsv1.ReplayBundle) (Invocation, bool, e
 	return Invocation{}, false, nil
 }
 
+// MaterializeInvocation returns the exact invocation recorded by a verified Replay.
+func MaterializeInvocation(bundle contractsv1.ReplayBundle) (Invocation, error) {
+	invocation, ok, err := materializeInvocation(bundle)
+	if err != nil {
+		return Invocation{}, err
+	}
+	if !ok {
+		return Invocation{}, errors.New("replay has no materialized invocation")
+	}
+	if err := VerifyContextBundle(invocation.Bundle, invocation.Context); err != nil {
+		return Invocation{}, err
+	}
+	for _, pack := range invocation.Context {
+		found := false
+		for _, receipt := range bundle.Receipts {
+			if receipt.ReceiptType != contractsv1.ReceiptReceiptTypePackEdition {
+				continue
+			}
+			var recorded contractsv1.ContextPackEdition
+			if err := decodePayload(receipt.Payload["pack"], &recorded); err != nil {
+				return Invocation{}, err
+			}
+			if reflect.DeepEqual(recorded, pack) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return Invocation{}, fmt.Errorf("context pack %q has no exact edition receipt", pack.Id)
+		}
+	}
+	intent, ok := contextPackByType(invocation.Context, "intent-chain")
+	if !ok || !reflect.DeepEqual(intent, invocation.IntentChain) {
+		return Invocation{}, errors.New("replay intent chain does not match invocation context")
+	}
+	if err := VerifyCapabilityManifest(invocation.Capabilities); err != nil {
+		return Invocation{}, err
+	}
+	return invocation, nil
+}
+
+// VerifyDefinitionBinding proves that displayed definitions are the ones recorded by Replay.
+func VerifyDefinitionBinding(bundle contractsv1.ReplayBundle, job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definition contractsv1.WorkflowDefinition) (Invocation, error) {
+	invocation, err := MaterializeInvocation(bundle)
+	if err != nil {
+		return Invocation{}, err
+	}
+	jobHash, campaignHash, err := aggregateDefinitionHashes(RunRequest{Job: job, Campaign: campaign})
+	if err != nil {
+		return Invocation{}, err
+	}
+	body, err := json.Marshal(definition)
+	if err != nil {
+		return Invocation{}, err
+	}
+	identity, err := contract.ValidateWorkflow(body)
+	if err != nil {
+		return Invocation{}, err
+	}
+	compileReceipt, ok := receiptByType(bundle, contractsv1.ReceiptReceiptTypeCompile)
+	if !ok || len(compileReceipt.InputHashes) != 1 || len(compileReceipt.OutputHashes) != 1 {
+		return Invocation{}, errors.New("replay compile receipt is incomplete")
+	}
+	if len(invocation.InputHashes) != 5 || invocation.InputHashes[0] != jobHash || invocation.InputHashes[1] != campaignHash ||
+		invocation.InputHashes[2] != compileReceipt.OutputHashes[0] || invocation.InputHashes[3] != invocation.Bundle.BundleHash ||
+		invocation.InputHashes[4] != invocation.Capabilities.ManifestHash || compileReceipt.InputHashes[0] != contractsv1.SHA256(identity.Hash) {
+		return Invocation{}, errors.New("replay does not bind the displayed definitions")
+	}
+	return invocation, nil
+}
+
 func materializeProviderResult(bundle contractsv1.ReplayBundle) (ProviderResult, bool, error) {
 	receipt, ok := receiptByType(bundle, contractsv1.ReceiptReceiptTypeResult)
 	if !ok {
@@ -720,61 +791,25 @@ func replayBundle(aggregateID string, receipts []contractsv1.Receipt) (contracts
 var ErrReplayEmpty = errors.New("replay aggregate is empty")
 
 func MaterializeReplay(bundle contractsv1.ReplayBundle, outputs OutputCatalog) (ReplayMaterial, error) {
-	if err := VerifyReplay(bundle); err != nil {
+	invocation, err := MaterializeInvocation(bundle)
+	if err != nil {
 		return ReplayMaterial{}, err
 	}
-	var material ReplayMaterial
+	material := ReplayMaterial{Invocation: invocation}
 	var providerResult ProviderResult
 	for _, receipt := range bundle.Receipts {
-		switch receipt.ReceiptType {
-		case contractsv1.ReceiptReceiptTypeInvocation:
-			if err := decodePayload(receipt.Payload["invocation"], &material.Invocation); err != nil {
-				return ReplayMaterial{}, fmt.Errorf("materialize invocation: %w", err)
-			}
-		case contractsv1.ReceiptReceiptTypeResult:
+		if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeResult {
 			if err := decodePayload(receipt.Payload["provider_result"], &providerResult); err != nil {
 				return ReplayMaterial{}, fmt.Errorf("materialize artifacts: %w", err)
 			}
 			material.Artifacts = providerResult.Artifacts
 		}
 	}
-	if material.Invocation.IdempotencyKey == "" {
-		return ReplayMaterial{}, errors.New("replay has no materialized invocation")
-	}
 	if err := validateProviderResult(providerResult, material.Invocation); err != nil {
 		return ReplayMaterial{}, err
 	}
 	if providerResult.CompletedAt.After(material.Invocation.Deadline) {
 		return ReplayMaterial{}, errors.New("provider result completed after the node deadline")
-	}
-	if err := VerifyContextBundle(material.Invocation.Bundle, material.Invocation.Context); err != nil {
-		return ReplayMaterial{}, err
-	}
-	for _, pack := range material.Invocation.Context {
-		found := false
-		for _, receipt := range bundle.Receipts {
-			if receipt.ReceiptType != contractsv1.ReceiptReceiptTypePackEdition {
-				continue
-			}
-			var recorded contractsv1.ContextPackEdition
-			if err := decodePayload(receipt.Payload["pack"], &recorded); err != nil {
-				return ReplayMaterial{}, err
-			}
-			if reflect.DeepEqual(recorded, pack) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return ReplayMaterial{}, fmt.Errorf("context pack %q has no exact edition receipt", pack.Id)
-		}
-	}
-	intent, ok := contextPackByType(material.Invocation.Context, "intent-chain")
-	if !ok || !reflect.DeepEqual(intent, material.Invocation.IntentChain) {
-		return ReplayMaterial{}, errors.New("replay intent chain does not match invocation context")
-	}
-	if err := VerifyCapabilityManifest(material.Invocation.Capabilities); err != nil {
-		return ReplayMaterial{}, err
 	}
 	if err := validateArtifacts(material.Artifacts, material.Invocation, outputs); err != nil {
 		return ReplayMaterial{}, err
