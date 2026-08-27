@@ -13,6 +13,7 @@
     "capability_manifest": { "$ref": "agent-workflow.v1.schema.json#/$defs/CapabilityManifest" },
     "action_artifact": { "$ref": "agent-workflow.v1.schema.json#/$defs/ActionArtifact" },
     "receipt": { "$ref": "agent-workflow.v1.schema.json#/$defs/Receipt" },
-    "replay_bundle": { "$ref": "agent-workflow.v1.schema.json#/$defs/ReplayBundle" }
+    "replay_bundle": { "$ref": "agent-workflow.v1.schema.json#/$defs/ReplayBundle" },
+    "canvas_snapshot": { "$ref": "agent-workflow.v1.schema.json#/$defs/CanvasSnapshot" }
   }
 }

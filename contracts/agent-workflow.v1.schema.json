@@ -325,6 +325,96 @@
         "receipts": { "type": "array", "items": { "$ref": "#/$defs/Receipt" } },
         "bundle_hash": { "$ref": "#/$defs/SHA256" }
       }
+    },
+    "CanvasEntityStatus": {
+      "enum": ["configured", "eligible", "admitted", "running", "awaiting_human", "blocked", "completed", "terminal"]
+    },
+    "CanvasContextStatus": {
+      "enum": ["resolved", "missing", "stale", "partial", "degraded", "invalid"]
+    },
+    "CanvasReceiptLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "receipt_type", "receipt_hash", "occurred_at"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "receipt_type": { "enum": ["compile", "admission", "pack_edition", "invocation", "provider_execution", "result", "approval", "terminal"] },
+        "receipt_hash": { "$ref": "#/$defs/SHA256" },
+        "occurred_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "CanvasContextPort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "node_id", "selector", "pack_type", "schema_version", "required", "allow_partial", "status", "producer", "consumers", "evidence_frontier"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" },
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "selector": { "$ref": "#/$defs/Identifier" },
+        "pack_type": { "$ref": "#/$defs/Identifier" },
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "required": { "type": "boolean" },
+        "allow_partial": { "type": "boolean" },
+        "status": { "$ref": "#/$defs/CanvasContextStatus" },
+        "producer": { "$ref": "#/$defs/Identifier" },
+        "consumers": { "$ref": "#/$defs/Strings" },
+        "evidence_frontier": { "$ref": "#/$defs/EvidenceFrontier" },
+        "edition": { "$ref": "#/$defs/ContextPackEdition" }
+      }
+    },
+    "CanvasExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aggregate_id", "node_id", "status", "deadline", "bundle", "context_ports", "outputs", "receipts", "approval_state"],
+      "properties": {
+        "aggregate_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "status": { "$ref": "#/$defs/CanvasEntityStatus" },
+        "deadline": { "type": "string", "format": "date-time" },
+        "bundle": { "$ref": "#/$defs/ContextBundle" },
+        "context_ports": { "type": "array", "items": { "$ref": "#/$defs/CanvasContextPort" } },
+        "outputs": { "type": "array", "items": { "$ref": "#/$defs/ActionArtifact" } },
+        "receipts": { "type": "array", "items": { "$ref": "#/$defs/CanvasReceiptLink" } },
+        "approval_state": { "enum": ["not_required", "pending", "approved", "rejected", "stale"] },
+        "blocker_code": { "$ref": "#/$defs/Identifier" },
+        "blocker_message": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "CanvasDefinitionGraph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job", "campaign", "campaign_state", "workflows"],
+      "properties": {
+        "job": { "$ref": "#/$defs/JobDefinition" },
+        "campaign": { "$ref": "#/$defs/CampaignDefinition" },
+        "campaign_state": { "$ref": "#/$defs/CanvasEntityStatus" },
+        "workflows": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/WorkflowDefinition" } }
+      }
+    },
+    "CanvasNextSafeAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reason"],
+      "properties": {
+        "kind": { "enum": ["none", "start_node", "request_context", "request_approval", "retry", "terminal"] },
+        "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "CanvasSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "generated_at", "definition", "executions", "next_safe_action", "replays"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["canvas_snapshot"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "generated_at": { "type": "string", "format": "date-time" },
+        "definition": { "$ref": "#/$defs/CanvasDefinitionGraph" },
+        "executions": { "type": "array", "items": { "$ref": "#/$defs/CanvasExecution" } },
+        "next_safe_action": { "$ref": "#/$defs/CanvasNextSafeAction" },
+        "replays": { "type": "array", "items": { "$ref": "#/$defs/ReplayBundle" } }
+      }
     }
   }
 }
