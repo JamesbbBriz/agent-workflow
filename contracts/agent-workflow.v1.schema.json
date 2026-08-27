@@ -95,6 +95,9 @@
       "properties": {
         "id": { "$ref": "#/$defs/Identifier" },
         "artifact_type": { "$ref": "#/$defs/Identifier" },
+        "artifact_kind": { "enum": ["context_pack", "action_artifact"] },
+        "content_schema": { "$ref": "#/$defs/WorkflowRef" },
+        "consumers": { "$ref": "#/$defs/Strings" },
         "min_items": { "type": "integer", "minimum": 0, "maximum": 1000 },
         "max_items": { "type": "integer", "minimum": 1, "maximum": 1000 }
       }

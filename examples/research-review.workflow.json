@@ -18,6 +18,14 @@
   },
   "default_context": [
     {
+      "id": "intent-chain",
+      "selector": "intent-chain",
+      "pack_type": "intent-chain",
+      "schema_version": 1,
+      "required": true,
+      "allow_partial": false
+    },
+    {
       "id": "project-brief",
       "selector": "project-brief",
       "pack_type": "project-brief",
@@ -37,7 +45,7 @@
       "capabilities": ["read-evidence"],
       "input_slots": [],
       "output_slots": [
-        { "id": "recommendation", "artifact_type": "recommendation", "min_items": 1, "max_items": 1 }
+        { "id": "recommendation", "artifact_type": "recommendation", "artifact_kind": "action_artifact", "content_schema": "recommendation@1", "consumers": ["review"], "min_items": 1, "max_items": 1 }
       ],
       "budget": { "max_attempts": 2, "max_actions": 0, "max_candidates": 3 },
       "deadline_seconds": 600,
@@ -51,10 +59,10 @@
       "context": [],
       "capabilities": [],
       "input_slots": [
-        { "id": "recommendation", "artifact_type": "recommendation", "min_items": 1, "max_items": 1 }
+        { "id": "recommendation", "artifact_type": "recommendation", "artifact_kind": "action_artifact", "content_schema": "recommendation@1", "min_items": 1, "max_items": 1 }
       ],
       "output_slots": [
-        { "id": "review-decision", "artifact_type": "review-decision", "min_items": 1, "max_items": 1 }
+        { "id": "review-decision", "artifact_type": "review-decision", "artifact_kind": "action_artifact", "content_schema": "review-decision@1", "consumers": ["workflow-output"], "min_items": 1, "max_items": 1 }
       ],
       "budget": { "max_attempts": 1, "max_actions": 1, "max_candidates": 1 },
       "deadline_seconds": 86400,
@@ -62,7 +70,7 @@
     }
   ],
   "outputs": [
-    { "id": "review-decision", "artifact_type": "review-decision", "min_items": 1, "max_items": 1 }
+    { "id": "review-decision", "artifact_type": "review-decision", "artifact_kind": "action_artifact", "content_schema": "review-decision@1", "consumers": ["human-operator"], "min_items": 1, "max_items": 1 }
   ],
   "completion": ["review accepted", "review rejected"],
   "blockers": ["context-missing", "provider-timeout", "approval-required", "approval-stale"]

@@ -599,11 +599,18 @@ type Scope struct {
 
 type ScopeLabels map[string]string
 
-type ReceiptPreviousReceiptHash_0 = SHA256
-
 type Slot struct {
+	// ArtifactKind corresponds to the JSON schema field "artifact_kind".
+	ArtifactKind *SlotArtifactKind `json:"artifact_kind,omitempty,omitzero"`
+
 	// ArtifactType corresponds to the JSON schema field "artifact_type".
 	ArtifactType Identifier `json:"artifact_type"`
+
+	// Consumers corresponds to the JSON schema field "consumers".
+	Consumers Strings `json:"consumers,omitempty,omitzero"`
+
+	// ContentSchema corresponds to the JSON schema field "content_schema".
+	ContentSchema *WorkflowRef `json:"content_schema,omitempty,omitzero"`
 
 	// Id corresponds to the JSON schema field "id".
 	Id Identifier `json:"id"`
@@ -614,6 +621,16 @@ type Slot struct {
 	// MinItems corresponds to the JSON schema field "min_items".
 	MinItems int `json:"min_items"`
 }
+
+type SlotArtifactKind string
+
+const SlotArtifactKindActionArtifact SlotArtifactKind = "action_artifact"
+
+type WorkflowRef string
+
+type ReceiptPreviousReceiptHash_0 = SHA256
+
+const SlotArtifactKindContextPack SlotArtifactKind = "context_pack"
 
 type Strings []string
 
@@ -657,5 +674,3 @@ type WorkflowDefinitionKind string
 const WorkflowDefinitionKindWorkflowDefinition WorkflowDefinitionKind = "workflow_definition"
 
 type WorkflowDefinitionSchemaVersion int
-
-type WorkflowRef string

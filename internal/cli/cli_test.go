@@ -33,7 +33,7 @@ func TestValidateReportsStableWorkflowIdentity(t *testing.T) {
 	if !response.OK || response.WorkflowRef != "research-review@1" {
 		t.Fatalf("unexpected response: %+v", response)
 	}
-	if response.Hash != "sha256:8b301a63ee614ed93360118f32deb55355d38047342037336b95efc5b5d5a08e" {
+	if response.Hash != "sha256:189b251e4c27ec45e4022ed652e3c8e94ddfdce7acacabcbaee42f0b29c3738c" {
 		t.Fatalf("unexpected workflow hash: %s", response.Hash)
 	}
 }
@@ -109,5 +109,34 @@ func TestValidateRejectsDuplicateJSONFields(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "duplicate object field") {
 		t.Fatalf("expected duplicate-field error, got %s", stdout.String())
+	}
+}
+
+func TestDemoRunsOneContextBoundNodeAndReturnsReplay(t *testing.T) {
+	t.Parallel()
+	_, current, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(current), "..", ".."))
+	var stdout, stderr bytes.Buffer
+	exit := cli.Run([]string{
+		"demo", "--file", filepath.Join(root, "examples", "research-review.workflow.json"),
+		"--at", "2026-08-28T00:00:00Z", "--json",
+	}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("demo exited %d: %s", exit, stderr.String())
+	}
+	var response struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Artifacts []any `json:"artifacts"`
+			Replay    struct {
+				Receipts []any `json:"receipts"`
+			} `json:"replay"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatalf("decode demo response: %v\n%s", err, stdout.String())
+	}
+	if !response.OK || len(response.Data.Artifacts) != 1 || len(response.Data.Replay.Receipts) != 5 {
+		t.Fatalf("unexpected demo response: %s", stdout.String())
 	}
 }

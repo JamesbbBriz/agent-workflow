@@ -1,0 +1,194 @@
+package workflow
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+	"sort"
+	"time"
+
+	"github.com/JamesbbBriz/agent-workflow/internal/contract"
+	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
+)
+
+type CompiledWorkflow struct {
+	WorkflowRef    contractsv1.WorkflowRef `json:"workflow_ref"`
+	DefinitionHash contractsv1.SHA256      `json:"definition_hash"`
+	Nodes          []CompiledNode          `json:"nodes"`
+	CompileHash    contractsv1.SHA256      `json:"compile_hash"`
+}
+
+type CompiledNode struct {
+	Definition contractsv1.NodeDefinition `json:"definition"`
+}
+
+func compileWorkflow(definition contractsv1.WorkflowDefinition, registry *Registry, aggregateID string, occurredAt time.Time) (CompiledWorkflow, contractsv1.Receipt, error) {
+	body, err := json.Marshal(definition)
+	if err != nil {
+		return CompiledWorkflow{}, contractsv1.Receipt{}, fmt.Errorf("encode workflow definition: %w", err)
+	}
+	identity, err := contract.ValidateWorkflow(body)
+	if err != nil {
+		return CompiledWorkflow{}, contractsv1.Receipt{}, err
+	}
+	if registry == nil {
+		return CompiledWorkflow{}, contractsv1.Receipt{}, errors.New("producer registry is required")
+	}
+	if err := validateSlotFlow(definition); err != nil {
+		return CompiledWorkflow{}, contractsv1.Receipt{}, err
+	}
+	compiled := CompiledWorkflow{WorkflowRef: contractsv1.WorkflowRef(identity.Ref), DefinitionHash: contractsv1.SHA256(identity.Hash)}
+	for _, node := range definition.Nodes {
+		if node.DeadlineSeconds == nil && node.Budget.MaxDurationSeconds == nil {
+			return CompiledWorkflow{}, contractsv1.Receipt{}, fmt.Errorf("compile node %q: deadline is required", node.Id)
+		}
+		contextRequirements, err := compileNodeContext(definition.DefaultContext, node.Context, registry)
+		if err != nil {
+			return CompiledWorkflow{}, contractsv1.Receipt{}, fmt.Errorf("compile node %q: %w", node.Id, err)
+		}
+		node.Context = contextRequirements
+		compiled.Nodes = append(compiled.Nodes, CompiledNode{Definition: node})
+	}
+	hash, err := Digest(struct {
+		WorkflowRef    contractsv1.WorkflowRef
+		DefinitionHash contractsv1.SHA256
+		Nodes          []CompiledNode
+	}{compiled.WorkflowRef, compiled.DefinitionHash, compiled.Nodes})
+	if err != nil {
+		return CompiledWorkflow{}, contractsv1.Receipt{}, err
+	}
+	compiled.CompileHash = contractsv1.SHA256(hash)
+	receipt, err := sealReceipt(aggregateID, 1, contractsv1.ReceiptReceiptTypeCompile, occurredAt, nil,
+		[]contractsv1.SHA256{compiled.DefinitionHash}, []contractsv1.SHA256{compiled.CompileHash},
+		map[string]any{"workflow_ref": compiled.WorkflowRef})
+	return compiled, receipt, err
+}
+
+func compileNodeContext(defaults, explicit []contractsv1.ContextRequirement, registry *Registry) ([]contractsv1.ContextRequirement, error) {
+	byID := make(map[string]contractsv1.ContextRequirement, len(defaults)+len(explicit))
+	order := make([]string, 0, len(defaults)+len(explicit))
+	for _, requirement := range append(append([]contractsv1.ContextRequirement(nil), defaults...), explicit...) {
+		id := string(requirement.Id)
+		if existing, ok := byID[id]; ok {
+			if !reflect.DeepEqual(existing, requirement) {
+				return nil, fmt.Errorf("context requirement %q conflicts with the workflow default", id)
+			}
+			continue
+		}
+		producer, ok := registry.lookup(string(requirement.Selector))
+		if !ok {
+			return nil, fmt.Errorf("context producer %q is not registered", requirement.Selector)
+		}
+		if !producer.Supports(string(requirement.PackType), requirement.SchemaVersion) {
+			return nil, fmt.Errorf("context producer %q does not support %s@%d", requirement.Selector, requirement.PackType, requirement.SchemaVersion)
+		}
+		byID[id] = requirement
+		order = append(order, id)
+	}
+	result := make([]contractsv1.ContextRequirement, 0, len(order))
+	for _, id := range order {
+		result = append(result, byID[id])
+	}
+	return result, nil
+}
+
+func validateSlotFlow(definition contractsv1.WorkflowDefinition) error {
+	nodes := make(map[string]contractsv1.NodeDefinition, len(definition.Nodes))
+	dependents := make(map[string]map[string]struct{}, len(definition.Nodes))
+	globalOutputIDs := make(map[string]string)
+	for _, node := range definition.Nodes {
+		nodes[string(node.Id)] = node
+		for _, output := range node.OutputSlots {
+			if owner, exists := globalOutputIDs[string(output.Id)]; exists {
+				return fmt.Errorf("output slot %q is declared by both %q and %q", output.Id, owner, node.Id)
+			}
+			globalOutputIDs[string(output.Id)] = string(node.Id)
+		}
+		for _, dependency := range node.DependsOn {
+			if dependents[dependency] == nil {
+				dependents[dependency] = make(map[string]struct{})
+			}
+			dependents[dependency][string(node.Id)] = struct{}{}
+		}
+	}
+	for _, node := range definition.Nodes {
+		outputTypes := make(map[contractsv1.Identifier]struct{}, len(node.OutputSlots))
+		for _, output := range node.OutputSlots {
+			if output.ArtifactKind == nil || output.ContentSchema == nil || len(output.Consumers) == 0 {
+				return fmt.Errorf("node %q output slot %q must declare artifact_kind, content_schema, and consumers", node.Id, output.Id)
+			}
+			if _, duplicate := outputTypes[output.ArtifactType]; duplicate {
+				return fmt.Errorf("node %q output artifact type %q is duplicated", node.Id, output.ArtifactType)
+			}
+			outputTypes[output.ArtifactType] = struct{}{}
+			for _, consumer := range output.Consumers {
+				if consumer == "workflow-output" {
+					continue
+				}
+				if _, ok := dependents[string(node.Id)][consumer]; !ok {
+					return fmt.Errorf("node %q output slot %q has unknown consumer %q", node.Id, output.Id, consumer)
+				}
+			}
+		}
+	}
+	for _, node := range definition.Nodes {
+		available := make(map[string]contractsv1.Slot)
+		for _, dependency := range node.DependsOn {
+			for _, slot := range nodes[dependency].OutputSlots {
+				available[string(slot.Id)] = slot
+			}
+		}
+		for _, input := range node.InputSlots {
+			output, ok := available[string(input.Id)]
+			if !ok || output.ArtifactType != input.ArtifactType || output.MaxItems < input.MinItems || (input.ArtifactKind != nil && output.ArtifactKind != nil && *input.ArtifactKind != *output.ArtifactKind) || (input.ContentSchema != nil && output.ContentSchema != nil && *input.ContentSchema != *output.ContentSchema) {
+				return fmt.Errorf("node %q input slot %q is not supplied by a direct dependency", node.Id, input.Id)
+			}
+		}
+	}
+	availableOutputs := make(map[string]contractsv1.Slot)
+	for _, node := range definition.Nodes {
+		for _, slot := range node.OutputSlots {
+			availableOutputs[string(slot.Id)] = slot
+		}
+	}
+	for _, output := range definition.Outputs {
+		if output.ArtifactKind == nil || output.ContentSchema == nil || len(output.Consumers) == 0 {
+			return fmt.Errorf("workflow output slot %q must declare artifact_kind, content_schema, and consumers", output.Id)
+		}
+		for _, consumer := range output.Consumers {
+			if !containsString(definition.Intent.Consumers, consumer) {
+				return fmt.Errorf("workflow output slot %q has undeclared consumer %q", output.Id, consumer)
+			}
+		}
+		candidate, ok := availableOutputs[string(output.Id)]
+		if !ok || candidate.ArtifactType != output.ArtifactType || candidate.MaxItems < output.MinItems || candidate.ArtifactKind == nil || *candidate.ArtifactKind != *output.ArtifactKind || candidate.ContentSchema == nil || *candidate.ContentSchema != *output.ContentSchema {
+			return fmt.Errorf("workflow output slot %q is not supplied by a node", output.Id)
+		}
+	}
+	return nil
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func compiledNodeByID(compiled CompiledWorkflow, nodeID string) (CompiledNode, bool) {
+	for _, node := range compiled.Nodes {
+		if string(node.Definition.Id) == nodeID {
+			return node, true
+		}
+	}
+	return CompiledNode{}, false
+}
+
+func sortedStrings(values []string) []string {
+	result := append([]string(nil), values...)
+	sort.Strings(result)
+	return result
+}
