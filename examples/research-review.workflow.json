@@ -1,0 +1,69 @@
+{
+  "kind": "workflow_definition",
+  "schema_version": 1,
+  "id": "research-review",
+  "version": 1,
+  "intent": {
+    "schema_version": 1,
+    "kind": "workflow",
+    "title": "Research and review",
+    "summary": "Turn bounded source evidence into a reviewed recommendation.",
+    "objective": "Produce one evidence-bound recommendation without granting the Agent mutation authority.",
+    "success_signals": ["A recommendation cites every material claim"],
+    "non_goals": ["Publishing or applying the recommendation"],
+    "completion": ["An independent reviewer accepts or rejects the recommendation"],
+    "no_action_when": ["The evidence proves no material decision is required"],
+    "consumers": ["human-operator"],
+    "tags": ["example", "research"]
+  },
+  "default_context": [
+    {
+      "id": "project-brief",
+      "selector": "project-brief",
+      "pack_type": "project-brief",
+      "schema_version": 1,
+      "required": true,
+      "allow_partial": false,
+      "max_age_seconds": 604800
+    }
+  ],
+  "nodes": [
+    {
+      "id": "research",
+      "kind": "agent",
+      "executor": "bounded-agent@1",
+      "depends_on": [],
+      "context": [],
+      "capabilities": ["read-evidence"],
+      "input_slots": [],
+      "output_slots": [
+        { "id": "recommendation", "artifact_type": "recommendation", "min_items": 1, "max_items": 1 }
+      ],
+      "budget": { "max_attempts": 2, "max_actions": 0, "max_candidates": 3 },
+      "deadline_seconds": 600,
+      "blocker_codes": ["context-missing", "provider-timeout"]
+    },
+    {
+      "id": "review",
+      "kind": "approval",
+      "executor": "human-approval@1",
+      "depends_on": ["research"],
+      "context": [],
+      "capabilities": [],
+      "input_slots": [
+        { "id": "recommendation", "artifact_type": "recommendation", "min_items": 1, "max_items": 1 }
+      ],
+      "output_slots": [
+        { "id": "review-decision", "artifact_type": "review-decision", "min_items": 1, "max_items": 1 }
+      ],
+      "budget": { "max_attempts": 1, "max_actions": 1, "max_candidates": 1 },
+      "deadline_seconds": 86400,
+      "blocker_codes": ["approval-required", "approval-stale"]
+    }
+  ],
+  "outputs": [
+    { "id": "review-decision", "artifact_type": "review-decision", "min_items": 1, "max_items": 1 }
+  ],
+  "completion": ["review accepted", "review rejected"],
+  "blockers": ["context-missing", "provider-timeout", "approval-required", "approval-stale"]
+}
