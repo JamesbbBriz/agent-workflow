@@ -26,6 +26,17 @@ go run ./cmd/agent-workflow validate \
 
 The command validates the closed v1 JSON Schema, DAG semantics, slot cardinality, and prints a deterministic Workflow identity hash.
 
+Run the synthetic Context-bound execution demo:
+
+```bash
+go run ./cmd/agent-workflow demo \
+  --file examples/research-review.workflow.json \
+  --at 2026-08-27T00:00:00Z \
+  --json
+```
+
+The demo expands Workflow Context defaults into the `research` Node, resolves an exact catalog Pack and a derived Intent-chain Pack, builds a Capability Manifest, invokes one bounded provider, validates its Action Artifact, and returns a five-receipt Replay. It uses the process-local ledger; `OpenFileLedger` provides a small single-writer, crash-durable JSONL option.
+
 Generate Go and TypeScript bindings from the canonical schema:
 
 ```bash

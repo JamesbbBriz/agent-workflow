@@ -246,10 +246,15 @@ export interface NodeElement {
 }
 
 export interface OutputElement {
-    artifact_type: string;
-    id:            string;
-    max_items:     number;
-    min_items:     number;
+    artifact_kind?:  ArtifactKind;
+    artifact_type:   string;
+    consumers?:      string[];
+    content_schema?: string;
+    id:              string;
+    max_items:       number;
+    min_items:       number;
 }
+
+export type ArtifactKind = "context_pack" | "action_artifact";
 
 export type NodeKind = "deterministic" | "agent" | "approval" | "wait" | "terminal";

@@ -23,6 +23,8 @@ var (
 	workflowSchemaOnce sync.Once
 	workflowSchema     *jsonschema.Schema
 	workflowSchemaErr  error
+	definitionMu       sync.Mutex
+	definitionSchemas  = make(map[string]*jsonschema.Schema)
 )
 
 type WorkflowIdentity struct {
@@ -65,6 +67,93 @@ func ValidateWorkflow(raw []byte) (WorkflowIdentity, error) {
 		return WorkflowIdentity{}, errors.New("intent descriptor_hash does not match canonical content")
 	}
 	return WorkflowIdentity{Ref: fmt.Sprintf("%s@%d", workflow.Id, workflow.Version), Hash: hash}, nil
+}
+
+func ValidateDefinition(name string, value any) error {
+	switch name {
+	case "JobDefinition", "CampaignDefinition", "ContextPackEdition", "ContextBundle", "CapabilityManifest", "ActionArtifact", "Receipt", "ReplayBundle":
+	default:
+		return fmt.Errorf("public definition %q is unknown", name)
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", name, err)
+	}
+	document, err := decodeOne(body)
+	if err != nil {
+		return err
+	}
+	schema, err := compiledDefinitionSchema(name)
+	if err != nil {
+		return err
+	}
+	if err := schema.Validate(document); err != nil {
+		return fmt.Errorf("%s schema validation failed: %w", name, err)
+	}
+	return nil
+}
+
+func DefinitionHashes(value any) (string, string, error) {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return "", "", fmt.Errorf("encode definition: %w", err)
+	}
+	document, err := decodeOne(body)
+	if err != nil {
+		return "", "", err
+	}
+	definitionHash, err := canonicalHash(document)
+	if err != nil {
+		return "", "", err
+	}
+	intentHash, err := canonicalIntentHash(document)
+	if err != nil {
+		return "", "", err
+	}
+	return definitionHash, intentHash, nil
+}
+
+func DecodeDefinition(name string, raw []byte, target any) error {
+	value, err := decodeOne(raw)
+	if err != nil {
+		return err
+	}
+	schema, err := compiledDefinitionSchema(name)
+	if err != nil {
+		return err
+	}
+	if err := schema.Validate(value); err != nil {
+		return fmt.Errorf("%s schema validation failed: %w", name, err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("decode %s: %w", name, err)
+	}
+	return nil
+}
+
+func compiledDefinitionSchema(name string) (*jsonschema.Schema, error) {
+	definitionMu.Lock()
+	defer definitionMu.Unlock()
+	if schema := definitionSchemas[name]; schema != nil {
+		return schema, nil
+	}
+	var document any
+	if err := json.Unmarshal(publiccontracts.AgentWorkflowV1, &document); err != nil {
+		return nil, fmt.Errorf("decode embedded workflow schema: %w", err)
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	if err := compiler.AddResource(schemaID, document); err != nil {
+		return nil, fmt.Errorf("register workflow schema: %w", err)
+	}
+	schema, err := compiler.Compile(schemaID + "#/$defs/" + name)
+	if err != nil {
+		return nil, fmt.Errorf("compile %s schema: %w", name, err)
+	}
+	definitionSchemas[name] = schema
+	return schema, nil
 }
 
 func compiledWorkflowSchema() (*jsonschema.Schema, error) {

@@ -24,6 +24,8 @@ Workflow-level Context defaults are an authoring convenience. Compilation expand
 
 Missing required Context becomes `needs_context`. Missing optional Context may produce a degraded Context Bundle if the Node contract permits it. No Node may silently widen its context to an entire project or reinterpret later evidence.
 
+The v1 compiler uses a static Go registry. `CatalogProducer` selects an immutable Pack edition as of the Campaign evidence cutoff; `IntentProducer` deterministically materializes the Job → Campaign → Workflow Intent chain from the compile receipt. Node outputs declare their downstream consumers; v1 executes Action Artifact outputs and rejects the reserved Context Pack output kind before provider work. Compilation also rejects unknown consumers and broken direct-dependency slot flows.
+
 ## Audit chain
 
 ```text
@@ -41,6 +43,10 @@ DefinitionHash
 ```
 
 Every adapter must preserve correlation to this chain. An adapter may repair delivery projections but cannot invent a business transition.
+
+Provider calls carry a stable idempotency key. Redelivery may call the provider seam again, but a conforming provider must converge on the same stored result for that key; Core receipt appends converge by aggregate version and hash.
+
+The included file ledger is deliberately single-writer. It syncs each JSONL receipt, reloads exact JSON numbers, verifies schema and hash-chain continuity, and converges exact redelivery after a Core restart. Multi-process deployments should provide a database-backed `Ledger` rather than weakening that ownership rule.
 
 ## Adapters
 
