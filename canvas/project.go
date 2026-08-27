@@ -18,10 +18,14 @@ type ExecutionInput struct {
 }
 
 func Project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definitions []contractsv1.WorkflowDefinition, inputs ...ExecutionInput) (contractsv1.CanvasSnapshot, error) {
-	return ProjectWithAdmissions(job, campaign, definitions, nil, inputs...)
+	return project(job, campaign, definitions, nil, false, inputs...)
 }
 
 func ProjectWithAdmissions(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definitions []contractsv1.WorkflowDefinition, admissions []contractsv1.ReplayBundle, inputs ...ExecutionInput) (contractsv1.CanvasSnapshot, error) {
+	return project(job, campaign, definitions, admissions, true, inputs...)
+}
+
+func project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definitions []contractsv1.WorkflowDefinition, admissions []contractsv1.ReplayBundle, requireAdmission bool, inputs ...ExecutionInput) (contractsv1.CanvasSnapshot, error) {
 	if err := contract.ValidateDefinition("JobDefinition", job); err != nil {
 		return contractsv1.CanvasSnapshot{}, err
 	}
@@ -89,11 +93,16 @@ func ProjectWithAdmissions(job contractsv1.JobDefinition, campaign contractsv1.C
 		if !ok {
 			return contractsv1.CanvasSnapshot{}, errors.New("execution workflow is not pinned by the Campaign")
 		}
-		admissionReplay, ok := admissionByRef[candidate.WorkflowRef]
-		if !ok {
-			return contractsv1.CanvasSnapshot{}, errors.New("execution has no canonical Workflow admission")
+		var invocation workflow.Invocation
+		if requireAdmission {
+			admissionReplay, ok := admissionByRef[candidate.WorkflowRef]
+			if !ok {
+				return contractsv1.CanvasSnapshot{}, errors.New("execution has no canonical Workflow admission")
+			}
+			invocation, err = workflow.VerifyDefinitionBindingWithAdmission(input.Replay, admissionReplay, job, campaign, definition)
+		} else {
+			invocation, err = workflow.VerifyDefinitionBinding(input.Replay, job, campaign, definition)
 		}
-		invocation, err := workflow.VerifyDefinitionBinding(input.Replay, admissionReplay, job, campaign, definition)
 		if err != nil {
 			return contractsv1.CanvasSnapshot{}, err
 		}

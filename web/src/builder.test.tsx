@@ -30,12 +30,16 @@ describe("Workflow Builder surfaces", () => {
     const admitted = structuredClone(snapshot);
     admitted.executions = [];
     admitted.replays = [];
-    admitted.definition.workflow_states = { "research-review@1": "admitted" };
+    admitted.definition.workflows[0].version = 2;
+    admitted.definition.campaign.workflow_plan = ["research-review@2"];
+    admitted.definition.workflow_states = { "research-review@2": "admitted" };
     admitted.admission_replays = snapshot.admission_replays;
     const merged = mergeAdmissionReadback(snapshot, admitted);
     expect(merged.executions).toEqual(snapshot.executions);
     expect(merged.replays).toEqual(snapshot.replays);
-    expect(merged.definition.workflow_states?.["research-review@1"]).toBe("admitted");
+    expect(merged.definition.campaign.workflow_plan).toEqual(["research-review@2"]);
+    expect(merged.definition.workflows[0].version).toBe(2);
+    expect(merged.definition.workflow_states?.["research-review@2"]).toBe("admitted");
     expect(merged.admission_replays).toHaveLength(1);
   });
 });

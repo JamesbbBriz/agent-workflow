@@ -12,9 +12,6 @@ import (
 )
 
 func ApplyApproval(snapshot contractsv1.CanvasSnapshot, approval contractsv1.ReplayBundle) (contractsv1.CanvasSnapshot, error) {
-	if err := contract.ValidateDefinition("CanvasSnapshot", snapshot); err != nil {
-		return contractsv1.CanvasSnapshot{}, err
-	}
 	if err := workflow.VerifyReplay(approval); err != nil {
 		return contractsv1.CanvasSnapshot{}, err
 	}
@@ -24,6 +21,10 @@ func ApplyApproval(snapshot contractsv1.CanvasSnapshot, approval contractsv1.Rep
 	receipt := approval.Receipts[0]
 	var brief contractsv1.ApprovalBrief
 	if err := decode(receipt.Payload["brief"], &brief); err != nil {
+		return contractsv1.CanvasSnapshot{}, err
+	}
+	executionIndex, artifactIndex, err := approvalTarget(snapshot, brief)
+	if err != nil {
 		return contractsv1.CanvasSnapshot{}, err
 	}
 	selectedID, ok := receipt.Payload["selected_option_id"].(string)
@@ -45,32 +46,14 @@ func ApplyApproval(snapshot contractsv1.CanvasSnapshot, approval contractsv1.Rep
 	if err := json.Unmarshal(body, &next); err != nil {
 		return contractsv1.CanvasSnapshot{}, err
 	}
-	matched := false
-	for executionIndex := range next.Executions {
-		execution := &next.Executions[executionIndex]
-		for artifactIndex := range execution.Outputs {
-			artifact := &execution.Outputs[artifactIndex]
-			if artifact.Id != brief.Action.Id {
-				continue
-			}
-			if !reflect.DeepEqual(*artifact, brief.Action) || !approvalEvidenceMatches(brief, snapshot.Replays) {
-				return contractsv1.CanvasSnapshot{}, errors.New("approval brief is not bound to the Canvas source Replay")
-			}
-			if artifact.ApprovalState != contractsv1.ActionArtifactApprovalStatePending {
-				return contractsv1.CanvasSnapshot{}, errors.New("approval action is no longer pending")
-			}
-			if decision == contractsv1.ApprovalOptionDecisionApprove {
-				artifact.ApprovalState = contractsv1.ActionArtifactApprovalStateApproved
-				execution.ApprovalState = contractsv1.CanvasExecutionApprovalStateApproved
-			} else {
-				artifact.ApprovalState = contractsv1.ActionArtifactApprovalStateRejected
-				execution.ApprovalState = contractsv1.CanvasExecutionApprovalStateRejected
-			}
-			matched = true
-		}
-	}
-	if !matched {
-		return contractsv1.CanvasSnapshot{}, errors.New("approval action is not visible in this Canvas")
+	execution := &next.Executions[executionIndex]
+	artifact := &execution.Outputs[artifactIndex]
+	if decision == contractsv1.ApprovalOptionDecisionApprove {
+		artifact.ApprovalState = contractsv1.ActionArtifactApprovalStateApproved
+		execution.ApprovalState = contractsv1.CanvasExecutionApprovalStateApproved
+	} else {
+		artifact.ApprovalState = contractsv1.ActionArtifactApprovalStateRejected
+		execution.ApprovalState = contractsv1.CanvasExecutionApprovalStateRejected
 	}
 	next.ApprovalReplays = append(next.ApprovalReplays, approval)
 	if receipt.OccurredAt.After(next.GeneratedAt) {
@@ -80,6 +63,33 @@ func ApplyApproval(snapshot contractsv1.CanvasSnapshot, approval contractsv1.Rep
 		return contractsv1.CanvasSnapshot{}, fmt.Errorf("approved Canvas: %w", err)
 	}
 	return next, nil
+}
+
+func ValidateApprovalTarget(snapshot contractsv1.CanvasSnapshot, brief contractsv1.ApprovalBrief) error {
+	_, _, err := approvalTarget(snapshot, brief)
+	return err
+}
+
+func approvalTarget(snapshot contractsv1.CanvasSnapshot, brief contractsv1.ApprovalBrief) (int, int, error) {
+	if err := contract.ValidateDefinition("CanvasSnapshot", snapshot); err != nil {
+		return 0, 0, err
+	}
+	for executionIndex := range snapshot.Executions {
+		for artifactIndex := range snapshot.Executions[executionIndex].Outputs {
+			artifact := snapshot.Executions[executionIndex].Outputs[artifactIndex]
+			if artifact.Id != brief.Action.Id {
+				continue
+			}
+			if !reflect.DeepEqual(artifact, brief.Action) || !approvalEvidenceMatches(brief, snapshot.Replays) {
+				return 0, 0, errors.New("approval brief is not bound to the Canvas source Replay")
+			}
+			if artifact.ApprovalState != contractsv1.ActionArtifactApprovalStatePending {
+				return 0, 0, errors.New("approval action is no longer pending")
+			}
+			return executionIndex, artifactIndex, nil
+		}
+	}
+	return 0, 0, errors.New("approval action is not visible in this Canvas")
 }
 
 func approvalEvidenceMatches(brief contractsv1.ApprovalBrief, replays []contractsv1.ReplayBundle) bool {

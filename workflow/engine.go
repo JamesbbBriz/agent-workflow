@@ -456,8 +456,17 @@ func MaterializeInvocation(bundle contractsv1.ReplayBundle) (Invocation, error) 
 	return invocation, nil
 }
 
-// VerifyDefinitionBinding proves that displayed definitions are the ones recorded by Replay.
-func VerifyDefinitionBinding(bundle, admissionReplay contractsv1.ReplayBundle, job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definition contractsv1.WorkflowDefinition) (Invocation, error) {
+// VerifyDefinitionBinding preserves verification of historical pre-admission Replays.
+func VerifyDefinitionBinding(bundle contractsv1.ReplayBundle, job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definition contractsv1.WorkflowDefinition) (Invocation, error) {
+	return verifyDefinitionBinding(bundle, nil, job, campaign, definition)
+}
+
+// VerifyDefinitionBindingWithAdmission additionally proves the canonical Workflow admission.
+func VerifyDefinitionBindingWithAdmission(bundle, admissionReplay contractsv1.ReplayBundle, job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definition contractsv1.WorkflowDefinition) (Invocation, error) {
+	return verifyDefinitionBinding(bundle, &admissionReplay, job, campaign, definition)
+}
+
+func verifyDefinitionBinding(bundle contractsv1.ReplayBundle, admissionReplay *contractsv1.ReplayBundle, job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definition contractsv1.WorkflowDefinition) (Invocation, error) {
 	invocation, err := MaterializeInvocation(bundle)
 	if err != nil {
 		return Invocation{}, err
@@ -475,10 +484,21 @@ func VerifyDefinitionBinding(bundle, admissionReplay contractsv1.ReplayBundle, j
 		return Invocation{}, err
 	}
 	compileReceipt, ok := receiptByType(bundle, contractsv1.ReceiptReceiptTypeCompile)
-	if !ok || len(compileReceipt.InputHashes) != 2 || len(compileReceipt.OutputHashes) != 1 {
+	if !ok || len(compileReceipt.OutputHashes) != 1 {
 		return Invocation{}, errors.New("replay compile receipt is incomplete")
 	}
-	admission, err := MaterializeAdmission(admissionReplay, definition.Version)
+	if admissionReplay == nil {
+		if len(compileReceipt.InputHashes) != 1 || len(invocation.InputHashes) != 5 || invocation.InputHashes[0] != jobHash || invocation.InputHashes[1] != campaignHash ||
+			invocation.InputHashes[2] != compileReceipt.OutputHashes[0] || invocation.InputHashes[3] != invocation.Bundle.BundleHash ||
+			invocation.InputHashes[4] != invocation.Capabilities.ManifestHash || compileReceipt.InputHashes[0] != contractsv1.SHA256(identity.Hash) {
+			return Invocation{}, errors.New("replay does not bind the displayed definitions")
+		}
+		return invocation, nil
+	}
+	if len(compileReceipt.InputHashes) != 2 {
+		return Invocation{}, errors.New("replay compile receipt is incomplete")
+	}
+	admission, err := MaterializeAdmission(*admissionReplay, definition.Version)
 	if err != nil || !reflect.DeepEqual(admission.Job, job) || !reflect.DeepEqual(admission.Campaign, campaign) || !reflect.DeepEqual(admission.Workflow, definition) || admission.Receipt.ReceiptHash != compileReceipt.InputHashes[1] {
 		return Invocation{}, errors.New("replay does not bind a canonical Workflow admission")
 	}

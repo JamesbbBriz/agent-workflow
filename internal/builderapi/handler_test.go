@@ -109,6 +109,50 @@ func TestBuilderHTTPRejectsOversizedBodies(t *testing.T) {
 	}
 }
 
+func TestBuilderHTTPValidatesApprovalCanvasBeforeCommit(t *testing.T) {
+	var envelope struct {
+		Data contractsv1.CanvasSnapshot `json:"data"`
+	}
+	body, err := os.ReadFile("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := envelope.Data
+	source := snapshot.Replays[0]
+	sources := workflow.NewMemoryLedger()
+	for _, receipt := range source.Receipts {
+		if err := sources.Append(receipt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var result contractsv1.Receipt
+	for _, receipt := range source.Receipts {
+		if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeResult {
+			result = receipt
+		}
+	}
+	brief := contractsv1.ApprovalBrief{Kind: contractsv1.ApprovalBriefKindApprovalBrief, SchemaVersion: 1, Title: "Approve exact action?", Action: snapshot.Executions[0].Outputs[0], Evidence: []contractsv1.ArtifactRef{{Id: result.Id, Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "result", SchemaVersion: 1, Sha256: result.ReceiptHash, MediaType: "application/json"}}, Options: []contractsv1.ApprovalOption{{Id: "approve", Label: "Approve", Decision: contractsv1.ApprovalOptionDecisionApprove, Tradeoffs: []string{"Changes the target"}}, {Id: "reject", Label: "Reject", Decision: contractsv1.ApprovalOptionDecisionReject, Tradeoffs: []string{"No change"}}}, RecommendedOptionId: "approve", Recommendation: "Approve the reviewed action.", Risks: []string{"Public impact"}}
+	core := testCoreWithSources(t, sources)
+	invalid := snapshot
+	invalid.Executions = []contractsv1.CanvasExecution{}
+	handler := builderapi.NewWithCanvas(core, time.Now, &invalid)
+	previewResponse := post(t, handler, "/v1/approvals/preview", map[string]any{"actor": "reviewer@example.com", "brief": brief, "source_aggregate_id": source.AggregateId})
+	var previewBody struct {
+		Data contractsv1.ApprovalPreview `json:"data"`
+	}
+	decodeBody(t, previewResponse, &previewBody)
+	response := post(t, handler, "/v1/approvals/confirm", map[string]any{"actor": "reviewer@example.com", "option_id": "approve", "preview": previewBody.Data})
+	if response.Code != http.StatusConflict {
+		t.Fatalf("invalid Canvas approval passed: %s", response.Body.String())
+	}
+	if _, err := core.ApprovalReplay(string(previewBody.Data.Brief.Id)); err == nil {
+		t.Fatal("approval was committed before Canvas validation")
+	}
+}
+
 func post(t *testing.T, handler http.Handler, path string, value any) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(value)
@@ -149,16 +193,20 @@ func preview(t *testing.T, handler http.Handler, job contractsv1.JobDefinition, 
 }
 
 func testCore(t *testing.T) *workflow.AuthoringCore {
+	return testCoreWithSources(t, workflow.NewMemoryLedger())
+}
+
+func testCoreWithSources(t *testing.T, sources workflow.Ledger) *workflow.AuthoringCore {
 	t.Helper()
 	registry, err := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return workflow.NewAuthoringCore(registry,
+	return workflow.NewAuthoringCoreWithSources(registry,
 		workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval},
 		workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead},
 		workflow.OutputCatalog{"recommendation@1": func(any) error { return nil }, "review-decision@1": func(any) error { return nil }},
-		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, workflow.NewMemoryLedger())
+		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, workflow.NewMemoryLedger(), sources)
 }
 
 func loadDefinition(t *testing.T) contractsv1.WorkflowDefinition {

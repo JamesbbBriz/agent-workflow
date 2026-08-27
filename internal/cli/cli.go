@@ -69,8 +69,9 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 		return writeError(stdout, stderr, true, "ledger_unavailable", err)
 	}
 	sources := workflow.NewMemoryLedger()
+	var sourceCanvas *contractsv1.CanvasSnapshot
 	if *canvasPath != "" {
-		sources, err = loadCanvasSources(*canvasPath)
+		sources, sourceCanvas, err = loadCanvasSources(*canvasPath)
 		if err != nil {
 			return writeError(stdout, stderr, true, "canvas_unavailable", err)
 		}
@@ -84,7 +85,7 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 		return writeError(stdout, stderr, true, "listen_failed", errors.New("builder listener is unavailable"))
 	}
 	fmt.Fprintf(stdout, "builder listening on http://%s\n", listener.Addr())
-	server := &http.Server{Handler: builderapi.New(core, time.Now), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{Handler: builderapi.NewWithCanvas(core, time.Now, sourceCanvas), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return writeError(stdout, stderr, true, "serve_failed", errors.New("builder server stopped"))
 	}
@@ -103,29 +104,29 @@ func demoAuthoringCore(ledger, sources workflow.Ledger) (*workflow.AuthoringCore
 		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger, sources), nil
 }
 
-func loadCanvasSources(path string) (workflow.Ledger, error) {
+func loadCanvasSources(path string) (workflow.Ledger, *contractsv1.CanvasSnapshot, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return nil, errors.New("Canvas source file is unavailable")
+		return nil, nil, errors.New("Canvas source file is unavailable")
 	}
 	var envelope struct {
 		Data contractsv1.CanvasSnapshot `json:"data"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil || contract.ValidateDefinition("CanvasSnapshot", envelope.Data) != nil {
-		return nil, errors.New("Canvas source file is invalid")
+		return nil, nil, errors.New("Canvas source file is invalid")
 	}
 	ledger := workflow.NewMemoryLedger()
 	for _, replay := range envelope.Data.Replays {
 		if err := workflow.VerifyReplay(replay); err != nil {
-			return nil, errors.New("Canvas source Replay is invalid")
+			return nil, nil, errors.New("Canvas source Replay is invalid")
 		}
 		for _, receipt := range replay.Receipts {
 			if err := ledger.Append(receipt); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
-	return ledger, nil
+	return ledger, &envelope.Data, nil
 }
 
 func runCanvas(args []string, stdout, stderr io.Writer) int {

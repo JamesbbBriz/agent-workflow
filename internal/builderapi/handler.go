@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/JamesbbBriz/agent-workflow/canvas"
@@ -17,15 +18,21 @@ import (
 const maxRequestBytes = 2 << 20
 
 type Handler struct {
-	core *workflow.AuthoringCore
-	now  func() time.Time
+	core   *workflow.AuthoringCore
+	now    func() time.Time
+	mu     sync.Mutex
+	canvas *contractsv1.CanvasSnapshot
 }
 
 func New(core *workflow.AuthoringCore, now func() time.Time) http.Handler {
+	return NewWithCanvas(core, now, nil)
+}
+
+func NewWithCanvas(core *workflow.AuthoringCore, now func() time.Time, snapshot *contractsv1.CanvasSnapshot) http.Handler {
 	if now == nil {
 		now = time.Now
 	}
-	return &Handler{core: core, now: now}
+	return &Handler{core: core, now: now, canvas: snapshot}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -123,10 +130,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Actor    string                      `json:"actor"`
 			OptionID string                      `json:"option_id"`
 			Preview  contractsv1.ApprovalPreview `json:"preview"`
-			Canvas   contractsv1.CanvasSnapshot  `json:"canvas"`
 		}
 		if err := decode(r, &request); err != nil {
 			h.writeError(w, err)
+			return
+		}
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.canvas == nil {
+			h.write(w, nil, errors.New("trusted Canvas is unavailable"))
+			return
+		}
+		if err := canvas.ValidateApprovalTarget(*h.canvas, request.Preview.Brief); err != nil {
+			h.write(w, nil, err)
 			return
 		}
 		receipt, err := h.core.ConfirmApproval(request.Preview, request.Actor, request.OptionID, h.now().UTC())
@@ -139,7 +155,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.write(w, nil, err)
 			return
 		}
-		next, err := canvas.ApplyApproval(request.Canvas, replay)
+		next, err := canvas.ApplyApproval(*h.canvas, replay)
+		if err == nil {
+			h.canvas = &next
+		}
 		h.write(w, struct {
 			Receipt contractsv1.Receipt        `json:"receipt"`
 			Canvas  contractsv1.CanvasSnapshot `json:"canvas"`

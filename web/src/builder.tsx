@@ -26,7 +26,8 @@ export function BuilderPanel({ snapshot, onClose, onCanvas }: { snapshot: Canvas
   const compile = async () => {
     setBusy(true); setError(undefined);
     try {
-      const result = await request<{ preview: WorkflowAdmissionPreview; lint: WorkflowLintReport }>("/v1/workflows/preview", { actor, job: snapshot.definition.job, campaign: snapshot.definition.campaign, workflow: draft });
+      const campaign = { ...snapshot.definition.campaign, workflow_plan: snapshot.definition.campaign.workflow_plan.map((ref) => ref.startsWith(`${draft.id}@`) ? `${draft.id}@${draft.version}` : ref) };
+      const result = await request<{ preview: WorkflowAdmissionPreview; lint: WorkflowLintReport }>("/v1/workflows/preview", { actor, job: snapshot.definition.job, campaign, workflow: draft });
       setPreview(result.preview); setLint(result.lint);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Preview failed"); }
     finally { setBusy(false); }
@@ -104,6 +105,10 @@ export function BuilderPanel({ snapshot, onClose, onCanvas }: { snapshot: Canvas
 
 export function mergeAdmissionReadback(current: CanvasSnapshot, admitted: CanvasSnapshot): CanvasSnapshot {
   if (current.definition.job.id !== admitted.definition.job.id || current.definition.campaign.id !== admitted.definition.campaign.id) return admitted;
+  const admittedWorkflow = admitted.definition.workflows[0];
+  const workflows = admittedWorkflow
+    ? current.definition.workflows.map((workflow) => workflow.id === admittedWorkflow.id ? admittedWorkflow : workflow) as typeof current.definition.workflows
+    : current.definition.workflows;
   const admissionReplays = [...(current.admission_replays ?? [])];
   for (const replay of admitted.admission_replays ?? []) {
     if (!admissionReplays.some((item) => item.bundle_hash === replay.bundle_hash)) admissionReplays.push(replay);
@@ -111,7 +116,7 @@ export function mergeAdmissionReadback(current: CanvasSnapshot, admitted: Canvas
   return {
     ...current,
     generated_at: admitted.generated_at > current.generated_at ? admitted.generated_at : current.generated_at,
-    definition: { ...current.definition, workflow_states: { ...current.definition.workflow_states, ...admitted.definition.workflow_states } },
+    definition: { ...current.definition, job: admitted.definition.job, campaign: admitted.definition.campaign, workflows, workflow_states: { ...current.definition.workflow_states, ...admitted.definition.workflow_states } },
     admission_replays: admissionReplays,
   };
 }
@@ -137,7 +142,7 @@ export function ApprovalPanel({ snapshot, artifact, onClose, onCanvas }: { snaps
   const decide = async (option_id: "approve" | "reject") => {
     if (!preview) return;
     setBusy(true); setError(undefined);
-    try { const result = await request<{ canvas: CanvasSnapshot }>("/v1/approvals/confirm", { actor, option_id, preview, canvas: snapshot }); onCanvas(result.canvas); }
+    try { const result = await request<{ canvas: CanvasSnapshot }>("/v1/approvals/confirm", { actor, option_id, preview }); onCanvas(result.canvas); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Approval failed"); }
     finally { setBusy(false); }
   };
