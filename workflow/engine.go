@@ -23,8 +23,14 @@ type OutputCatalog map[contractsv1.WorkflowRef]OutputValidator
 
 type Provider interface {
 	Start(context.Context, Invocation) error
-	Poll(context.Context, string) ([]contractsv1.ActionArtifact, bool, error)
+	Poll(context.Context, string) (ProviderResult, bool, error)
 	Cancel(context.Context, string) error
+}
+
+type ProviderResult struct {
+	IdempotencyKey string                       `json:"idempotency_key"`
+	CompletedAt    time.Time                    `json:"completed_at"`
+	Artifacts      []contractsv1.ActionArtifact `json:"artifacts"`
 }
 
 type Invocation struct {
@@ -209,13 +215,17 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 }
 
 func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occurredAt time.Time, compiled CompiledWorkflow, invocation Invocation, replay contractsv1.ReplayBundle) (RunResult, error) {
-	if artifacts, ok, err := materializeArtifacts(replay); err != nil {
+	if storedResult, ok, err := materializeProviderResult(replay); err != nil {
 		return RunResult{}, err
 	} else if ok {
+		artifacts := storedResult.Artifacts
+		if err := validateProviderResult(storedResult, invocation); err != nil {
+			return RunResult{}, err
+		}
 		if err := validateArtifacts(artifacts, invocation, e.outputs); err != nil {
 			return RunResult{}, err
 		}
-		if err := e.finishInvocation(aggregateID, occurredAt, invocation, artifacts, replay); err != nil {
+		if err := e.finishInvocation(aggregateID, occurredAt, invocation, storedResult, replay); err != nil {
 			return RunResult{}, err
 		}
 		completed, err := e.ledger.Replay(aggregateID)
@@ -233,8 +243,12 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 			return RunResult{}, fmt.Errorf("provider start: %w", err)
 		}
 	}
-	pollContext, cancel := context.WithTimeout(ctx, 5*time.Second)
-	artifacts, ready, err := e.provider.Poll(pollContext, invocation.IdempotencyKey)
+	pollWindow := 5 * time.Second
+	if remaining > 0 && remaining < pollWindow {
+		pollWindow = remaining
+	}
+	pollContext, cancel := context.WithTimeout(ctx, pollWindow)
+	providerResult, ready, err := e.provider.Poll(pollContext, invocation.IdempotencyKey)
 	cancel()
 	if err != nil {
 		return RunResult{}, fmt.Errorf("provider poll: %w", err)
@@ -251,10 +265,23 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		}
 		return RunResult{}, ErrProviderDeadline
 	}
+	if err := validateProviderResult(providerResult, invocation); err != nil {
+		return RunResult{}, err
+	}
+	if providerResult.CompletedAt.After(invocation.Deadline) {
+		cancelContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_ = e.provider.Cancel(cancelContext, invocation.IdempotencyKey)
+		cancel()
+		if err := e.appendDeadlineTerminal(aggregateID, occurredAt, invocation, replay); err != nil {
+			return RunResult{}, err
+		}
+		return RunResult{}, ErrProviderDeadline
+	}
+	artifacts := providerResult.Artifacts
 	if err := validateArtifacts(artifacts, invocation, e.outputs); err != nil {
 		return RunResult{}, err
 	}
-	if err := e.finishInvocation(aggregateID, occurredAt, invocation, artifacts, replay); err != nil {
+	if err := e.finishInvocation(aggregateID, occurredAt, invocation, providerResult, replay); err != nil {
 		return RunResult{}, err
 	}
 	replay, err = e.ledger.Replay(aggregateID)
@@ -262,6 +289,13 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		return RunResult{}, err
 	}
 	return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: artifacts, Replay: replay}, nil
+}
+
+func validateProviderResult(result ProviderResult, invocation Invocation) error {
+	if result.IdempotencyKey != invocation.IdempotencyKey || result.CompletedAt.IsZero() {
+		return errors.New("provider result identity or completion time is invalid")
+	}
+	return nil
 }
 
 var ErrProviderDeadline = errors.New("provider result unavailable after node deadline")
@@ -276,7 +310,8 @@ func (e *Engine) appendDeadlineTerminal(aggregateID string, occurredAt time.Time
 	return e.ledger.Append(receipt)
 }
 
-func (e *Engine) finishInvocation(aggregateID string, occurredAt time.Time, invocation Invocation, artifacts []contractsv1.ActionArtifact, replay contractsv1.ReplayBundle) error {
+func (e *Engine) finishInvocation(aggregateID string, occurredAt time.Time, invocation Invocation, providerResult ProviderResult, replay contractsv1.ReplayBundle) error {
+	artifacts := providerResult.Artifacts
 	artifactHashes := make([]contractsv1.SHA256, 0, len(artifacts))
 	for _, artifact := range artifacts {
 		hash, err := Digest(artifact)
@@ -290,7 +325,7 @@ func (e *Engine) finishInvocation(aggregateID string, occurredAt time.Time, invo
 	if !ok {
 		return errors.New("replay has no invocation receipt")
 	}
-	receipts, err := postExecutionReceipts(aggregateID, occurredAt, invocationReceipt, invocation, artifacts, artifactHashes)
+	receipts, err := postExecutionReceipts(aggregateID, occurredAt, invocationReceipt, invocation, providerResult, artifactHashes)
 	if err != nil {
 		return err
 	}
@@ -332,16 +367,16 @@ func materializeInvocation(bundle contractsv1.ReplayBundle) (Invocation, bool, e
 	return Invocation{}, false, nil
 }
 
-func materializeArtifacts(bundle contractsv1.ReplayBundle) ([]contractsv1.ActionArtifact, bool, error) {
+func materializeProviderResult(bundle contractsv1.ReplayBundle) (ProviderResult, bool, error) {
 	receipt, ok := receiptByType(bundle, contractsv1.ReceiptReceiptTypeResult)
 	if !ok {
-		return nil, false, nil
+		return ProviderResult{}, false, nil
 	}
-	var artifacts []contractsv1.ActionArtifact
-	if err := decodePayload(receipt.Payload["artifacts"], &artifacts); err != nil {
-		return nil, false, fmt.Errorf("materialize artifacts: %w", err)
+	var result ProviderResult
+	if err := decodePayload(receipt.Payload["provider_result"], &result); err != nil {
+		return ProviderResult{}, false, fmt.Errorf("materialize provider result: %w", err)
 	}
-	return artifacts, true, nil
+	return result, true, nil
 }
 
 func contextPackByType(packs []contractsv1.ContextPackEdition, packType string) (contractsv1.ContextPackEdition, bool) {
@@ -565,19 +600,19 @@ func preExecutionReceipts(aggregateID string, occurredAt time.Time, compileRecei
 	return append(receipts, invocationReceipt), nil
 }
 
-func postExecutionReceipts(aggregateID string, occurredAt time.Time, previousReceipt contractsv1.Receipt, invocation Invocation, artifacts []contractsv1.ActionArtifact, artifactHashes []contractsv1.SHA256) ([]contractsv1.Receipt, error) {
+func postExecutionReceipts(aggregateID string, occurredAt time.Time, previousReceipt contractsv1.Receipt, invocation Invocation, providerResult ProviderResult, artifactHashes []contractsv1.SHA256) ([]contractsv1.Receipt, error) {
 	version := previousReceipt.AggregateVersion + 1
 	previous := previousReceipt.ReceiptHash
 	providerReceipt, err := sealReceipt(aggregateID, version, contractsv1.ReceiptReceiptTypeProviderExecution, occurredAt, &previous,
 		[]contractsv1.SHA256{contractsv1.SHA256(invocation.IdempotencyKey)}, artifactHashes,
-		map[string]any{"node_id": invocation.Node.Id})
+		map[string]any{"node_id": invocation.Node.Id, "idempotency_key": providerResult.IdempotencyKey, "completed_at": providerResult.CompletedAt})
 	if err != nil {
 		return nil, err
 	}
 	receipts := []contractsv1.Receipt{providerReceipt}
 	previous = providerReceipt.ReceiptHash
 	resultReceipt, err := sealReceipt(aggregateID, version+1, contractsv1.ReceiptReceiptTypeResult, occurredAt, &previous,
-		artifactHashes, artifactHashes, map[string]any{"accepted": true, "artifacts": artifacts})
+		artifactHashes, artifactHashes, map[string]any{"accepted": true, "provider_result": providerResult})
 	if err != nil {
 		return nil, err
 	}
@@ -653,6 +688,7 @@ func MaterializeReplay(bundle contractsv1.ReplayBundle, outputs OutputCatalog) (
 		return ReplayMaterial{}, err
 	}
 	var material ReplayMaterial
+	var providerResult ProviderResult
 	for _, receipt := range bundle.Receipts {
 		switch receipt.ReceiptType {
 		case contractsv1.ReceiptReceiptTypeInvocation:
@@ -660,13 +696,20 @@ func MaterializeReplay(bundle contractsv1.ReplayBundle, outputs OutputCatalog) (
 				return ReplayMaterial{}, fmt.Errorf("materialize invocation: %w", err)
 			}
 		case contractsv1.ReceiptReceiptTypeResult:
-			if err := decodePayload(receipt.Payload["artifacts"], &material.Artifacts); err != nil {
+			if err := decodePayload(receipt.Payload["provider_result"], &providerResult); err != nil {
 				return ReplayMaterial{}, fmt.Errorf("materialize artifacts: %w", err)
 			}
+			material.Artifacts = providerResult.Artifacts
 		}
 	}
 	if material.Invocation.IdempotencyKey == "" {
 		return ReplayMaterial{}, errors.New("replay has no materialized invocation")
+	}
+	if err := validateProviderResult(providerResult, material.Invocation); err != nil {
+		return ReplayMaterial{}, err
+	}
+	if providerResult.CompletedAt.After(material.Invocation.Deadline) {
+		return ReplayMaterial{}, errors.New("provider result completed after the node deadline")
 	}
 	if err := VerifyContextBundle(material.Invocation.Bundle, material.Invocation.Context); err != nil {
 		return ReplayMaterial{}, err

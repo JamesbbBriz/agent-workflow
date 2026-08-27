@@ -149,7 +149,7 @@ func executeDemo(definition contractsv1.WorkflowDefinition, cutoff time.Time) (w
 		"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead,
 	}, workflow.OutputCatalog{
 		"recommendation@1": validateRecommendation,
-	}, &demoProvider{results: make(map[string][]contractsv1.ActionArtifact)}, workflow.NewMemoryLedger())
+	}, &demoProvider{results: make(map[string]workflow.ProviderResult)}, workflow.NewMemoryLedger())
 	return engine.RunNode(context.Background(), workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
 }
 
@@ -161,7 +161,7 @@ func demoIntent(kind contractsv1.IntentCardKind, title string) contractsv1.Inten
 }
 
 type demoProvider struct {
-	results map[string][]contractsv1.ActionArtifact
+	results map[string]workflow.ProviderResult
 }
 
 func validateRecommendation(value any) error {
@@ -185,17 +185,17 @@ func (p *demoProvider) Start(_ context.Context, invocation workflow.Invocation) 
 	if err != nil {
 		return err
 	}
-	p.results[invocation.IdempotencyKey] = []contractsv1.ActionArtifact{{
+	p.results[invocation.IdempotencyKey] = workflow.ProviderResult{IdempotencyKey: invocation.IdempotencyKey, CompletedAt: time.Now().UTC(), Artifacts: []contractsv1.ActionArtifact{{
 		Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: "example-recommendation",
 		ArtifactType: "recommendation", JobId: invocation.JobID, CampaignId: invocation.CampaignID,
 		WorkflowRef: invocation.WorkflowRef, NodeId: invocation.Node.Id,
 		InputHashes: invocation.InputHashes,
 		Content:     content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: contractsv1.ActionArtifactApprovalStatePending,
-	}}
+	}}}
 	return nil
 }
 
-func (p *demoProvider) Poll(_ context.Context, key string) ([]contractsv1.ActionArtifact, bool, error) {
+func (p *demoProvider) Poll(_ context.Context, key string) (workflow.ProviderResult, bool, error) {
 	result, ok := p.results[key]
 	return result, ok, nil
 }
