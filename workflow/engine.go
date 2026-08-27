@@ -110,7 +110,7 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 	if err != nil {
 		return RunResult{}, err
 	}
-	if err := validateRunBinding(request, compiled); err != nil {
+	if err := validateRunBinding(request, compiled, transitionAt); err != nil {
 		return RunResult{}, err
 	}
 	jobHash, campaignHash, err := aggregateDefinitionHashes(request)
@@ -342,7 +342,7 @@ func executionID(request RunRequest) (string, error) {
 	return shortID("run-", hash), nil
 }
 
-func validateRunBinding(request RunRequest, compiled CompiledWorkflow) error {
+func validateRunBinding(request RunRequest, compiled CompiledWorkflow, transitionAt time.Time) error {
 	if request.Job.Intent.Kind != contractsv1.IntentCardKindJob || request.Campaign.Intent.Kind != contractsv1.IntentCardKindCampaign {
 		return errors.New("job or campaign intent kind is invalid")
 	}
@@ -361,6 +361,9 @@ func validateRunBinding(request RunRequest, compiled CompiledWorkflow) error {
 	}
 	if !found {
 		return errors.New("workflow is not pinned by the campaign")
+	}
+	if request.Campaign.EvidenceFrontier.Cutoff.After(transitionAt) {
+		return errors.New("campaign evidence cutoff is in the future")
 	}
 	return nil
 }

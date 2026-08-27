@@ -119,7 +119,7 @@ func TestDemoRunsOneContextBoundNodeAndReturnsReplay(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exit := cli.Run([]string{
 		"demo", "--file", filepath.Join(root, "examples", "research-review.workflow.json"),
-		"--at", "2026-08-28T00:00:00Z", "--json",
+		"--at", "2026-08-27T00:00:00Z", "--json",
 	}, &stdout, &stderr)
 	if exit != 0 {
 		t.Fatalf("demo exited %d: %s", exit, stderr.String())

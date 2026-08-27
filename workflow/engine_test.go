@@ -19,7 +19,7 @@ import (
 func TestEngineCompilesResolvesExecutesAndReplaysWithoutDuplicateProviderWork(t *testing.T) {
 	t.Parallel()
 	definition := loadExample(t)
-	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	seed := packFixture(t, scope, cutoff)
 	registry, err := workflow.NewRegistry(
@@ -66,7 +66,7 @@ func TestEngineCompilesResolvesExecutesAndReplaysWithoutDuplicateProviderWork(t 
 }
 
 func TestProviderResultRecoveryConvergesAfterLedgerFailure(t *testing.T) {
-	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
 	if err != nil {
@@ -103,7 +103,7 @@ func (l *failOnceLedger) Append(receipt contractsv1.Receipt) error {
 }
 
 func TestFileLedgerSurvivesCoreRestartAndRedelivery(t *testing.T) {
-	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
 	if err != nil {
@@ -145,7 +145,7 @@ func TestCompilerInjectsRequiredIntentChainAndPlaybook(t *testing.T) {
 	t.Parallel()
 	definition := loadExample(t)
 	definition.DefaultContext = definition.DefaultContext[1:]
-	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
 	if err != nil {
@@ -182,7 +182,7 @@ func TestCompilerNormalizesV1SlotsWithoutExecutionMetadata(t *testing.T) {
 		definition.Outputs[slotIndex].ContentSchema = nil
 		definition.Outputs[slotIndex].Consumers = nil
 	}
-	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
 	if err != nil {
@@ -200,9 +200,9 @@ func TestCompilerNormalizesV1SlotsWithoutExecutionMetadata(t *testing.T) {
 	}
 }
 
-func TestCoreIssuesProviderDeadlineInsteadOfTrustingEvidenceTime(t *testing.T) {
+func TestCoreIssuesProviderDeadline(t *testing.T) {
 	t.Parallel()
-	cutoff := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
 	if err != nil {
@@ -220,6 +220,23 @@ func TestCoreIssuesProviderDeadlineInsteadOfTrustingEvidenceTime(t *testing.T) {
 	}
 }
 
+func TestEngineRejectsFutureEvidenceCutoff(t *testing.T) {
+	t.Parallel()
+	cutoff := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &memoProvider{results: make(map[string][]contractsv1.ActionArtifact)}
+	_, err = workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger()).RunNode(
+		context.Background(), workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: loadExample(t), NodeID: "research"},
+	)
+	if err == nil || provider.work != 0 {
+		t.Fatalf("future evidence cutoff crossed the provider boundary: err=%v work=%d", err, provider.work)
+	}
+}
+
 func TestRequiredContextFailsClosed(t *testing.T) {
 	t.Parallel()
 	definition := loadExample(t)
@@ -232,7 +249,7 @@ func TestRequiredContextFailsClosed(t *testing.T) {
 	}
 	provider := &memoProvider{results: make(map[string][]contractsv1.ActionArtifact)}
 	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger())
-	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	_, err = engine.RunNode(context.Background(), workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"})
 	var missing *workflow.NeedsContextError
@@ -247,7 +264,7 @@ func TestRequiredContextFailsClosed(t *testing.T) {
 func TestContextPackAuthorityFailsClosedBeforeProviderExecution(t *testing.T) {
 	t.Parallel()
 	definition := loadExample(t)
-	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	tests := []struct {
 		name   string
@@ -303,7 +320,7 @@ func TestOptionalContextProducesExplicitDegradedBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	provider := &memoProvider{results: make(map[string][]contractsv1.ActionArtifact)}
 	result, err := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, workflow.NewMemoryLedger()).RunNode(
@@ -319,7 +336,7 @@ func TestOptionalContextProducesExplicitDegradedBundle(t *testing.T) {
 
 func TestCompilerRejectsUnavailableProducerConflictingDefaultsAndBrokenSlots(t *testing.T) {
 	t.Parallel()
-	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	seed := packFixture(t, scope, cutoff)
 	tests := []struct {
@@ -410,7 +427,7 @@ func TestCompilerRejectsUnavailableProducerConflictingDefaultsAndBrokenSlots(t *
 
 func TestEngineRejectsUnknownAggregateContractBeforeProviderExecution(t *testing.T) {
 	t.Parallel()
-	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	job := jobFixture(scope)
 	job.SchemaVersion = 2
@@ -429,7 +446,7 @@ func TestEngineRejectsUnknownAggregateContractBeforeProviderExecution(t *testing
 
 func TestEngineRejectsStaleDeclaredAggregateHash(t *testing.T) {
 	t.Parallel()
-	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	job := jobFixture(scope)
 	wrong := contractsv1.SHA256(zeroHash)
@@ -449,7 +466,7 @@ func TestEngineRejectsStaleDeclaredAggregateHash(t *testing.T) {
 
 func TestEngineRejectsArtifactContentOutsideTheDeclaredSchema(t *testing.T) {
 	t.Parallel()
-	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
 	if err != nil {
@@ -466,7 +483,7 @@ func TestEngineRejectsArtifactContentOutsideTheDeclaredSchema(t *testing.T) {
 
 func TestEngineRejectsOversizedArtifactContent(t *testing.T) {
 	t.Parallel()
-	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
 	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
 	if err != nil {

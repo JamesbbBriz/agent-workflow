@@ -31,7 +31,7 @@ Run the synthetic Context-bound execution demo:
 ```bash
 go run ./cmd/agent-workflow demo \
   --file examples/research-review.workflow.json \
-  --at 2026-08-28T00:00:00Z \
+  --at 2026-08-27T00:00:00Z \
   --json
 ```
 
