@@ -12,6 +12,7 @@ describe("Workflow Builder surfaces", () => {
     expect(html).toContain("Build an immutable Workflow");
     expect(html).toContain("Job and Campaign boundary");
     expect(html).toContain("Add Node");
+    expect(html).toContain("Add Context");
     expect(html).toContain("Research");
     expect(html).toContain("Review");
     expect(html).toContain("Compile &amp; preview");
