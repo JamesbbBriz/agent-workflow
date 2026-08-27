@@ -82,6 +82,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, err)
 			return
 		}
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		definitions, err := h.admissionDefinitions(request.Preview)
+		if err != nil {
+			h.write(w, nil, err)
+			return
+		}
 		admission, err := h.core.Confirm(request.Preview, request.Actor, h.now().UTC())
 		if err != nil {
 			h.write(w, nil, err)
@@ -92,7 +99,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.write(w, nil, err)
 			return
 		}
-		snapshot, err := canvas.ProjectWithAdmissions(admission.Job, admission.Campaign, []contractsv1.WorkflowDefinition{admission.Workflow}, []contractsv1.ReplayBundle{replay})
+		snapshot, err := canvas.ProjectWithAdmissions(admission.Job, admission.Campaign, definitions, []contractsv1.ReplayBundle{replay})
 		h.write(w, struct {
 			Admission contractsv1.WorkflowAdmission `json:"admission"`
 			Canvas    contractsv1.CanvasSnapshot    `json:"canvas"`
@@ -141,6 +148,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.write(w, nil, errors.New("trusted Canvas is unavailable"))
 			return
 		}
+		if replay, err := h.core.ApprovalReplay(string(request.Preview.Brief.Id)); err == nil {
+			receipt, err := h.core.ConfirmApproval(request.Preview, request.Actor, request.OptionID, h.now().UTC())
+			if err != nil {
+				h.write(w, nil, err)
+				return
+			}
+			h.writeApproval(w, receipt, replay)
+			return
+		}
 		if err := canvas.ValidateApprovalTarget(*h.canvas, request.Preview.Brief); err != nil {
 			h.write(w, nil, err)
 			return
@@ -155,18 +171,52 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.write(w, nil, err)
 			return
 		}
-		next, err := canvas.ApplyApproval(*h.canvas, replay)
-		if err == nil {
-			h.canvas = &next
-		}
-		h.write(w, struct {
-			Receipt contractsv1.Receipt        `json:"receipt"`
-			Canvas  contractsv1.CanvasSnapshot `json:"canvas"`
-		}{receipt, next}, err)
+		h.writeApproval(w, receipt, replay)
 		return
 	default:
 		h.notFound(w)
 	}
+}
+
+func (h *Handler) writeApproval(w http.ResponseWriter, receipt contractsv1.Receipt, replay contractsv1.ReplayBundle) {
+	for _, projected := range h.canvas.ApprovalReplays {
+		if projected.BundleHash == replay.BundleHash {
+			h.write(w, struct {
+				Receipt contractsv1.Receipt        `json:"receipt"`
+				Canvas  contractsv1.CanvasSnapshot `json:"canvas"`
+			}{receipt, *h.canvas}, nil)
+			return
+		}
+	}
+	next, err := canvas.ApplyApproval(*h.canvas, replay)
+	if err == nil {
+		h.canvas = &next
+	}
+	h.write(w, struct {
+		Receipt contractsv1.Receipt        `json:"receipt"`
+		Canvas  contractsv1.CanvasSnapshot `json:"canvas"`
+	}{receipt, next}, err)
+}
+
+func (h *Handler) admissionDefinitions(preview contractsv1.WorkflowAdmissionPreview) ([]contractsv1.WorkflowDefinition, error) {
+	definitions := []contractsv1.WorkflowDefinition{preview.Workflow}
+	if h.canvas != nil && h.canvas.Definition.Job.Id == preview.Job.Id && h.canvas.Definition.Campaign.Id == preview.Campaign.Id {
+		definitions = append([]contractsv1.WorkflowDefinition(nil), h.canvas.Definition.Workflows...)
+		replaced := false
+		for index := range definitions {
+			if definitions[index].Id == preview.Workflow.Id {
+				definitions[index] = preview.Workflow
+				replaced = true
+			}
+		}
+		if !replaced {
+			definitions = append(definitions, preview.Workflow)
+		}
+	}
+	if _, err := canvas.Project(preview.Job, preview.Campaign, definitions); err != nil {
+		return nil, err
+	}
+	return definitions, nil
 }
 
 func decode(r *http.Request, target any) error {

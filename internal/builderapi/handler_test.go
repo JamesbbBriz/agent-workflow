@@ -99,6 +99,22 @@ func TestBuilderHTTPProjectsOnlyCurrentWorkflowAdmissionVersion(t *testing.T) {
 	}
 }
 
+func TestBuilderHTTPRejectsIncompleteMultiWorkflowCanvasBeforeCommit(t *testing.T) {
+	definition := loadDefinition(t)
+	job, campaign := definitions(definition)
+	campaign.WorkflowPlan = append(campaign.WorkflowPlan, "unrelated-workflow@1")
+	core := testCore(t)
+	handler := builderapi.New(core, time.Now)
+	preview := preview(t, handler, job, campaign, definition)
+	response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": preview})
+	if response.Code != http.StatusConflict {
+		t.Fatalf("incomplete Canvas plan passed: %s", response.Body.String())
+	}
+	if _, err := core.ReadWorkflow(string(definition.Id), 1); err == nil {
+		t.Fatal("admission was committed before Canvas preflight")
+	}
+}
+
 func TestBuilderHTTPRejectsOversizedBodies(t *testing.T) {
 	core := testCore(t)
 	handler := builderapi.New(core, time.Now)
@@ -150,6 +166,14 @@ func TestBuilderHTTPValidatesApprovalCanvasBeforeCommit(t *testing.T) {
 	}
 	if _, err := core.ApprovalReplay(string(previewBody.Data.Brief.Id)); err == nil {
 		t.Fatal("approval was committed before Canvas validation")
+	}
+	handler = builderapi.NewWithCanvas(core, time.Now, &snapshot)
+	request := map[string]any{"actor": "reviewer@example.com", "option_id": "approve", "preview": previewBody.Data}
+	if response := post(t, handler, "/v1/approvals/confirm", request); response.Code != http.StatusOK {
+		t.Fatalf("valid approval failed: %s", response.Body.String())
+	}
+	if response := post(t, handler, "/v1/approvals/confirm", request); response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"approval_state":"approved"`)) {
+		t.Fatalf("exact approval retry did not converge: %s", response.Body.String())
 	}
 }
 

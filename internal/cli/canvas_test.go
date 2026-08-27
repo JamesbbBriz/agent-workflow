@@ -154,6 +154,48 @@ func TestCanvasProjectionDoesNotCompleteBeforeTerminalReceipt(t *testing.T) {
 	}
 }
 
+func TestBuilderRestartRestoresCanonicalApprovalProjection(t *testing.T) {
+	sources, snapshot, err := loadCanvasSources("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "builder.jsonl")
+	ledger, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := demoAuthoringCore(ledger, sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := snapshot.Replays[0]
+	var result contractsv1.Receipt
+	for _, receipt := range source.Receipts {
+		if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeResult {
+			result = receipt
+		}
+	}
+	brief := contractsv1.ApprovalBrief{Kind: contractsv1.ApprovalBriefKindApprovalBrief, SchemaVersion: 1, Title: "Approve exact action?", Action: snapshot.Executions[0].Outputs[0], Evidence: []contractsv1.ArtifactRef{{Id: result.Id, Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "result", SchemaVersion: 1, Sha256: result.ReceiptHash, MediaType: "application/json"}}, Options: []contractsv1.ApprovalOption{{Id: "approve", Label: "Approve", Decision: contractsv1.ApprovalOptionDecisionApprove, Tradeoffs: []string{"Changes the target"}}, {Id: "reject", Label: "Reject", Decision: contractsv1.ApprovalOptionDecisionReject, Tradeoffs: []string{"No change"}}}, RecommendedOptionId: "approve", Recommendation: "Approve the reviewed action.", Risks: []string{"Public impact"}}
+	preview, err := core.PreviewApproval(brief, "reviewer@example.com", source.AggregateId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.ConfirmApproval(preview, "reviewer@example.com", "approve", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := restoreCanvasApprovals(snapshot, reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Executions[0].Outputs[0].ApprovalState != contractsv1.ActionArtifactApprovalStateApproved {
+		t.Fatal("restart did not restore the canonical approval")
+	}
+}
+
 func loadExampleWorkflow(t *testing.T) contractsv1.WorkflowDefinition {
 	t.Helper()
 	_, current, _, _ := runtime.Caller(0)

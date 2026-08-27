@@ -80,6 +80,12 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeError(stdout, stderr, true, "builder_unavailable", err)
 	}
+	if sourceCanvas != nil {
+		sourceCanvas, err = restoreCanvasApprovals(sourceCanvas, ledger)
+		if err != nil {
+			return writeError(stdout, stderr, true, "canvas_unavailable", err)
+		}
+	}
 	listener, err := net.Listen("tcp", *listenAddress)
 	if err != nil {
 		return writeError(stdout, stderr, true, "listen_failed", errors.New("builder listener is unavailable"))
@@ -90,6 +96,21 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 		return writeError(stdout, stderr, true, "serve_failed", errors.New("builder server stopped"))
 	}
 	return 0
+}
+
+func restoreCanvasApprovals(snapshot *contractsv1.CanvasSnapshot, ledger *workflow.FileLedger) (*contractsv1.CanvasSnapshot, error) {
+	approvals, err := ledger.ReplaysByReceiptType(contractsv1.ReceiptReceiptTypeApproval)
+	if err != nil {
+		return nil, err
+	}
+	for _, approval := range approvals {
+		next, err := canvas.ApplyApproval(*snapshot, approval)
+		if err != nil {
+			return nil, err
+		}
+		snapshot = &next
+	}
+	return snapshot, nil
 }
 
 func demoAuthoringCore(ledger, sources workflow.Ledger) (*workflow.AuthoringCore, error) {

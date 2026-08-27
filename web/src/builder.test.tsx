@@ -10,6 +10,8 @@ describe("Workflow Builder surfaces", () => {
   it("renders only the exact draft Nodes and Core-gated actions", () => {
     const html = renderToStaticMarkup(<BuilderPanel snapshot={snapshot} onClose={() => undefined} onCanvas={() => undefined} />);
     expect(html).toContain("Build an immutable Workflow");
+    expect(html).toContain("Job and Campaign boundary");
+    expect(html).toContain("Add Node");
     expect(html).toContain("Research");
     expect(html).toContain("Review");
     expect(html).toContain("Compile &amp; preview");
