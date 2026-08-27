@@ -80,6 +80,25 @@ func TestBuilderHTTPBindsTargetBeforeAdmission(t *testing.T) {
 	}
 }
 
+func TestBuilderHTTPProjectsOnlyCurrentWorkflowAdmissionVersion(t *testing.T) {
+	definition := loadDefinition(t)
+	job, campaign := definitions(definition)
+	handler := builderapi.New(testCore(t), time.Now)
+
+	previewV1 := preview(t, handler, job, campaign, definition)
+	if response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": previewV1}); response.Code != http.StatusOK {
+		t.Fatalf("confirm v1: %s", response.Body.String())
+	}
+
+	definition.Version = 2
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@2"}
+	previewV2 := preview(t, handler, job, campaign, definition)
+	response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": previewV2})
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"research-review@2":"admitted"`)) {
+		t.Fatalf("confirm v2 did not project current admission: %s", response.Body.String())
+	}
+}
+
 func TestBuilderHTTPRejectsOversizedBodies(t *testing.T) {
 	core := testCore(t)
 	handler := builderapi.New(core, time.Now)
@@ -112,6 +131,21 @@ func decodeBody(t *testing.T, response *httptest.ResponseRecorder, target any) {
 	if err := json.Unmarshal(response.Body.Bytes(), target); err != nil {
 		t.Fatalf("decode response: %v: %s", err, response.Body.String())
 	}
+}
+
+func preview(t *testing.T, handler http.Handler, job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition, definition contractsv1.WorkflowDefinition) contractsv1.WorkflowAdmissionPreview {
+	t.Helper()
+	response := post(t, handler, "/v1/workflows/preview", map[string]any{"actor": "operator", "job": job, "campaign": campaign, "workflow": definition})
+	var body struct {
+		Data struct {
+			Preview contractsv1.WorkflowAdmissionPreview `json:"preview"`
+		} `json:"data"`
+	}
+	decodeBody(t, response, &body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("preview: %s", response.Body.String())
+	}
+	return body.Data.Preview
 }
 
 func testCore(t *testing.T) *workflow.AuthoringCore {

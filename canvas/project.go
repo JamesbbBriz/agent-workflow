@@ -55,13 +55,13 @@ func ProjectWithAdmissions(job contractsv1.JobDefinition, campaign contractsv1.C
 			if err != nil {
 				return contractsv1.CanvasSnapshot{}, err
 			}
-			if !reflect.DeepEqual(admission.Job, job) || !reflect.DeepEqual(admission.Campaign, campaign) {
-				return contractsv1.CanvasSnapshot{}, errors.New("Canvas definitions do not match their Workflow admission")
-			}
 			ref := contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", admission.Workflow.Id, admission.Workflow.Version))
 			definition, ok := workflowByRef[ref]
 			if !ok || definition.Id != admission.Workflow.Id || definition.Version != admission.Workflow.Version {
 				continue
+			}
+			if !reflect.DeepEqual(admission.Job, job) || !reflect.DeepEqual(admission.Campaign, campaign) {
+				return contractsv1.CanvasSnapshot{}, errors.New("Canvas definitions do not match their Workflow admission")
 			}
 			body, _ := json.Marshal(definition)
 			identity, err := contract.ValidateWorkflow(body)
