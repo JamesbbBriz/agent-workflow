@@ -53,6 +53,37 @@ func TestBuilderHTTPDraftPreviewConfirmReadback(t *testing.T) {
 	}
 }
 
+func TestBuilderHTTPAdmissionReadbackKeepsTrustedRuntime(t *testing.T) {
+	body, err := os.ReadFile("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Data contractsv1.CanvasSnapshot `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	definition := loadDefinition(t)
+	definition.Id = "new-review"
+	job, campaign := envelope.Data.Definition.Job, envelope.Data.Definition.Campaign
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"new-review@1"}
+	handler := builderapi.NewWithCanvas(testCore(t), time.Now, &envelope.Data)
+	admissionPreview := preview(t, handler, job, campaign, definition)
+	if response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": admissionPreview}); response.Code != http.StatusOK {
+		t.Fatalf("confirm: %s", response.Body.String())
+	}
+	read := httptest.NewRecorder()
+	handler.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/v1/canvas", nil))
+	var response struct {
+		Data contractsv1.CanvasSnapshot `json:"data"`
+	}
+	decodeBody(t, read, &response)
+	if len(response.Data.Executions) != len(envelope.Data.Executions) || len(response.Data.Replays) != len(envelope.Data.Replays) {
+		t.Fatalf("admission replaced trusted runtime readback: %s", read.Body.String())
+	}
+}
+
 func TestBuilderHTTPRejectsUnknownInputAndStalePreview(t *testing.T) {
 	core := testCore(t)
 	handler := builderapi.New(core, time.Now)
@@ -229,7 +260,7 @@ func testCoreWithSources(t *testing.T, sources workflow.Ledger) *workflow.Author
 	if err != nil {
 		t.Fatal(err)
 	}
-	pack := contractsv1.ContextPackEdition{Kind: contractsv1.ContextPackEditionKindContextPackEdition, SchemaVersion: 1, Id: "project-brief-edition", PackType: "project-brief", PackSchemaVersion: 1, Authority: contractsv1.ContextPackEditionAuthorityCanonical, Scope: scope, CapturedAt: cutoff.Add(-time.Hour), ExpiresAt: cutoff.Add(time.Hour), Coverage: contractsv1.ContextPackEditionCoverageComplete, Content: content, ContentSha256: contractsv1.SHA256(hash), Provenance: []contractsv1.ArtifactRef{{Id: "seed", Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "seed", SchemaVersion: 1, Sha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000", MediaType: "application/json"}}}
+	pack := contractsv1.ContextPackEdition{Kind: contractsv1.ContextPackEditionKindContextPackEdition, SchemaVersion: 1, Id: "project-brief-edition", PackType: "project-brief", PackSchemaVersion: 1, Authority: contractsv1.ContextPackEditionAuthorityCanonical, Scope: scope, CapturedAt: cutoff.Add(-48 * time.Hour), ExpiresAt: cutoff.Add(24 * time.Hour), Coverage: contractsv1.ContextPackEditionCoverageComplete, Content: content, ContentSha256: contractsv1.SHA256(hash), Provenance: []contractsv1.ArtifactRef{{Id: "seed", Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "seed", SchemaVersion: 1, Sha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000", MediaType: "application/json"}}}
 	registry, err := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1, pack))
 	if err != nil {
 		t.Fatal(err)

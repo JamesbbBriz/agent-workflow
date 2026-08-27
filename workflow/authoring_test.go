@@ -67,6 +67,40 @@ func TestAuthoringPreviewRejectsUnavailableRequiredContext(t *testing.T) {
 	}
 }
 
+func TestAuthoringPreviewValidatesResolvedRequiredContext(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*contractsv1.WorkflowDefinition, *contractsv1.ContextPackEdition)
+	}{
+		{name: "tampered hash", mutate: func(_ *contractsv1.WorkflowDefinition, pack *contractsv1.ContextPackEdition) {
+			pack.Content = map[string]any{"brief": "tampered"}
+		}},
+		{name: "pinned wrong scope", mutate: func(definition *contractsv1.WorkflowDefinition, pack *contractsv1.ContextPackEdition) {
+			pack.Scope.SubjectIds = []string{"other-project"}
+			editionID := pack.Id
+			definition.DefaultContext[1].EditionId = &editionID
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			definition := authoringDefinition(t)
+			job, campaign := testDefinitions(definition)
+			content := map[string]any{"brief": "bounded"}
+			hash, err := workflow.Digest(content)
+			if err != nil {
+				t.Fatal(err)
+			}
+			zero := contractsv1.SHA256("sha256:0000000000000000000000000000000000000000000000000000000000000000")
+			pack := contractsv1.ContextPackEdition{Kind: contractsv1.ContextPackEditionKindContextPackEdition, SchemaVersion: 1, Id: "project-brief-edition", PackType: "project-brief", PackSchemaVersion: 1, Authority: contractsv1.ContextPackEditionAuthorityCanonical, Scope: campaign.Scope, CapturedAt: campaign.EvidenceFrontier.Cutoff.Add(-time.Hour), ExpiresAt: campaign.EvidenceFrontier.Cutoff.Add(time.Hour), Coverage: contractsv1.ContextPackEditionCoverageComplete, Content: content, ContentSha256: contractsv1.SHA256(hash), Provenance: []contractsv1.ArtifactRef{{Id: "seed", Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "seed", SchemaVersion: 1, Sha256: zero, MediaType: "application/json"}}}
+			test.mutate(&definition, &pack)
+			registry, _ := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1, pack))
+			core := workflow.NewAuthoringCore(registry, workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval}, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, workflow.OutputCatalog{"recommendation@1": func(any) error { return nil }, "review-decision@1": func(any) error { return nil }}, []string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, workflow.NewMemoryLedger())
+			if _, report, err := core.Preview(job, campaign, definition, "operator@example.com"); err == nil || report.Valid {
+				t.Fatalf("invalid required Context received an admission token: report=%+v err=%v", report, err)
+			}
+		})
+	}
+}
+
 func TestAuthoringFailsClosedOnCatalogAndPreviewDrift(t *testing.T) {
 	core := authoringCore(t)
 	definition := authoringDefinition(t)
@@ -186,7 +220,12 @@ func authoringCoreWithLedger(t *testing.T, ledger workflow.Ledger) *workflow.Aut
 	t.Helper()
 	zero := contractsv1.SHA256("sha256:0000000000000000000000000000000000000000000000000000000000000000")
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"example-project"}}
-	pack := contractsv1.ContextPackEdition{Kind: contractsv1.ContextPackEditionKindContextPackEdition, SchemaVersion: 1, Id: "project-brief-edition", PackType: "project-brief", PackSchemaVersion: 1, Authority: contractsv1.ContextPackEditionAuthorityCanonical, Scope: scope, CapturedAt: time.Now().Add(-time.Hour), ExpiresAt: time.Now().Add(time.Hour), Coverage: contractsv1.ContextPackEditionCoverageComplete, Content: map[string]any{"brief": "bounded"}, ContentSha256: zero, Provenance: []contractsv1.ArtifactRef{{Id: "seed", Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "seed", SchemaVersion: 1, Sha256: zero, MediaType: "application/json"}}}
+	content := map[string]any{"brief": "bounded"}
+	hash, err := workflow.Digest(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pack := contractsv1.ContextPackEdition{Kind: contractsv1.ContextPackEditionKindContextPackEdition, SchemaVersion: 1, Id: "project-brief-edition", PackType: "project-brief", PackSchemaVersion: 1, Authority: contractsv1.ContextPackEditionAuthorityCanonical, Scope: scope, CapturedAt: time.Now().Add(-time.Hour), ExpiresAt: time.Now().Add(time.Hour), Coverage: contractsv1.ContextPackEditionCoverageComplete, Content: content, ContentSha256: contractsv1.SHA256(hash), Provenance: []contractsv1.ArtifactRef{{Id: "seed", Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "seed", SchemaVersion: 1, Sha256: zero, MediaType: "application/json"}}}
 	registry, err := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1, pack))
 	if err != nil {
 		t.Fatal(err)

@@ -111,6 +111,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		snapshot, err := canvas.ProjectWithAdmissions(admission.Job, admission.Campaign, definitions, []contractsv1.ReplayBundle{replay})
 		if err == nil {
+			if h.canvas != nil {
+				snapshot = canvas.MergeAdmissionReadback(*h.canvas, snapshot)
+			}
 			h.canvas = &snapshot
 		}
 		h.write(w, struct {

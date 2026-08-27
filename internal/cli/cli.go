@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/JamesbbBriz/agent-workflow/canvas"
@@ -107,40 +108,49 @@ func restoreCanvasAdmissions(snapshot *contractsv1.CanvasSnapshot, ledger *workf
 	if err != nil || len(replays) == 0 {
 		return snapshot, err
 	}
-	admissions := map[contractsv1.WorkflowRef]contractsv1.WorkflowAdmission{}
-	var latest contractsv1.WorkflowAdmission
-	var latestAt time.Time
+	type event struct {
+		admission contractsv1.WorkflowAdmission
+		replay    contractsv1.ReplayBundle
+		at        time.Time
+		hash      contractsv1.SHA256
+	}
+	events := make([]event, 0)
 	for _, replay := range replays {
 		for version, receipt := range replay.Receipts {
 			admission, err := workflow.MaterializeAdmission(replay, version+1)
 			if err != nil {
 				return nil, err
 			}
-			ref := contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", admission.Workflow.Id, admission.Workflow.Version))
-			admissions[ref] = admission
-			if receipt.OccurredAt.After(latestAt) || receipt.OccurredAt.Equal(latestAt) && string(receipt.ReceiptHash) > string(latest.Receipt.ReceiptHash) {
-				latest, latestAt = admission, receipt.OccurredAt
-			}
+			events = append(events, event{admission: admission, replay: replay, at: receipt.OccurredAt, hash: receipt.ReceiptHash})
 		}
 	}
-	definitions := make([]contractsv1.WorkflowDefinition, 0, len(latest.Campaign.WorkflowPlan))
-	for _, ref := range latest.Campaign.WorkflowPlan {
-		if admission, ok := admissions[ref]; ok {
-			definitions = append(definitions, admission.Workflow)
-			continue
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].at.Equal(events[j].at) {
+			return events[i].hash < events[j].hash
 		}
-		for _, definition := range snapshot.Definition.Workflows {
-			if contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", definition.Id, definition.Version)) == ref {
+		return events[i].at.Before(events[j].at)
+	})
+	current := *snapshot
+	definitionsByRef := map[contractsv1.WorkflowRef]contractsv1.WorkflowDefinition{}
+	for _, definition := range current.Definition.Workflows {
+		definitionsByRef[contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", definition.Id, definition.Version))] = definition
+	}
+	for _, item := range events {
+		ref := contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", item.admission.Workflow.Id, item.admission.Workflow.Version))
+		definitionsByRef[ref] = item.admission.Workflow
+		definitions := make([]contractsv1.WorkflowDefinition, 0, len(item.admission.Campaign.WorkflowPlan))
+		for _, planned := range item.admission.Campaign.WorkflowPlan {
+			if definition, ok := definitionsByRef[planned]; ok {
 				definitions = append(definitions, definition)
-				break
 			}
 		}
+		next, err := canvas.ProjectWithAdmissions(item.admission.Job, item.admission.Campaign, definitions, []contractsv1.ReplayBundle{item.replay})
+		if err != nil {
+			return nil, err
+		}
+		current = canvas.MergeAdmissionReadback(current, next)
 	}
-	next, err := canvas.ProjectWithAdmissions(latest.Job, latest.Campaign, definitions, replays)
-	if err != nil {
-		return nil, err
-	}
-	return &next, nil
+	return &current, nil
 }
 
 func restoreCanvasApprovals(snapshot *contractsv1.CanvasSnapshot, ledger *workflow.FileLedger) (*contractsv1.CanvasSnapshot, error) {
@@ -220,11 +230,15 @@ func loadCanvasSources(path string) (workflow.Ledger, *contractsv1.CanvasSnapsho
 	if err := json.Unmarshal(body, &envelope); err != nil || contract.ValidateDefinition("CanvasSnapshot", envelope.Data) != nil {
 		return nil, nil, errors.New("Canvas source file is invalid")
 	}
+	for _, replays := range [][]contractsv1.ReplayBundle{envelope.Data.Replays, envelope.Data.AdmissionReplays, envelope.Data.ApprovalReplays} {
+		for _, replay := range replays {
+			if err := workflow.VerifyReplay(replay); err != nil {
+				return nil, nil, errors.New("Canvas source Replay is invalid")
+			}
+		}
+	}
 	ledger := workflow.NewMemoryLedger()
 	for _, replay := range envelope.Data.Replays {
-		if err := workflow.VerifyReplay(replay); err != nil {
-			return nil, nil, errors.New("Canvas source Replay is invalid")
-		}
 		for _, receipt := range replay.Receipts {
 			if err := ledger.Append(receipt); err != nil {
 				return nil, nil, err

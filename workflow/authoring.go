@@ -206,7 +206,10 @@ func (c *AuthoringCore) Preview(job contractsv1.JobDefinition, campaign contract
 				continue
 			}
 			producer, _ := c.registry.lookup(string(requirement.Selector))
-			_, resolveErr := producer.Resolve(context.Background(), ProducerRequest{Requirement: requirement, Job: job, Campaign: campaign, Workflow: definition, WorkflowRef: compiled.WorkflowRef, CompileReceipt: compileReceipt, EvidenceCutoff: campaign.EvidenceFrontier.Cutoff})
+			pack, resolveErr := producer.Resolve(context.Background(), ProducerRequest{Requirement: requirement, Job: job, Campaign: campaign, Workflow: definition, WorkflowRef: compiled.WorkflowRef, CompileReceipt: compileReceipt, EvidenceCutoff: campaign.EvidenceFrontier.Cutoff})
+			if resolveErr == nil {
+				resolveErr = validatePack(pack, requirement, campaign.Scope, campaign.EvidenceFrontier.Cutoff)
+			}
 			if resolveErr != nil {
 				report.Valid = false
 				report.Issues = append(report.Issues, contractsv1.WorkflowLintIssue{Severity: contractsv1.WorkflowLintIssueSeverityError, Code: "context-unavailable", Path: fmt.Sprintf("$.nodes[%d].context[%d]", nodeIndex, contextIndex), Message: fmt.Sprintf("required context %q is unavailable for this Campaign", requirement.Id)})

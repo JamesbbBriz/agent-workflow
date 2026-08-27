@@ -202,6 +202,31 @@ func TestApprovalVisibilityRejectsMalformedReplay(t *testing.T) {
 	}
 }
 
+func TestLoadCanvasSourcesRejectsMalformedAdmissionReplay(t *testing.T) {
+	body, err := os.ReadFile("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Data contractsv1.CanvasSnapshot `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	envelope.Data.AdmissionReplays[0].Receipts[0].ReceiptHash = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	body, err = json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "canvas.json")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadCanvasSources(path); err == nil {
+		t.Fatal("malformed canonical admission Replay was trusted")
+	}
+}
+
 func TestBuilderRestartRestoresCanonicalAdmissionProjection(t *testing.T) {
 	sources, snapshot, err := loadCanvasSources("../../web/public/canvas.response.json")
 	if err != nil {
@@ -218,9 +243,8 @@ func TestBuilderRestartRestoresCanonicalAdmissionProjection(t *testing.T) {
 	}
 	definition := loadExampleWorkflow(t)
 	definition.Id = "restart-review"
-	job, campaign := demoDefinitions(definition, snapshot.Definition.Campaign.EvidenceFrontier.Cutoff)
-	job.Id = "restart-job"
-	campaign.Id, campaign.JobId = "restart-campaign", job.Id
+	job, campaign := snapshot.Definition.Job, snapshot.Definition.Campaign
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"restart-review@1"}
 	preview, _, err := core.Preview(job, campaign, definition, "operator@example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -236,8 +260,56 @@ func TestBuilderRestartRestoresCanonicalAdmissionProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.Definition.Job.Id != job.Id || restored.Definition.Workflows[0].Id != definition.Id {
+	if restored.Definition.Job.Id != job.Id || restored.Definition.Workflows[0].Id != definition.Id || len(restored.Executions) != len(snapshot.Executions) {
 		t.Fatalf("restart lost admission: %+v", restored.Definition)
+	}
+}
+
+func TestBuilderRestartRestoresAppendOnlyCampaignWorkflowPlan(t *testing.T) {
+	sources, snapshot, err := loadCanvasSources("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "builder.jsonl")
+	ledger, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := demoAuthoringCore(ledger, sources, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, campaign := snapshot.Definition.Job, snapshot.Definition.Campaign
+	first := loadExampleWorkflow(t)
+	first.Id = "first-review"
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"first-review@1"}
+	preview, _, err := core.Preview(job, campaign, first, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Confirm(preview, "operator@example.com", time.Date(2026, 8, 28, 1, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	second := loadExampleWorkflow(t)
+	second.Id = "second-review"
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"first-review@1", "second-review@1"}
+	preview, _, err = core.Preview(job, campaign, second, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Confirm(preview, "operator@example.com", time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := restoreCanvasAdmissions(snapshot, reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Definition.WorkflowStates["first-review@1"] != contractsv1.CanvasEntityStatusAdmitted || restored.Definition.WorkflowStates["second-review@1"] != contractsv1.CanvasEntityStatusAdmitted {
+		t.Fatalf("append-only Campaign plan lost admission history: %+v", restored.Definition.WorkflowStates)
 	}
 }
 
