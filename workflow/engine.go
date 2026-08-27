@@ -22,7 +22,9 @@ type OutputValidator func(any) error
 type OutputCatalog map[contractsv1.WorkflowRef]OutputValidator
 
 type Provider interface {
-	Execute(context.Context, Invocation) ([]contractsv1.ActionArtifact, error)
+	Start(context.Context, Invocation) error
+	Poll(context.Context, string) ([]contractsv1.ActionArtifact, bool, error)
+	Cancel(context.Context, string) error
 }
 
 type Invocation struct {
@@ -136,6 +138,9 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 				return RunResult{}, err
 			}
 			if hasReceipt(replay, contractsv1.ReceiptReceiptTypeTerminal) {
+				if !hasReceipt(replay, contractsv1.ReceiptReceiptTypeResult) {
+					return RunResult{}, ErrProviderDeadline
+				}
 				material, err := MaterializeReplay(replay, e.outputs)
 				if err != nil {
 					return RunResult{}, err
@@ -219,15 +224,32 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		}
 		return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: artifacts, Replay: completed}, nil
 	}
-	duration := time.Until(invocation.Deadline)
-	if duration <= 0 {
-		duration = time.Nanosecond
+	remaining := time.Until(invocation.Deadline)
+	if remaining > 0 {
+		providerContext, cancel := context.WithTimeout(ctx, remaining)
+		err := e.provider.Start(providerContext, invocation)
+		cancel()
+		if err != nil {
+			return RunResult{}, fmt.Errorf("provider start: %w", err)
+		}
 	}
-	providerContext, cancel := context.WithTimeout(ctx, duration)
-	defer cancel()
-	artifacts, err := e.provider.Execute(providerContext, invocation)
+	pollContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	artifacts, ready, err := e.provider.Poll(pollContext, invocation.IdempotencyKey)
+	cancel()
 	if err != nil {
-		return RunResult{}, fmt.Errorf("provider execution: %w", err)
+		return RunResult{}, fmt.Errorf("provider poll: %w", err)
+	}
+	if !ready {
+		if time.Now().Before(invocation.Deadline) {
+			return RunResult{}, errors.New("provider result is not ready")
+		}
+		cancelContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_ = e.provider.Cancel(cancelContext, invocation.IdempotencyKey)
+		cancel()
+		if err := e.appendDeadlineTerminal(aggregateID, occurredAt, invocation, replay); err != nil {
+			return RunResult{}, err
+		}
+		return RunResult{}, ErrProviderDeadline
 	}
 	if err := validateArtifacts(artifacts, invocation, e.outputs); err != nil {
 		return RunResult{}, err
@@ -240,6 +262,18 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		return RunResult{}, err
 	}
 	return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: artifacts, Replay: replay}, nil
+}
+
+var ErrProviderDeadline = errors.New("provider result unavailable after node deadline")
+
+func (e *Engine) appendDeadlineTerminal(aggregateID string, occurredAt time.Time, invocation Invocation, replay contractsv1.ReplayBundle) error {
+	previous := replay.Receipts[len(replay.Receipts)-1]
+	receipt, err := sealReceipt(aggregateID, previous.AggregateVersion+1, contractsv1.ReceiptReceiptTypeTerminal, occurredAt, &previous.ReceiptHash,
+		invocation.InputHashes, nil, map[string]any{"state": "deadline_expired"})
+	if err != nil {
+		return err
+	}
+	return e.ledger.Append(receipt)
 }
 
 func (e *Engine) finishInvocation(aggregateID string, occurredAt time.Time, invocation Invocation, artifacts []contractsv1.ActionArtifact, replay contractsv1.ReplayBundle) error {

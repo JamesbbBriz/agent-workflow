@@ -75,10 +75,14 @@ func TestProviderResultRecoveryConvergesAfterLedgerFailure(t *testing.T) {
 	provider := &memoProvider{results: make(map[string][]contractsv1.ActionArtifact)}
 	ledger := &failOnceLedger{Ledger: workflow.NewMemoryLedger(), failAt: 6}
 	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger)
-	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: loadExample(t), NodeID: "research"}
+	definition := loadExample(t)
+	deadline := 1
+	definition.Nodes[0].DeadlineSeconds = &deadline
+	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
 	if _, err := engine.RunNode(context.Background(), request); err == nil {
 		t.Fatal("injected ledger failure was ignored")
 	}
+	time.Sleep(1100 * time.Millisecond)
 	result, err := engine.RunNode(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -88,10 +92,73 @@ func TestProviderResultRecoveryConvergesAfterLedgerFailure(t *testing.T) {
 	}
 }
 
+func TestExpiredProviderPollBecomesOneTerminalReceipt(t *testing.T) {
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := loadExample(t)
+	deadline := 1
+	definition.Nodes[0].DeadlineSeconds = &deadline
+	provider := &pendingProvider{}
+	ledger := workflow.NewMemoryLedger()
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger)
+	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
+	if _, err := engine.RunNode(context.Background(), request); err == nil {
+		t.Fatal("pending provider unexpectedly completed")
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := engine.RunNode(context.Background(), request); !errors.Is(err, workflow.ErrProviderDeadline) {
+		t.Fatalf("expired provider did not become typed terminal: %v", err)
+	}
+	replay, err := ledger.Replay(executionIDForTest(t, request))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.cancelled != 1 || replay.Receipts[len(replay.Receipts)-1].Payload["state"] != "deadline_expired" {
+		t.Fatalf("deadline terminal did not converge: cancelled=%d replay=%+v", provider.cancelled, replay)
+	}
+	count := len(replay.Receipts)
+	if _, err := engine.RunNode(context.Background(), request); !errors.Is(err, workflow.ErrProviderDeadline) {
+		t.Fatalf("terminal redelivery changed outcome: %v", err)
+	}
+	replay, _ = ledger.Replay(executionIDForTest(t, request))
+	if len(replay.Receipts) != count {
+		t.Fatal("terminal redelivery appended another receipt")
+	}
+}
+
 type failOnceLedger struct {
 	workflow.Ledger
 	appendCount int
 	failAt      int
+}
+
+type pendingProvider struct{ cancelled int }
+
+func (*pendingProvider) Start(context.Context, workflow.Invocation) error { return nil }
+func (*pendingProvider) Poll(context.Context, string) ([]contractsv1.ActionArtifact, bool, error) {
+	return nil, false, nil
+}
+func (p *pendingProvider) Cancel(context.Context, string) error {
+	p.cancelled++
+	return nil
+}
+
+func executionIDForTest(t *testing.T, request workflow.RunRequest) string {
+	t.Helper()
+	hash, err := workflow.Digest(struct {
+		JobID      contractsv1.Identifier
+		CampaignID contractsv1.Identifier
+		Workflow   string
+		NodeID     string
+	}{request.Job.Id, request.Campaign.Id, string(request.Workflow.Id) + "@1", request.NodeID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "run-" + hash[len("sha256:"):len("sha256:")+20]
 }
 
 func (l *failOnceLedger) Append(receipt contractsv1.Receipt) error {
@@ -505,9 +572,9 @@ type memoProvider struct {
 	last    workflow.Invocation
 }
 
-func (p *memoProvider) Execute(_ context.Context, invocation workflow.Invocation) ([]contractsv1.ActionArtifact, error) {
-	if result, ok := p.results[invocation.IdempotencyKey]; ok {
-		return result, nil
+func (p *memoProvider) Start(_ context.Context, invocation workflow.Invocation) error {
+	if _, ok := p.results[invocation.IdempotencyKey]; ok {
+		return nil
 	}
 	p.work++
 	p.last = invocation
@@ -517,7 +584,7 @@ func (p *memoProvider) Execute(_ context.Context, invocation workflow.Invocation
 	}
 	hash, err := workflow.Digest(content)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	result := []contractsv1.ActionArtifact{{
 		Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: "artifact-recommendation-1",
@@ -527,8 +594,15 @@ func (p *memoProvider) Execute(_ context.Context, invocation workflow.Invocation
 		Content:     content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: contractsv1.ActionArtifactApprovalStatePending,
 	}}
 	p.results[invocation.IdempotencyKey] = result
-	return result, nil
+	return nil
 }
+
+func (p *memoProvider) Poll(_ context.Context, key string) ([]contractsv1.ActionArtifact, bool, error) {
+	result, ok := p.results[key]
+	return result, ok, nil
+}
+
+func (*memoProvider) Cancel(context.Context, string) error { return nil }
 
 func loadExample(t *testing.T) contractsv1.WorkflowDefinition {
 	t.Helper()

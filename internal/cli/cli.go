@@ -149,7 +149,7 @@ func executeDemo(definition contractsv1.WorkflowDefinition, cutoff time.Time) (w
 		"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead,
 	}, workflow.OutputCatalog{
 		"recommendation@1": validateRecommendation,
-	}, demoProvider{}, workflow.NewMemoryLedger())
+	}, &demoProvider{results: make(map[string][]contractsv1.ActionArtifact)}, workflow.NewMemoryLedger())
 	return engine.RunNode(context.Background(), workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
 }
 
@@ -160,7 +160,9 @@ func demoIntent(kind contractsv1.IntentCardKind, title string) contractsv1.Inten
 	}
 }
 
-type demoProvider struct{}
+type demoProvider struct {
+	results map[string][]contractsv1.ActionArtifact
+}
 
 func validateRecommendation(value any) error {
 	object, ok := value.(map[string]any)
@@ -174,20 +176,31 @@ func validateRecommendation(value any) error {
 	return nil
 }
 
-func (demoProvider) Execute(_ context.Context, invocation workflow.Invocation) ([]contractsv1.ActionArtifact, error) {
+func (p *demoProvider) Start(_ context.Context, invocation workflow.Invocation) error {
+	if _, ok := p.results[invocation.IdempotencyKey]; ok {
+		return nil
+	}
 	content := map[string]any{"recommendation": "Keep the bounded workflow."}
 	hash, err := workflow.Digest(content)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return []contractsv1.ActionArtifact{{
+	p.results[invocation.IdempotencyKey] = []contractsv1.ActionArtifact{{
 		Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: "example-recommendation",
 		ArtifactType: "recommendation", JobId: invocation.JobID, CampaignId: invocation.CampaignID,
 		WorkflowRef: invocation.WorkflowRef, NodeId: invocation.Node.Id,
 		InputHashes: invocation.InputHashes,
 		Content:     content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: contractsv1.ActionArtifactApprovalStatePending,
-	}}, nil
+	}}
+	return nil
 }
+
+func (p *demoProvider) Poll(_ context.Context, key string) ([]contractsv1.ActionArtifact, bool, error) {
+	result, ok := p.results[key]
+	return result, ok, nil
+}
+
+func (*demoProvider) Cancel(context.Context, string) error { return nil }
 
 func writeError(stdout, stderr io.Writer, jsonOutput bool, code string, err error) int {
 	if jsonOutput {
