@@ -71,7 +71,8 @@ func ValidateWorkflow(raw []byte) (WorkflowIdentity, error) {
 
 func ValidateDefinition(name string, value any) error {
 	switch name {
-	case "JobDefinition", "CampaignDefinition", "ContextPackEdition", "ContextBundle", "CapabilityManifest", "ActionArtifact", "Receipt", "ReplayBundle", "CanvasSnapshot":
+	case "JobDefinition", "CampaignDefinition", "ContextPackEdition", "ContextBundle", "CapabilityManifest", "ActionArtifact", "Receipt", "ReplayBundle", "CanvasSnapshot",
+		"AuthoringCatalog", "WorkflowLintReport", "WorkflowAdmissionPreview", "WorkflowAdmission", "ApprovalBrief", "ApprovalPreview":
 	default:
 		return fmt.Errorf("public definition %q is unknown", name)
 	}

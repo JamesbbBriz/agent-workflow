@@ -140,15 +140,10 @@ func TestCanvasProjectionDoesNotCompleteBeforeTerminalReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	partial := result.Replay
-	partial.Receipts = partial.Receipts[:len(partial.Receipts)-1]
-	partial.CutoffReceiptHash = partial.Receipts[len(partial.Receipts)-1].ReceiptHash
-	partial.BundleHash = ""
-	hash, err := workflow.Digest(partial)
+	partial, err := workflow.ReplayPrefix(result.Replay, len(result.Replay.Receipts)-1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	partial.BundleHash = contractsv1.SHA256(hash)
 	job, campaign := demoDefinitions(definition, cutoff)
 	snapshot, err := canvas.Project(job, campaign, []contractsv1.WorkflowDefinition{definition}, canvas.ExecutionInput{Replay: partial, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation}})
 	if err != nil {

@@ -66,6 +66,7 @@
       ],
       "budget": { "max_attempts": 1, "max_actions": 1, "max_candidates": 1 },
       "deadline_seconds": 86400,
+      "approval_policy": "human-confirm",
       "blocker_codes": ["approval-required", "approval-stale"]
     }
   ],

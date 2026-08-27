@@ -60,6 +60,15 @@ type AgentWorkflowContractCatalog struct {
 	// ActionArtifact corresponds to the JSON schema field "action_artifact".
 	ActionArtifact *ActionArtifact `json:"action_artifact,omitempty,omitzero"`
 
+	// ApprovalBrief corresponds to the JSON schema field "approval_brief".
+	ApprovalBrief *ApprovalBrief `json:"approval_brief,omitempty,omitzero"`
+
+	// ApprovalPreview corresponds to the JSON schema field "approval_preview".
+	ApprovalPreview *ApprovalPreview `json:"approval_preview,omitempty,omitzero"`
+
+	// AuthoringCatalog corresponds to the JSON schema field "authoring_catalog".
+	AuthoringCatalog *AuthoringCatalog `json:"authoring_catalog,omitempty,omitzero"`
+
 	// CampaignDefinition corresponds to the JSON schema field "campaign_definition".
 	CampaignDefinition *CampaignDefinition `json:"campaign_definition,omitempty,omitzero"`
 
@@ -84,9 +93,109 @@ type AgentWorkflowContractCatalog struct {
 	// ReplayBundle corresponds to the JSON schema field "replay_bundle".
 	ReplayBundle *ReplayBundle `json:"replay_bundle,omitempty,omitzero"`
 
+	// WorkflowAdmission corresponds to the JSON schema field "workflow_admission".
+	WorkflowAdmission *WorkflowAdmission `json:"workflow_admission,omitempty,omitzero"`
+
+	// WorkflowAdmissionPreview corresponds to the JSON schema field
+	// "workflow_admission_preview".
+	WorkflowAdmissionPreview *WorkflowAdmissionPreview `json:"workflow_admission_preview,omitempty,omitzero"`
+
 	// WorkflowDefinition corresponds to the JSON schema field "workflow_definition".
 	WorkflowDefinition *WorkflowDefinition `json:"workflow_definition,omitempty,omitzero"`
+
+	// WorkflowLintReport corresponds to the JSON schema field "workflow_lint_report".
+	WorkflowLintReport *WorkflowLintReport `json:"workflow_lint_report,omitempty,omitzero"`
 }
+
+type ApprovalBrief struct {
+	// Action corresponds to the JSON schema field "action".
+	Action ActionArtifact `json:"action"`
+
+	// Evidence corresponds to the JSON schema field "evidence".
+	Evidence []ArtifactRef `json:"evidence"`
+
+	// Id corresponds to the JSON schema field "id".
+	Id Identifier `json:"id"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ApprovalBriefKind `json:"kind"`
+
+	// Options corresponds to the JSON schema field "options".
+	Options []ApprovalOption `json:"options"`
+
+	// Recommendation corresponds to the JSON schema field "recommendation".
+	Recommendation string `json:"recommendation"`
+
+	// RecommendedOptionId corresponds to the JSON schema field
+	// "recommended_option_id".
+	RecommendedOptionId Identifier `json:"recommended_option_id"`
+
+	// Risks corresponds to the JSON schema field "risks".
+	Risks NonEmptyStrings `json:"risks"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ApprovalBriefSchemaVersion `json:"schema_version"`
+
+	// Title corresponds to the JSON schema field "title".
+	Title string `json:"title"`
+}
+
+type ApprovalBriefKind string
+
+const ApprovalBriefKindApprovalBrief ApprovalBriefKind = "approval_brief"
+
+type ApprovalBriefSchemaVersion int
+
+type ApprovalOption struct {
+	// Decision corresponds to the JSON schema field "decision".
+	Decision ApprovalOptionDecision `json:"decision"`
+
+	// Id corresponds to the JSON schema field "id".
+	Id Identifier `json:"id"`
+
+	// Label corresponds to the JSON schema field "label".
+	Label string `json:"label"`
+
+	// Tradeoffs corresponds to the JSON schema field "tradeoffs".
+	Tradeoffs NonEmptyStrings `json:"tradeoffs"`
+}
+
+type ApprovalOptionDecision string
+
+const ApprovalOptionDecisionApprove ApprovalOptionDecision = "approve"
+const ApprovalOptionDecisionReject ApprovalOptionDecision = "reject"
+
+type ApprovalPreview struct {
+	// Actor corresponds to the JSON schema field "actor".
+	Actor string `json:"actor"`
+
+	// BaseRevision corresponds to the JSON schema field "base_revision".
+	BaseRevision int `json:"base_revision"`
+
+	// Brief corresponds to the JSON schema field "brief".
+	Brief ApprovalBrief `json:"brief"`
+
+	// BriefHash corresponds to the JSON schema field "brief_hash".
+	BriefHash SHA256 `json:"brief_hash"`
+
+	// CommitToken corresponds to the JSON schema field "commit_token".
+	CommitToken SHA256 `json:"commit_token"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ApprovalPreviewKind `json:"kind"`
+
+	// PreviewHash corresponds to the JSON schema field "preview_hash".
+	PreviewHash SHA256 `json:"preview_hash"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ApprovalPreviewSchemaVersion `json:"schema_version"`
+}
+
+type ApprovalPreviewKind string
+
+const ApprovalPreviewKindApprovalPreview ApprovalPreviewKind = "approval_preview"
+
+type ApprovalPreviewSchemaVersion int
 
 type ArtifactRef struct {
 	// ArtifactType corresponds to the JSON schema field "artifact_type".
@@ -113,6 +222,41 @@ type ArtifactRefKind string
 const ArtifactRefKindActionArtifact ArtifactRefKind = "action_artifact"
 const ArtifactRefKindContextPack ArtifactRefKind = "context_pack"
 const ArtifactRefKindReceipt ArtifactRefKind = "receipt"
+
+type AuthoringCatalog struct {
+	// ApprovalPolicies corresponds to the JSON schema field "approval_policies".
+	ApprovalPolicies Strings `json:"approval_policies"`
+
+	// Blockers corresponds to the JSON schema field "blockers".
+	Blockers Strings `json:"blockers"`
+
+	// Capabilities corresponds to the JSON schema field "capabilities".
+	Capabilities []CatalogCapability `json:"capabilities"`
+
+	// CatalogHash corresponds to the JSON schema field "catalog_hash".
+	CatalogHash SHA256 `json:"catalog_hash"`
+
+	// Executors corresponds to the JSON schema field "executors".
+	Executors []CatalogExecutor `json:"executors"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind AuthoringCatalogKind `json:"kind"`
+
+	// OutputSchemas corresponds to the JSON schema field "output_schemas".
+	OutputSchemas []WorkflowRef `json:"output_schemas"`
+
+	// Producers corresponds to the JSON schema field "producers".
+	Producers []CatalogProducer `json:"producers"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion AuthoringCatalogSchemaVersion `json:"schema_version"`
+}
+
+type AuthoringCatalogKind string
+
+const AuthoringCatalogKindAuthoringCatalog AuthoringCatalogKind = "authoring_catalog"
+
+type AuthoringCatalogSchemaVersion int
 
 type Budget struct {
 	// MaxActions corresponds to the JSON schema field "max_actions".
@@ -227,9 +371,14 @@ type CanvasDefinitionGraph struct {
 	// Job corresponds to the JSON schema field "job".
 	Job JobDefinition `json:"job"`
 
+	// WorkflowStates corresponds to the JSON schema field "workflow_states".
+	WorkflowStates CanvasDefinitionGraphWorkflowStates `json:"workflow_states,omitempty,omitzero"`
+
 	// Workflows corresponds to the JSON schema field "workflows".
 	Workflows []WorkflowDefinition `json:"workflows"`
 }
+
+type CanvasDefinitionGraphWorkflowStates map[string]CanvasEntityStatus
 
 type CanvasEntityStatus string
 
@@ -334,6 +483,12 @@ const CanvasReceiptLinkReceiptTypeResult CanvasReceiptLinkReceiptType = "result"
 const CanvasReceiptLinkReceiptTypeTerminal CanvasReceiptLinkReceiptType = "terminal"
 
 type CanvasSnapshot struct {
+	// AdmissionReplays corresponds to the JSON schema field "admission_replays".
+	AdmissionReplays []ReplayBundle `json:"admission_replays,omitempty,omitzero"`
+
+	// ApprovalReplays corresponds to the JSON schema field "approval_replays".
+	ApprovalReplays []ReplayBundle `json:"approval_replays,omitempty,omitzero"`
+
 	// Definition corresponds to the JSON schema field "definition".
 	Definition CanvasDefinitionGraph `json:"definition"`
 
@@ -400,6 +555,49 @@ type CapabilityManifestKind string
 const CapabilityManifestKindCapabilityManifest CapabilityManifestKind = "capability_manifest"
 
 type CapabilityManifestSchemaVersion int
+
+type CatalogCapability struct {
+	// Authority corresponds to the JSON schema field "authority".
+	Authority CatalogCapabilityAuthority `json:"authority"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name Identifier `json:"name"`
+}
+
+type CatalogCapabilityAuthority string
+
+const CatalogCapabilityAuthorityCanonicalMutation CatalogCapabilityAuthority = "canonical_mutation"
+const CatalogCapabilityAuthorityExternalMutation CatalogCapabilityAuthority = "external_mutation"
+const CatalogCapabilityAuthorityLocalMutation CatalogCapabilityAuthority = "local_mutation"
+const CatalogCapabilityAuthorityRead CatalogCapabilityAuthority = "read"
+const CatalogCapabilityAuthoritySystemRecovery CatalogCapabilityAuthority = "system_recovery"
+
+type CatalogExecutor struct {
+	// NodeKind corresponds to the JSON schema field "node_kind".
+	NodeKind CatalogExecutorNodeKind `json:"node_kind"`
+
+	// Ref corresponds to the JSON schema field "ref".
+	Ref WorkflowRef `json:"ref"`
+}
+
+type CatalogExecutorNodeKind string
+
+const CatalogExecutorNodeKindAgent CatalogExecutorNodeKind = "agent"
+const CatalogExecutorNodeKindApproval CatalogExecutorNodeKind = "approval"
+const CatalogExecutorNodeKindDeterministic CatalogExecutorNodeKind = "deterministic"
+const CatalogExecutorNodeKindTerminal CatalogExecutorNodeKind = "terminal"
+const CatalogExecutorNodeKindWait CatalogExecutorNodeKind = "wait"
+
+type CatalogProducer struct {
+	// PackType corresponds to the JSON schema field "pack_type".
+	PackType Identifier `json:"pack_type"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion int `json:"schema_version"`
+
+	// Selector corresponds to the JSON schema field "selector".
+	Selector Identifier `json:"selector"`
+}
 
 type ContextBundle struct {
 	// BundleHash corresponds to the JSON schema field "bundle_hash".
@@ -571,6 +769,20 @@ type EvidenceFrontier struct {
 	SourceHashes []SHA256 `json:"source_hashes"`
 }
 
+type ExpandedNodeContract struct {
+	// ContextAuthorities corresponds to the JSON schema field "context_authorities".
+	ContextAuthorities []ExpandedNodeContractContextAuthoritiesElem `json:"context_authorities"`
+
+	// Definition corresponds to the JSON schema field "definition".
+	Definition NodeDefinition `json:"definition"`
+}
+
+type ExpandedNodeContractContextAuthoritiesElem string
+
+const ExpandedNodeContractContextAuthoritiesElemCanonical ExpandedNodeContractContextAuthoritiesElem = "canonical"
+const ExpandedNodeContractContextAuthoritiesElemDerived ExpandedNodeContractContextAuthoritiesElem = "derived"
+const ExpandedNodeContractContextAuthoritiesElemExternalObservation ExpandedNodeContractContextAuthoritiesElem = "external_observation"
+
 type Identifier string
 
 type IntentCard struct {
@@ -652,6 +864,9 @@ const JobDefinitionKindJobDefinition JobDefinitionKind = "job_definition"
 type JobDefinitionSchemaVersion int
 
 type NodeDefinition struct {
+	// ApprovalPolicy corresponds to the JSON schema field "approval_policy".
+	ApprovalPolicy *Identifier `json:"approval_policy,omitempty,omitzero"`
+
 	// BlockerCodes corresponds to the JSON schema field "blocker_codes".
 	BlockerCodes Strings `json:"blocker_codes,omitempty,omitzero"`
 
@@ -828,6 +1043,79 @@ const SlotArtifactKindContextPack SlotArtifactKind = "context_pack"
 
 type Strings []string
 
+type WorkflowAdmission struct {
+	// CompileHash corresponds to the JSON schema field "compile_hash".
+	CompileHash SHA256 `json:"compile_hash"`
+
+	// DefinitionHash corresponds to the JSON schema field "definition_hash".
+	DefinitionHash SHA256 `json:"definition_hash"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind WorkflowAdmissionKind `json:"kind"`
+
+	// PreviewHash corresponds to the JSON schema field "preview_hash".
+	PreviewHash SHA256 `json:"preview_hash"`
+
+	// Receipt corresponds to the JSON schema field "receipt".
+	Receipt Receipt `json:"receipt"`
+
+	// Revision corresponds to the JSON schema field "revision".
+	Revision int `json:"revision"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion WorkflowAdmissionSchemaVersion `json:"schema_version"`
+
+	// Workflow corresponds to the JSON schema field "workflow".
+	Workflow WorkflowDefinition `json:"workflow"`
+}
+
+type WorkflowAdmissionKind string
+
+const WorkflowAdmissionKindWorkflowAdmission WorkflowAdmissionKind = "workflow_admission"
+
+type WorkflowAdmissionPreview struct {
+	// Actor corresponds to the JSON schema field "actor".
+	Actor string `json:"actor"`
+
+	// BaseRevision corresponds to the JSON schema field "base_revision".
+	BaseRevision int `json:"base_revision"`
+
+	// CatalogHash corresponds to the JSON schema field "catalog_hash".
+	CatalogHash SHA256 `json:"catalog_hash"`
+
+	// CommitToken corresponds to the JSON schema field "commit_token".
+	CommitToken SHA256 `json:"commit_token"`
+
+	// CompileHash corresponds to the JSON schema field "compile_hash".
+	CompileHash SHA256 `json:"compile_hash"`
+
+	// DefinitionHash corresponds to the JSON schema field "definition_hash".
+	DefinitionHash SHA256 `json:"definition_hash"`
+
+	// ExpandedNodes corresponds to the JSON schema field "expanded_nodes".
+	ExpandedNodes []ExpandedNodeContract `json:"expanded_nodes"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind WorkflowAdmissionPreviewKind `json:"kind"`
+
+	// PreviewHash corresponds to the JSON schema field "preview_hash".
+	PreviewHash SHA256 `json:"preview_hash"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion WorkflowAdmissionPreviewSchemaVersion `json:"schema_version"`
+
+	// Workflow corresponds to the JSON schema field "workflow".
+	Workflow WorkflowDefinition `json:"workflow"`
+}
+
+type WorkflowAdmissionPreviewKind string
+
+const WorkflowAdmissionPreviewKindWorkflowAdmissionPreview WorkflowAdmissionPreviewKind = "workflow_admission_preview"
+
+type WorkflowAdmissionPreviewSchemaVersion int
+
+type WorkflowAdmissionSchemaVersion int
+
 type WorkflowDefinition struct {
 	// Blockers corresponds to the JSON schema field "blockers".
 	Blockers Strings `json:"blockers"`
@@ -867,8 +1155,47 @@ type WorkflowDefinitionKind string
 
 const WorkflowDefinitionKindWorkflowDefinition WorkflowDefinitionKind = "workflow_definition"
 
-type WorkflowRef string
+type WorkflowDefinitionSchemaVersion int
+
+type WorkflowLintIssue struct {
+	// Code corresponds to the JSON schema field "code".
+	Code Identifier `json:"code"`
+
+	// Message corresponds to the JSON schema field "message".
+	Message string `json:"message"`
+
+	// Path corresponds to the JSON schema field "path".
+	Path string `json:"path"`
+
+	// Severity corresponds to the JSON schema field "severity".
+	Severity WorkflowLintIssueSeverity `json:"severity"`
+}
+
+type WorkflowLintIssueSeverity string
+
+const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
+const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
 
 type ReceiptPreviousReceiptHash_0 = SHA256
 
-type WorkflowDefinitionSchemaVersion int
+type WorkflowLintReport struct {
+	// Issues corresponds to the JSON schema field "issues".
+	Issues []WorkflowLintIssue `json:"issues"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind WorkflowLintReportKind `json:"kind"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion WorkflowLintReportSchemaVersion `json:"schema_version"`
+
+	// Valid corresponds to the JSON schema field "valid".
+	Valid bool `json:"valid"`
+}
+
+type WorkflowLintReportKind string
+
+const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflow_lint_report"
+
+type WorkflowLintReportSchemaVersion int
+
+type WorkflowRef string

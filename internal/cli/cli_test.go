@@ -33,7 +33,7 @@ func TestValidateReportsStableWorkflowIdentity(t *testing.T) {
 	if !response.OK || response.WorkflowRef != "research-review@1" {
 		t.Fatalf("unexpected response: %+v", response)
 	}
-	if response.Hash != "sha256:189b251e4c27ec45e4022ed652e3c8e94ddfdce7acacabcbaee42f0b29c3738c" {
+	if response.Hash != "sha256:e42a58fdf8f0d46dcfc303db89f6f70ae8a8d93b5c938bac2f2b0ddb4af79123" {
 		t.Fatalf("unexpected workflow hash: %s", response.Hash)
 	}
 }
@@ -138,5 +138,15 @@ func TestDemoRunsOneContextBoundNodeAndReturnsReplay(t *testing.T) {
 	}
 	if !response.OK || len(response.Data.Artifacts) != 1 || len(response.Data.Replay.Receipts) != 7 {
 		t.Fatalf("unexpected demo response: %s", stdout.String())
+	}
+}
+
+func TestBuilderRejectsRemoteListenAddress(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"builder", "--listen", "0.0.0.0:4321"}, &stdout, &stderr); code == 0 {
+		t.Fatalf("remote Builder listener was accepted: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "invalid_listen_address") {
+		t.Fatalf("unexpected error: %s %s", stdout.String(), stderr.String())
 	}
 }

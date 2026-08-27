@@ -1,0 +1,181 @@
+package workflow_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"testing"
+	"time"
+
+	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
+	"github.com/JamesbbBriz/agent-workflow/workflow"
+)
+
+func TestAuthoringPreviewConfirmKeepsImmutableVersions(t *testing.T) {
+	core := authoringCore(t)
+	definition := authoringDefinition(t)
+	preview, lint, err := core.Preview(definition, "operator@example.com")
+	if err != nil || !lint.Valid || preview.BaseRevision != 0 || len(preview.ExpandedNodes[0].Definition.Context) != 2 {
+		t.Fatalf("preview did not expand a valid draft: preview=%+v lint=%+v err=%v", preview, lint, err)
+	}
+	if _, err := core.ReadWorkflow("research-review", 1); !errors.Is(err, workflow.ErrReplayEmpty) {
+		t.Fatalf("preview mutated canonical history: %v", err)
+	}
+	at := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+	first, err := core.Confirm(preview, "operator@example.com", at)
+	if err != nil || first.Revision != 1 || first.Receipt.Actor == nil || *first.Receipt.Actor != "operator@example.com" {
+		t.Fatalf("confirm failed: admission=%+v err=%v", first, err)
+	}
+	redelivery, err := core.Confirm(preview, "operator@example.com", at.Add(time.Hour))
+	if err != nil || redelivery.Receipt.ReceiptHash != first.Receipt.ReceiptHash {
+		t.Fatalf("exact confirmation did not converge: admission=%+v err=%v", redelivery, err)
+	}
+
+	definition.Version = 2
+	definition.Intent.Summary = "A revised immutable version."
+	secondPreview, _, err := core.Preview(definition, "operator@example.com")
+	if err != nil || secondPreview.BaseRevision != 1 {
+		t.Fatalf("version 2 preview failed: %v", err)
+	}
+	if _, err := core.Confirm(secondPreview, "operator@example.com", at.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	old, err := core.ReadWorkflow("research-review", 1)
+	if err != nil || old.Workflow.Version != 1 || old.Workflow.Intent.Summary == definition.Intent.Summary {
+		t.Fatalf("old Workflow version changed: %+v err=%v", old, err)
+	}
+}
+
+func TestAuthoringFailsClosedOnCatalogAndPreviewDrift(t *testing.T) {
+	core := authoringCore(t)
+	definition := authoringDefinition(t)
+	definition.Nodes[0].Executor = "shell@1"
+	report := core.Lint(definition)
+	if report.Valid || report.Issues[0].Code != "executor-unregistered" {
+		t.Fatalf("unregistered executor passed lint: %+v", report)
+	}
+
+	definition = authoringDefinition(t)
+	preview, _, err := core.Preview(definition, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview.Workflow.Intent.Objective = "altered after preview"
+	if _, err := core.Confirm(preview, "operator@example.com", time.Now()); err == nil {
+		t.Fatal("altered preview was accepted")
+	}
+}
+
+func TestApprovalBindsBriefActorOptionAndStaleToken(t *testing.T) {
+	core := authoringCore(t)
+	source := approvalSource(t)
+	action := source.Artifacts[0]
+	var resultReceipt contractsv1.Receipt
+	for _, receipt := range source.Replay.Receipts {
+		if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeResult {
+			resultReceipt = receipt
+		}
+	}
+	brief := contractsv1.ApprovalBrief{
+		Kind: contractsv1.ApprovalBriefKindApprovalBrief, SchemaVersion: 1, Title: "Publish the reviewed change?",
+		Evidence:            []contractsv1.ArtifactRef{{Id: resultReceipt.Id, Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "result", SchemaVersion: 1, Sha256: resultReceipt.ReceiptHash, MediaType: "application/json"}},
+		Options:             []contractsv1.ApprovalOption{{Id: "approve", Label: "Approve", Decision: contractsv1.ApprovalOptionDecisionApprove, Tradeoffs: []string{"Publishes the exact reviewed artifact"}}, {Id: "reject", Label: "Reject", Decision: contractsv1.ApprovalOptionDecisionReject, Tradeoffs: []string{"Leaves production unchanged"}}},
+		RecommendedOptionId: "approve", Recommendation: "Approve because the independent review passed.", Risks: []string{"The public page changes immediately"},
+		Action: action,
+	}
+	preview, err := core.PreviewApproval(brief, "human@example.com", source.Replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := core.ConfirmApproval(preview, "human@example.com", "approve", time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC))
+	if err != nil || receipt.ReceiptType != contractsv1.ReceiptReceiptTypeApproval {
+		t.Fatalf("approval failed: %+v %v", receipt, err)
+	}
+	if _, err := core.ConfirmApproval(preview, "other@example.com", "approve", time.Now()); err == nil {
+		t.Fatal("different actor reused approval token")
+	}
+}
+
+type approvalProvider struct {
+	invocation workflow.Invocation
+	at         time.Time
+}
+
+func (p *approvalProvider) Start(_ context.Context, invocation workflow.Invocation) error {
+	p.invocation = invocation
+	return nil
+}
+func (p *approvalProvider) Poll(_ context.Context, key string) (workflow.ProviderResult, bool, error) {
+	content := map[string]any{"recommendation": "Publish the reviewed change."}
+	hash, err := workflow.Digest(content)
+	if err != nil {
+		return workflow.ProviderResult{}, false, err
+	}
+	artifact := contractsv1.ActionArtifact{Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: "publish-action", ArtifactType: "recommendation", JobId: p.invocation.JobID, CampaignId: p.invocation.CampaignID, WorkflowRef: p.invocation.WorkflowRef, NodeId: p.invocation.Node.Id, InputHashes: p.invocation.InputHashes, Content: content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: contractsv1.ActionArtifactApprovalStatePending}
+	return workflow.ProviderResult{IdempotencyKey: key, CompletedAt: p.at, Artifacts: []contractsv1.ActionArtifact{artifact}}, true, nil
+}
+func (*approvalProvider) Cancel(context.Context, string) error { return nil }
+
+func approvalSource(t *testing.T) workflow.RunResult {
+	t.Helper()
+	definition := authoringDefinition(t)
+	job, campaign := testDefinitions(definition)
+	cutoff := campaign.EvidenceFrontier.Cutoff
+	content := map[string]any{"brief": "bounded"}
+	hash, err := workflow.Digest(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := contractsv1.SHA256("sha256:0000000000000000000000000000000000000000000000000000000000000000")
+	pack := contractsv1.ContextPackEdition{Kind: contractsv1.ContextPackEditionKindContextPackEdition, SchemaVersion: 1, Id: "project-brief", PackType: "project-brief", PackSchemaVersion: 1, Authority: contractsv1.ContextPackEditionAuthorityCanonical, Scope: campaign.Scope, CapturedAt: cutoff.Add(-time.Hour), ExpiresAt: cutoff.Add(time.Hour), Coverage: contractsv1.ContextPackEditionCoverageComplete, Content: content, ContentSha256: contractsv1.SHA256(hash), Provenance: []contractsv1.ArtifactRef{{Id: "seed", Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "seed", SchemaVersion: 1, Sha256: zero, MediaType: "application/json"}}}
+	registry, err := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1, pack))
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &approvalProvider{at: cutoff.Add(time.Minute)}
+	result, err := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, workflow.OutputCatalog{"recommendation@1": func(any) error { return nil }}, provider, workflow.NewMemoryLedger()).RunNode(context.Background(), workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func testDefinitions(definition contractsv1.WorkflowDefinition) (contractsv1.JobDefinition, contractsv1.CampaignDefinition) {
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"example-project"}}
+	intent := func(kind contractsv1.IntentCardKind, title string) contractsv1.IntentCard {
+		return contractsv1.IntentCard{SchemaVersion: 1, Kind: kind, Title: title, Summary: title, Objective: title, SuccessSignals: []string{"done"}, NonGoals: []string{"none"}, Completion: []string{"done"}, NoActionWhen: []string{"no change"}}
+	}
+	job := contractsv1.JobDefinition{Kind: contractsv1.JobDefinitionKindJobDefinition, SchemaVersion: 1, Id: "example-job", Intent: intent(contractsv1.IntentCardKindJob, "Example Job"), Scope: scope, Budget: contractsv1.Budget{MaxAttempts: 2, MaxActions: 1, MaxCandidates: 3}, CampaignArchetypes: []string{"research"}}
+	campaign := contractsv1.CampaignDefinition{Kind: contractsv1.CampaignDefinitionKindCampaignDefinition, SchemaVersion: 1, Id: "example-campaign", JobId: job.Id, Archetype: "research", Intent: intent(contractsv1.IntentCardKindCampaign, "Example Campaign"), Scope: scope, EvidenceFrontier: contractsv1.EvidenceFrontier{Cutoff: time.Now().UTC().Add(-time.Hour), SourceHashes: []contractsv1.SHA256{}}, WorkflowPlan: []contractsv1.WorkflowRef{"research-review@1"}, Budget: job.Budget}
+	return job, campaign
+}
+
+func authoringCore(t *testing.T) *workflow.AuthoringCore {
+	t.Helper()
+	zero := contractsv1.SHA256("sha256:0000000000000000000000000000000000000000000000000000000000000000")
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"example-project"}}
+	pack := contractsv1.ContextPackEdition{Kind: contractsv1.ContextPackEditionKindContextPackEdition, SchemaVersion: 1, Id: "project-brief-edition", PackType: "project-brief", PackSchemaVersion: 1, Authority: contractsv1.ContextPackEditionAuthorityCanonical, Scope: scope, CapturedAt: time.Now().Add(-time.Hour), ExpiresAt: time.Now().Add(time.Hour), Coverage: contractsv1.ContextPackEditionCoverageComplete, Content: map[string]any{"brief": "bounded"}, ContentSha256: zero, Provenance: []contractsv1.ArtifactRef{{Id: "seed", Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "seed", SchemaVersion: 1, Sha256: zero, MediaType: "application/json"}}}
+	registry, err := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1, pack))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workflow.NewAuthoringCore(registry,
+		workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval},
+		workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead},
+		workflow.OutputCatalog{"recommendation@1": func(any) error { return nil }, "review-decision@1": func(any) error { return nil }},
+		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, workflow.NewMemoryLedger())
+}
+
+func authoringDefinition(t *testing.T) contractsv1.WorkflowDefinition {
+	t.Helper()
+	body, err := os.ReadFile("../examples/research-review.workflow.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var definition contractsv1.WorkflowDefinition
+	if err := json.Unmarshal(body, &definition); err != nil {
+		t.Fatal(err)
+	}
+	return definition
+}

@@ -52,7 +52,18 @@ npm run fixture:canvas
 npm run web:dev
 ```
 
-Definition mode shows the exact configured graph. Runtime mode adds only executions, Context Pack editions, Action Artifacts, blockers, approval gates, and receipts present in the Core projection. The GUI cannot create, approve, or mutate canonical state.
+Definition mode shows the exact configured graph. Runtime mode adds only executions, Context Pack editions, Action Artifacts, blockers, approval gates, and receipts present in the Core projection. The GUI never invents canonical state; builder and approval actions must round-trip through the Go Core.
+
+Run the local Workflow Builder beside the Canvas:
+
+```bash
+go run ./cmd/agent-workflow builder \
+  --listen 127.0.0.1:4321 \
+  --ledger .agent-workflow/builder.jsonl
+npm run web:dev
+```
+
+The browser keeps unfinished drafts in local storage. The Builder reads the Go Core catalog, lints and expands the exact Node contracts, then requires a revision-bound preview token before the Core admits an immutable Workflow version. Pending Action Artifacts can be opened from the Runtime Canvas for a separate preview/confirm human decision. Only the Core writes admission and approval receipts; the GUI projects their Replay.
 
 Generate Go and TypeScript bindings from the canonical schema:
 

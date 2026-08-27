@@ -7,10 +7,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/JamesbbBriz/agent-workflow/canvas"
+	"github.com/JamesbbBriz/agent-workflow/internal/builderapi"
 	"github.com/JamesbbBriz/agent-workflow/internal/contract"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 	"github.com/JamesbbBriz/agent-workflow/workflow"
@@ -26,7 +29,7 @@ type response struct {
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas> [options]")
+		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder> [options]")
 		return 2
 	}
 	switch args[0] {
@@ -36,10 +39,60 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runDemo(args[1:], stdout, stderr)
 	case "canvas":
 		return runCanvas(args[1:], stdout, stderr)
+	case "builder":
+		return runBuilder(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas> [options]")
+		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder> [options]")
 		return 2
 	}
+}
+
+func runBuilder(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("builder", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	listenAddress := flags.String("listen", "127.0.0.1:4321", "loopback listen address")
+	ledgerPath := flags.String("ledger", ".agent-workflow/builder.jsonl", "canonical admission ledger")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "builder accepts only --listen and --ledger")
+		return 2
+	}
+	host, _, err := net.SplitHostPort(*listenAddress)
+	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+		return writeError(stdout, stderr, true, "invalid_listen_address", errors.New("builder must listen on an explicit loopback IP"))
+	}
+	ledger, err := workflow.OpenFileLedger(*ledgerPath)
+	if err != nil {
+		return writeError(stdout, stderr, true, "ledger_unavailable", err)
+	}
+	core, err := demoAuthoringCore(ledger)
+	if err != nil {
+		return writeError(stdout, stderr, true, "builder_unavailable", err)
+	}
+	listener, err := net.Listen("tcp", *listenAddress)
+	if err != nil {
+		return writeError(stdout, stderr, true, "listen_failed", errors.New("builder listener is unavailable"))
+	}
+	fmt.Fprintf(stdout, "builder listening on http://%s\n", listener.Addr())
+	server := &http.Server{Handler: builderapi.New(core, time.Now), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return writeError(stdout, stderr, true, "serve_failed", errors.New("builder server stopped"))
+	}
+	return 0
+}
+
+func demoAuthoringCore(ledger workflow.Ledger) (*workflow.AuthoringCore, error) {
+	registry, err := workflow.NewRegistry(workflow.NewIntentProducer(), workflow.NewCatalogProducer("project-brief", "project-brief", 1, contractsv1.ContextPackEdition{Authority: contractsv1.ContextPackEditionAuthorityCanonical}))
+	if err != nil {
+		return nil, err
+	}
+	return workflow.NewAuthoringCore(registry,
+		workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval},
+		workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead},
+		workflow.OutputCatalog{"recommendation@1": validateRecommendation, "review-decision@1": func(any) error { return nil }},
+		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger), nil
 }
 
 func runCanvas(args []string, stdout, stderr io.Writer) int {

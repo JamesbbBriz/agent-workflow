@@ -47,6 +47,24 @@ func sealReceipt(aggregateID string, version int, receiptType contractsv1.Receip
 	return receipt, nil
 }
 
+func sealActorReceipt(aggregateID string, version int, receiptType contractsv1.ReceiptReceiptType, actor string, occurredAt time.Time, previous *contractsv1.SHA256, inputs, outputs []contractsv1.SHA256, payload map[string]any) (contractsv1.Receipt, error) {
+	receipt, err := sealReceipt(aggregateID, version, receiptType, occurredAt, previous, inputs, outputs, payload)
+	if err != nil {
+		return contractsv1.Receipt{}, err
+	}
+	receipt.Actor = &actor
+	receipt.ReceiptHash = ""
+	hash, err := receiptDigest(receipt)
+	if err != nil {
+		return contractsv1.Receipt{}, err
+	}
+	receipt.ReceiptHash = contractsv1.SHA256(hash)
+	if err := contract.ValidateDefinition("Receipt", receipt); err != nil {
+		return contractsv1.Receipt{}, err
+	}
+	return receipt, nil
+}
+
 func receiptDigest(receipt contractsv1.Receipt) (string, error) {
 	body, err := json.Marshal(receipt)
 	if err != nil {

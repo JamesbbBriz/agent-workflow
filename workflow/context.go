@@ -51,6 +51,10 @@ type Registry struct {
 	producers map[string]Producer
 }
 
+type authoringProducer interface {
+	authoringContract() (contractsv1.CatalogProducer, []contractsv1.ExpandedNodeContractContextAuthoritiesElem)
+}
+
 func NewRegistry(producers ...Producer) (*Registry, error) {
 	registry := &Registry{producers: make(map[string]Producer, len(producers))}
 	for _, producer := range producers {
@@ -90,6 +94,20 @@ func (p *CatalogProducer) Supports(packType string, schemaVersion int) bool {
 	return packType == p.packType && schemaVersion == p.schemaVersion
 }
 
+func (p *CatalogProducer) authoringContract() (contractsv1.CatalogProducer, []contractsv1.ExpandedNodeContractContextAuthoritiesElem) {
+	authorities := make([]contractsv1.ExpandedNodeContractContextAuthoritiesElem, 0, 3)
+	seen := map[contractsv1.ExpandedNodeContractContextAuthoritiesElem]bool{}
+	for _, edition := range p.editions {
+		authority := contractsv1.ExpandedNodeContractContextAuthoritiesElem(edition.Authority)
+		if !seen[authority] {
+			seen[authority] = true
+			authorities = append(authorities, authority)
+		}
+	}
+	sort.Slice(authorities, func(i, j int) bool { return authorities[i] < authorities[j] })
+	return contractsv1.CatalogProducer{Selector: contractsv1.Identifier(p.selector), PackType: contractsv1.Identifier(p.packType), SchemaVersion: p.schemaVersion}, authorities
+}
+
 func (p *CatalogProducer) Resolve(_ context.Context, request ProducerRequest) (contractsv1.ContextPackEdition, error) {
 	candidates := make([]contractsv1.ContextPackEdition, 0)
 	for _, edition := range p.editions {
@@ -127,6 +145,10 @@ func (IntentProducer) Selector() string { return "intent-chain" }
 
 func (IntentProducer) Supports(packType string, schemaVersion int) bool {
 	return packType == "intent-chain" && schemaVersion == 1
+}
+
+func (IntentProducer) authoringContract() (contractsv1.CatalogProducer, []contractsv1.ExpandedNodeContractContextAuthoritiesElem) {
+	return contractsv1.CatalogProducer{Selector: "intent-chain", PackType: "intent-chain", SchemaVersion: 1}, []contractsv1.ExpandedNodeContractContextAuthoritiesElem{contractsv1.ExpandedNodeContractContextAuthoritiesElemDerived}
 }
 
 func (IntentProducer) Resolve(_ context.Context, request ProducerRequest) (contractsv1.ContextPackEdition, error) {

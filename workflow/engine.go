@@ -774,7 +774,7 @@ func replayBundle(aggregateID string, receipts []contractsv1.Receipt) (contracts
 		Kind: contractsv1.ReplayBundleKindReplayBundle, SchemaVersion: 1, AggregateId: aggregateID,
 		CutoffReceiptHash: receipts[len(receipts)-1].ReceiptHash, Receipts: receipts,
 	}
-	hash, err := Digest(bundle)
+	hash, err := replayDigest(bundle)
 	if err != nil {
 		return contractsv1.ReplayBundle{}, err
 	}
@@ -789,6 +789,16 @@ func replayBundle(aggregateID string, receipts []contractsv1.Receipt) (contracts
 }
 
 var ErrReplayEmpty = errors.New("replay aggregate is empty")
+
+func ReplayPrefix(bundle contractsv1.ReplayBundle, receiptCount int) (contractsv1.ReplayBundle, error) {
+	if err := VerifyReplay(bundle); err != nil {
+		return contractsv1.ReplayBundle{}, err
+	}
+	if receiptCount < 1 || receiptCount > len(bundle.Receipts) {
+		return contractsv1.ReplayBundle{}, errors.New("replay prefix length is invalid")
+	}
+	return replayBundle(bundle.AggregateId, append([]contractsv1.Receipt(nil), bundle.Receipts[:receiptCount]...))
+}
 
 func MaterializeReplay(bundle contractsv1.ReplayBundle, outputs OutputCatalog) (ReplayMaterial, error) {
 	invocation, err := MaterializeInvocation(bundle)
@@ -873,9 +883,23 @@ func VerifyReplay(bundle contractsv1.ReplayBundle) error {
 	}
 	expected := bundle.BundleHash
 	bundle.BundleHash = ""
-	hash, err := Digest(bundle)
+	hash, err := replayDigest(bundle)
 	if err != nil || contractsv1.SHA256(hash) != expected {
 		return errors.New("replay bundle hash is invalid")
 	}
 	return nil
+}
+
+func replayDigest(bundle contractsv1.ReplayBundle) (string, error) {
+	body, err := json.Marshal(bundle)
+	if err != nil {
+		return "", err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var wire any
+	if err := decoder.Decode(&wire); err != nil {
+		return "", err
+	}
+	return Digest(wire)
 }
