@@ -18,4 +18,6 @@ Report vulnerabilities privately through GitHub Security Advisories for this rep
 - MCP, WebMCP, GUI, storage, and provider implementations are adapters and cannot bypass Core policy.
 - Replays redact private provider references while preserving receipt identity.
 
+Experimental WebMCP is disabled by default. When enabled for the loopback Builder, it accepts one exact page origin, a random process-lifetime bearer session, actor-bound request hashes, and a bounded per-subject request rate. Its mode-0600 audit log records identities and hashes, never request bodies or credentials. This loopback session is not a substitute for hosted user authentication.
+
 The public schema describes authority classes, but a label is not enforcement. Implementations must classify capabilities from actual side effects and verify that the execution adapter provides no broader authority.

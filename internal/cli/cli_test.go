@@ -150,3 +150,49 @@ func TestBuilderRejectsRemoteListenAddress(t *testing.T) {
 		t.Fatalf("unexpected error: %s %s", stdout.String(), stderr.String())
 	}
 }
+
+func TestBuilderRejectsCanonicalAndAuditPathCollision(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shared.jsonl")
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"builder", "--listen", "127.0.0.1:0", "--ledger", path, "--web-origin", "http://127.0.0.1:5173", "--webmcp-audit", path}, &stdout, &stderr)
+	if code == 0 || !strings.Contains(stdout.String(), `"code":"path_collision"`) {
+		t.Fatalf("collision code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("collision created or modified the canonical path")
+	}
+}
+
+func TestBuilderRejectsHardLinkedAuditPath(t *testing.T) {
+	directory := t.TempDir()
+	ledger := filepath.Join(directory, "ledger.jsonl")
+	audit := filepath.Join(directory, "audit.jsonl")
+	if err := os.WriteFile(ledger, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(ledger, audit); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"builder", "--listen", "127.0.0.1:0", "--ledger", ledger, "--web-origin", "http://127.0.0.1:5173", "--webmcp-audit", audit}, &stdout, &stderr)
+	if code == 0 || !strings.Contains(stdout.String(), `"code":"path_collision"`) {
+		t.Fatalf("hard-link collision code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestBuilderRejectsDanglingAuditSymlinkToLedger(t *testing.T) {
+	directory := t.TempDir()
+	ledger := filepath.Join(directory, "ledger.jsonl")
+	audit := filepath.Join(directory, "audit.jsonl")
+	if err := os.Symlink(filepath.Base(ledger), audit); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"builder", "--listen", "127.0.0.1:0", "--ledger", ledger, "--web-origin", "http://127.0.0.1:5173", "--webmcp-audit", audit}, &stdout, &stderr)
+	if code == 0 || !strings.Contains(stdout.String(), `"code":"path_collision"`) {
+		t.Fatalf("dangling-symlink collision code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(ledger); !os.IsNotExist(err) {
+		t.Fatal("dangling-symlink collision created the ledger")
+	}
+}

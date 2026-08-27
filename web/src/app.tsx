@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   Background,
   Controls,
@@ -23,6 +23,7 @@ import {
 import type { CanvasSnapshot, ContextPortElement } from "./generated/agent-workflow.v1";
 import { buildGraph, compareBundles, humanize, type CanvasGraphNode, type CanvasMode, type CanvasNodeData } from "./canvas-model";
 import { ApprovalPanel, BuilderPanel } from "./builder";
+import { installWebMCP } from "./webmcp";
 import "./styles.css";
 
 type Selection = { kind: "node"; data: CanvasNodeData } | { kind: "port"; port: ContextPortElement };
@@ -40,6 +41,8 @@ export function App() {
   const [comparing, setComparing] = useState(false);
   const [building, setBuilding] = useState(false);
   const [approving, setApproving] = useState<CanvasNodeData>();
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
 
   useEffect(() => {
     fetch("/v1/canvas")
@@ -57,6 +60,23 @@ export function App() {
       })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Canvas data is unavailable."));
   }, []);
+
+  useEffect(() => {
+    if (!snapshot) return;
+    let disposed = false;
+    let uninstall: () => void = () => undefined;
+    const lifecycle = new AbortController();
+    void installWebMCP({
+      signal: lifecycle.signal,
+      onCanvas: setSnapshot,
+      onNavigateApproval: (artifactID) => {
+        const current = snapshotRef.current;
+        const node = current && buildGraph(current, "runtime").nodes.find((item) => item.data.artifact?.id === artifactID);
+        if (node) setApproving(node.data);
+      },
+    }).then((cleanup) => disposed ? cleanup() : (uninstall = cleanup)).catch(() => undefined);
+    return () => { disposed = true; lifecycle.abort(); uninstall(); };
+  }, [snapshot?.definition.job.id]);
 
   const graph = useMemo(() => snapshot ? buildGraph(snapshot, mode) : { nodes: [], edges: [] }, [snapshot, mode]);
   const nodes = useMemo(() => graph.nodes.map((node) => ({

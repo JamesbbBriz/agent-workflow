@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -54,16 +55,41 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 	listenAddress := flags.String("listen", "127.0.0.1:4321", "loopback listen address")
 	ledgerPath := flags.String("ledger", ".agent-workflow/builder.jsonl", "canonical admission ledger")
 	canvasPath := flags.String("canvas", "", "verified Canvas snapshot supplying approval source Replays")
+	webOrigin := flags.String("web-origin", "", "exact page origin allowed to use experimental WebMCP")
+	webMCPAuditPath := flags.String("webmcp-audit", ".agent-workflow/webmcp-audit.jsonl", "append-only WebMCP audit log")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "builder accepts only --listen, --ledger, and --canvas")
+		fmt.Fprintln(stderr, "builder accepts only --listen, --ledger, --canvas, --web-origin, and --webmcp-audit")
 		return 2
 	}
 	host, _, err := net.SplitHostPort(*listenAddress)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
 		return writeError(stdout, stderr, true, "invalid_listen_address", errors.New("builder must listen on an explicit loopback IP"))
+	}
+	if err := os.MkdirAll(filepath.Dir(*ledgerPath), 0o700); err != nil {
+		return writeError(stdout, stderr, true, "ledger_unavailable", errors.New("builder ledger directory is unavailable"))
+	}
+	if *webOrigin != "" {
+		if err := os.MkdirAll(filepath.Dir(*webMCPAuditPath), 0o700); err != nil {
+			return writeError(stdout, stderr, true, "audit_unavailable", errors.New("WebMCP audit directory is unavailable"))
+		}
+	}
+	paths := []string{*ledgerPath}
+	if *canvasPath != "" {
+		paths = append(paths, *canvasPath)
+	}
+	if *webOrigin != "" {
+		paths = append(paths, *webMCPAuditPath)
+	}
+	for left := 0; left < len(paths); left++ {
+		for right := left + 1; right < len(paths); right++ {
+			alias, err := pathsAlias(paths[left], paths[right])
+			if err != nil || alias {
+				return writeError(stdout, stderr, true, "path_collision", errors.New("builder ledger, Canvas, and WebMCP audit paths must be distinct"))
+			}
+		}
 	}
 	ledger, err := workflow.OpenFileLedger(*ledgerPath)
 	if err != nil {
@@ -91,16 +117,93 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 			return writeError(stdout, stderr, true, "canvas_unavailable", err)
 		}
 	}
+	var handler http.Handler = builderapi.NewWithCanvas(core, time.Now, sourceCanvas)
+	var auditFile *os.File
+	if *webOrigin != "" {
+		auditFile, err = os.OpenFile(*webMCPAuditPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return writeError(stdout, stderr, true, "audit_unavailable", errors.New("WebMCP audit log is unavailable"))
+		}
+		auditInfo, statErr := auditFile.Stat()
+		for _, protected := range []string{*ledgerPath, *canvasPath} {
+			if protected == "" {
+				continue
+			}
+			protectedInfo, protectedErr := os.Stat(protected)
+			if statErr != nil || protectedErr != nil || os.SameFile(auditInfo, protectedInfo) {
+				_ = auditFile.Close()
+				return writeError(stdout, stderr, true, "path_collision", errors.New("builder ledger, Canvas, and WebMCP audit paths must be distinct"))
+			}
+		}
+		if auditFile.Chmod(0o600) != nil {
+			_ = auditFile.Close()
+			return writeError(stdout, stderr, true, "audit_unavailable", errors.New("WebMCP audit log is unavailable"))
+		}
+		defer auditFile.Close()
+		handler, err = builderapi.NewWithWebMCP(core, time.Now, sourceCanvas, builderapi.WebMCPConfig{PageOrigin: *webOrigin, Audit: auditFile})
+		if err != nil {
+			return writeError(stdout, stderr, true, "webmcp_unavailable", err)
+		}
+	}
 	listener, err := net.Listen("tcp", *listenAddress)
 	if err != nil {
 		return writeError(stdout, stderr, true, "listen_failed", errors.New("builder listener is unavailable"))
 	}
 	fmt.Fprintf(stdout, "builder listening on http://%s\n", listener.Addr())
-	server := &http.Server{Handler: builderapi.NewWithCanvas(core, time.Now, sourceCanvas), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return writeError(stdout, stderr, true, "serve_failed", errors.New("builder server stopped"))
 	}
 	return 0
+}
+
+func pathsAlias(left, right string) (bool, error) {
+	leftPath, err := canonicalPathCandidate(left)
+	if err != nil {
+		return false, err
+	}
+	rightPath, err := canonicalPathCandidate(right)
+	if err != nil {
+		return false, err
+	}
+	if leftPath == rightPath {
+		return true, nil
+	}
+	leftInfo, leftErr := os.Stat(leftPath)
+	rightInfo, rightErr := os.Stat(rightPath)
+	if leftErr == nil && rightErr == nil {
+		return os.SameFile(leftInfo, rightInfo), nil
+	}
+	if leftErr != nil && !errors.Is(leftErr, os.ErrNotExist) {
+		return false, leftErr
+	}
+	if rightErr != nil && !errors.Is(rightErr, os.ErrNotExist) {
+		return false, rightErr
+	}
+	return false, nil
+}
+
+func canonicalPathCandidate(path string) (string, error) {
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		return "", err
+	}
+	candidate := filepath.Join(parent, filepath.Base(abs))
+	info, err := os.Lstat(candidate)
+	if errors.Is(err, os.ErrNotExist) {
+		return candidate, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return candidate, nil
+	}
+	return filepath.EvalSymlinks(candidate)
 }
 
 func restoreCanvasAdmissions(snapshot *contractsv1.CanvasSnapshot, ledger *workflow.FileLedger) (*contractsv1.CanvasSnapshot, error) {
