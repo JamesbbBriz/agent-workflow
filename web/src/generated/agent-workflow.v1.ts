@@ -23,7 +23,10 @@ export interface AgentWorkflowV1 {
     job_definition?:                   Job;
     needs_context_event_payload?:      NeedsContextEventPayload;
     node_completed_event_payload?:     NodeCompletedEventPayload;
+    provider_execution_event_payload?: ProviderExecutionEventPayload;
+    provider_isolation_evidence?:      ProviderIsolation;
     receipt?:                          ReplayBundleReceipt;
+    redacted_replay?:                  RedactedReplay;
     replay_bundle?:                    CampaignReplay;
     wait_resumed_event_payload?:       WaitResumedEventPayload;
     wait_started_event_payload?:       WaitStartedEventPayload;
@@ -173,22 +176,23 @@ export interface CampaignAdmissionEventPayload {
 }
 
 export interface CampaignExecutionStateClass {
-    aggregate_id:       string;
-    blocker_code?:      string;
-    campaign_hash:      string;
-    campaign_id:        string;
-    job_hash:           string;
-    job_id:             string;
-    kind:               CampaignExecutionStateKind;
-    next_node_id?:      string;
-    next_workflow_ref?: string;
-    nodes:              [CampaignExecutionStateNode, ...CampaignExecutionStateNode[]];
-    schema_version:     number;
-    started_at:         string;
-    status:             CampaignExecutionStateStatus;
-    updated_at:         string;
-    usage:              Usage;
-    workflow_hashes:    { [key: string]: string };
+    aggregate_id:        string;
+    blocker_code?:       string;
+    campaign_hash:       string;
+    campaign_id:         string;
+    job_hash:            string;
+    job_id:              string;
+    kind:                CampaignExecutionStateKind;
+    next_node_id?:       string;
+    next_workflow_ref?:  string;
+    nodes:               [CampaignExecutionStateNode, ...CampaignExecutionStateNode[]];
+    provider_isolation?: ProviderIsolation;
+    schema_version:      number;
+    started_at:          string;
+    status:              CampaignExecutionStateStatus;
+    updated_at:          string;
+    usage:               Usage;
+    workflow_hashes:     { [key: string]: string };
 }
 
 export type CampaignExecutionStateKind = "campaign_execution_state";
@@ -217,6 +221,23 @@ export interface Usage {
     candidates:       number;
     duration_seconds: number;
 }
+
+export interface ProviderIsolation {
+    declared_environment: string[];
+    driver:               Driver;
+    evidence_hash:        string;
+    executable_sha256?:   string;
+    kind:                 ProviderIsolationEvidenceKind;
+    profile:              Profile;
+    schema_version:       number;
+    staged_root_sha256?:  string;
+}
+
+export type Driver = "in_process" | "sandbox_exec" | "bubblewrap";
+
+export type ProviderIsolationEvidenceKind = "provider_isolation_evidence";
+
+export type Profile = "trusted_in_process" | "staged_subprocess";
 
 export type CampaignExecutionStateStatus = "admitted" | "running" | "blocked" | "completed" | "terminal";
 
@@ -593,6 +614,52 @@ export interface NodeCompletedEventPayload {
     status:             CoreCompletedEventPayloadStatus;
     usage:              Usage;
     workflow_ref:       string;
+}
+
+export interface ProviderExecutionEventPayload {
+    completed_at:    string;
+    idempotency_key: string;
+    isolation:       ProviderIsolation;
+    node_id:         string;
+}
+
+export interface RedactedReplay {
+    aggregate_id:        string;
+    cutoff_receipt_hash: string;
+    cutoff_receipt_id:   string;
+    kind:                RedactedReplayKind;
+    proof:               Proof;
+    receipts:            [RedactedReplayReceipt, ...RedactedReplayReceipt[]];
+    schema_version:      number;
+}
+
+export type RedactedReplayKind = "redacted_replay";
+
+export interface Proof {
+    cutoff_receipt_hash: string;
+    excluded_classes:    [ExcludedClass, ExcludedClass, ...ExcludedClass[]];
+    kind:                ProofKind;
+    policy:              Policy;
+    proof_hash:          string;
+    schema_version:      number;
+    source_bundle_hash:  string;
+}
+
+export type ExcludedClass = "actor" | "payload";
+
+export type ProofKind = "replay_redaction_proof";
+
+export type Policy = "public_metadata@1";
+
+export interface RedactedReplayReceipt {
+    aggregate_version:     number;
+    id:                    string;
+    input_hashes:          string[];
+    occurred_at:           string;
+    output_hashes:         string[];
+    previous_receipt_hash: null | string;
+    receipt_hash:          string;
+    receipt_type:          ReceiptType;
 }
 
 export interface WaitResumedEventPayload {

@@ -143,8 +143,19 @@ type AgentWorkflowContractCatalog struct {
 	// "node_completed_event_payload".
 	NodeCompletedEventPayload *NodeCompletedEventPayload `json:"node_completed_event_payload,omitempty,omitzero"`
 
+	// ProviderExecutionEventPayload corresponds to the JSON schema field
+	// "provider_execution_event_payload".
+	ProviderExecutionEventPayload *ProviderExecutionEventPayload `json:"provider_execution_event_payload,omitempty,omitzero"`
+
+	// ProviderIsolationEvidence corresponds to the JSON schema field
+	// "provider_isolation_evidence".
+	ProviderIsolationEvidence *ProviderIsolationEvidence `json:"provider_isolation_evidence,omitempty,omitzero"`
+
 	// Receipt corresponds to the JSON schema field "receipt".
 	Receipt *Receipt `json:"receipt,omitempty,omitzero"`
+
+	// RedactedReplay corresponds to the JSON schema field "redacted_replay".
+	RedactedReplay *RedactedReplay `json:"redacted_replay,omitempty,omitzero"`
 
 	// ReplayBundle corresponds to the JSON schema field "replay_bundle".
 	ReplayBundle *ReplayBundle `json:"replay_bundle,omitempty,omitzero"`
@@ -547,6 +558,9 @@ type CampaignExecutionState struct {
 
 	// Nodes corresponds to the JSON schema field "nodes".
 	Nodes []CampaignNodeExecution `json:"nodes"`
+
+	// ProviderIsolation corresponds to the JSON schema field "provider_isolation".
+	ProviderIsolation *ProviderIsolationEvidence `json:"provider_isolation,omitempty,omitzero"`
 
 	// SchemaVersion corresponds to the JSON schema field "schema_version".
 	SchemaVersion CampaignExecutionStateSchemaVersion `json:"schema_version"`
@@ -1402,6 +1416,64 @@ const NodeDefinitionWaitModeTime NodeDefinitionWaitMode = "time"
 
 type NonEmptyStrings []string
 
+type ProviderExecutionEventPayload struct {
+	// CompletedAt corresponds to the JSON schema field "completed_at".
+	CompletedAt time.Time `json:"completed_at"`
+
+	// IdempotencyKey corresponds to the JSON schema field "idempotency_key".
+	IdempotencyKey string `json:"idempotency_key"`
+
+	// Isolation corresponds to the JSON schema field "isolation".
+	Isolation ProviderIsolationEvidence `json:"isolation"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+}
+
+type ProviderIsolationEvidence struct {
+	// DeclaredEnvironment corresponds to the JSON schema field
+	// "declared_environment".
+	DeclaredEnvironment []string `json:"declared_environment"`
+
+	// Driver corresponds to the JSON schema field "driver".
+	Driver ProviderIsolationEvidenceDriver `json:"driver"`
+
+	// EvidenceHash corresponds to the JSON schema field "evidence_hash".
+	EvidenceHash SHA256 `json:"evidence_hash"`
+
+	// ExecutableSha256 corresponds to the JSON schema field "executable_sha256".
+	ExecutableSha256 *SHA256 `json:"executable_sha256,omitempty,omitzero"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ProviderIsolationEvidenceKind `json:"kind"`
+
+	// Profile corresponds to the JSON schema field "profile".
+	Profile ProviderIsolationProfile `json:"profile"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ProviderIsolationEvidenceSchemaVersion `json:"schema_version"`
+
+	// StagedRootSha256 corresponds to the JSON schema field "staged_root_sha256".
+	StagedRootSha256 *SHA256 `json:"staged_root_sha256,omitempty,omitzero"`
+}
+
+type ProviderIsolationEvidenceDriver string
+
+const ProviderIsolationEvidenceDriverBubblewrap ProviderIsolationEvidenceDriver = "bubblewrap"
+const ProviderIsolationEvidenceDriverInProcess ProviderIsolationEvidenceDriver = "in_process"
+const ProviderIsolationEvidenceDriverSandboxExec ProviderIsolationEvidenceDriver = "sandbox_exec"
+
+type ProviderIsolationEvidenceKind string
+
+const ProviderIsolationEvidenceKindProviderIsolationEvidence ProviderIsolationEvidenceKind = "provider_isolation_evidence"
+
+type ProviderIsolationEvidenceSchemaVersion int
+
+type ProviderIsolationProfile string
+
+const ProviderIsolationProfileStagedSubprocess ProviderIsolationProfile = "staged_subprocess"
+const ProviderIsolationProfileTrustedInProcess ProviderIsolationProfile = "trusted_in_process"
+
 type Receipt struct {
 	// Actor corresponds to the JSON schema field "actor".
 	Actor *string `json:"actor,omitempty,omitzero"`
@@ -1475,6 +1547,85 @@ const ReceiptReceiptTypeWaitStarted ReceiptReceiptType = "wait_started"
 
 type ReceiptSchemaVersion int
 
+type RedactedReceipt struct {
+	// AggregateVersion corresponds to the JSON schema field "aggregate_version".
+	AggregateVersion int `json:"aggregate_version"`
+
+	// Id corresponds to the JSON schema field "id".
+	Id string `json:"id"`
+
+	// InputHashes corresponds to the JSON schema field "input_hashes".
+	InputHashes []SHA256 `json:"input_hashes"`
+
+	// OccurredAt corresponds to the JSON schema field "occurred_at".
+	OccurredAt time.Time `json:"occurred_at"`
+
+	// OutputHashes corresponds to the JSON schema field "output_hashes".
+	OutputHashes []SHA256 `json:"output_hashes"`
+
+	// PreviousReceiptHash corresponds to the JSON schema field
+	// "previous_receipt_hash".
+	PreviousReceiptHash interface{} `json:"previous_receipt_hash"`
+
+	// ReceiptHash corresponds to the JSON schema field "receipt_hash".
+	ReceiptHash SHA256 `json:"receipt_hash"`
+
+	// ReceiptType corresponds to the JSON schema field "receipt_type".
+	ReceiptType RedactedReceiptReceiptType `json:"receipt_type"`
+}
+
+type RedactedReceiptReceiptType string
+
+const RedactedReceiptReceiptTypeAdmission RedactedReceiptReceiptType = "admission"
+const RedactedReceiptReceiptTypeApproval RedactedReceiptReceiptType = "approval"
+const RedactedReceiptReceiptTypeApprovalDecided RedactedReceiptReceiptType = "approval_decided"
+const RedactedReceiptReceiptTypeApprovalRequested RedactedReceiptReceiptType = "approval_requested"
+const RedactedReceiptReceiptTypeAttemptReserved RedactedReceiptReceiptType = "attempt_reserved"
+const RedactedReceiptReceiptTypeBudgetExhausted RedactedReceiptReceiptType = "budget_exhausted"
+const RedactedReceiptReceiptTypeCampaignAdmission RedactedReceiptReceiptType = "campaign_admission"
+const RedactedReceiptReceiptTypeCompile RedactedReceiptReceiptType = "compile"
+const RedactedReceiptReceiptTypeContextAvailable RedactedReceiptReceiptType = "context_available"
+const RedactedReceiptReceiptTypeContextBound RedactedReceiptReceiptType = "context_bound"
+const RedactedReceiptReceiptTypeCoreCompleted RedactedReceiptReceiptType = "core_completed"
+const RedactedReceiptReceiptTypeInvocation RedactedReceiptReceiptType = "invocation"
+const RedactedReceiptReceiptTypeNeedsContext RedactedReceiptReceiptType = "needs_context"
+const RedactedReceiptReceiptTypeNodeCompleted RedactedReceiptReceiptType = "node_completed"
+const RedactedReceiptReceiptTypePackEdition RedactedReceiptReceiptType = "pack_edition"
+const RedactedReceiptReceiptTypeProviderExecution RedactedReceiptReceiptType = "provider_execution"
+const RedactedReceiptReceiptTypeResult RedactedReceiptReceiptType = "result"
+const RedactedReceiptReceiptTypeTerminal RedactedReceiptReceiptType = "terminal"
+const RedactedReceiptReceiptTypeWaitResumed RedactedReceiptReceiptType = "wait_resumed"
+const RedactedReceiptReceiptTypeWaitStarted RedactedReceiptReceiptType = "wait_started"
+
+type RedactedReplay struct {
+	// AggregateId corresponds to the JSON schema field "aggregate_id".
+	AggregateId string `json:"aggregate_id"`
+
+	// CutoffReceiptHash corresponds to the JSON schema field "cutoff_receipt_hash".
+	CutoffReceiptHash SHA256 `json:"cutoff_receipt_hash"`
+
+	// CutoffReceiptId corresponds to the JSON schema field "cutoff_receipt_id".
+	CutoffReceiptId string `json:"cutoff_receipt_id"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind RedactedReplayKind `json:"kind"`
+
+	// Proof corresponds to the JSON schema field "proof".
+	Proof ReplayRedactionProof `json:"proof"`
+
+	// Receipts corresponds to the JSON schema field "receipts".
+	Receipts []RedactedReceipt `json:"receipts"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion RedactedReplaySchemaVersion `json:"schema_version"`
+}
+
+type RedactedReplayKind string
+
+const RedactedReplayKindRedactedReplay RedactedReplayKind = "redacted_replay"
+
+type RedactedReplaySchemaVersion int
+
 type ReplayBundle struct {
 	// AggregateId corresponds to the JSON schema field "aggregate_id".
 	AggregateId string `json:"aggregate_id"`
@@ -1500,6 +1651,44 @@ type ReplayBundleKind string
 const ReplayBundleKindReplayBundle ReplayBundleKind = "replay_bundle"
 
 type ReplayBundleSchemaVersion int
+
+type ReplayRedactionProof struct {
+	// CutoffReceiptHash corresponds to the JSON schema field "cutoff_receipt_hash".
+	CutoffReceiptHash SHA256 `json:"cutoff_receipt_hash"`
+
+	// ExcludedClasses corresponds to the JSON schema field "excluded_classes".
+	ExcludedClasses []ReplayRedactionProofExcludedClassesElem `json:"excluded_classes"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ReplayRedactionProofKind `json:"kind"`
+
+	// Policy corresponds to the JSON schema field "policy".
+	Policy ReplayRedactionProofPolicy `json:"policy"`
+
+	// ProofHash corresponds to the JSON schema field "proof_hash".
+	ProofHash SHA256 `json:"proof_hash"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ReplayRedactionProofSchemaVersion `json:"schema_version"`
+
+	// SourceBundleHash corresponds to the JSON schema field "source_bundle_hash".
+	SourceBundleHash SHA256 `json:"source_bundle_hash"`
+}
+
+type ReplayRedactionProofExcludedClassesElem string
+
+const ReplayRedactionProofExcludedClassesElemActor ReplayRedactionProofExcludedClassesElem = "actor"
+const ReplayRedactionProofExcludedClassesElemPayload ReplayRedactionProofExcludedClassesElem = "payload"
+
+type ReplayRedactionProofKind string
+
+const ReplayRedactionProofKindReplayRedactionProof ReplayRedactionProofKind = "replay_redaction_proof"
+
+type ReplayRedactionProofPolicy string
+
+const ReplayRedactionProofPolicyPublicMetadata1 ReplayRedactionProofPolicy = "public_metadata@1"
+
+type ReplayRedactionProofSchemaVersion int
 
 type SHA256 string
 
@@ -1743,10 +1932,14 @@ type WorkflowLintIssue struct {
 	Severity WorkflowLintIssueSeverity `json:"severity"`
 }
 
+type ReceiptPreviousReceiptHash_0 = SHA256
+
 type WorkflowLintIssueSeverity string
 
 const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
 const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
+
+type RedactedReceiptPreviousReceiptHash_0 = SHA256
 
 type WorkflowLintReport struct {
 	// Issues corresponds to the JSON schema field "issues".
@@ -1769,5 +1962,3 @@ const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflo
 type WorkflowLintReportSchemaVersion int
 
 type WorkflowRef string
-
-type ReceiptPreviousReceiptHash_0 = SHA256

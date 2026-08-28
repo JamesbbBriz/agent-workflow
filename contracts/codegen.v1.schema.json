@@ -14,6 +14,8 @@
     "action_artifact": { "$ref": "agent-workflow.v1.schema.json#/$defs/ActionArtifact" },
     "receipt": { "$ref": "agent-workflow.v1.schema.json#/$defs/Receipt" },
     "replay_bundle": { "$ref": "agent-workflow.v1.schema.json#/$defs/ReplayBundle" },
+    "redacted_replay": { "$ref": "agent-workflow.v1.schema.json#/$defs/RedactedReplay" },
+    "provider_isolation_evidence": { "$ref": "agent-workflow.v1.schema.json#/$defs/ProviderIsolationEvidence" },
     "canvas_snapshot": { "$ref": "agent-workflow.v1.schema.json#/$defs/CanvasSnapshot" },
     "canvas_portfolio_snapshot": { "$ref": "agent-workflow.v1.schema.json#/$defs/CanvasPortfolioSnapshot" },
     "authoring_catalog": { "$ref": "agent-workflow.v1.schema.json#/$defs/AuthoringCatalog" },
@@ -37,5 +39,6 @@
     ,"wait_resumed_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/WaitResumedEventPayload" }
     ,"core_completed_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/CoreCompletedEventPayload" }
     ,"campaign_terminal_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignTerminalEventPayload" }
+    ,"provider_execution_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/ProviderExecutionEventPayload" }
   }
 }

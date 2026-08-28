@@ -17,6 +17,7 @@ import (
 type CampaignRuntime interface {
 	Preview(context.Context, CampaignRunRequest) (contractsv1.CampaignDrivePreview, error)
 	Drive(context.Context, CampaignDriveCommand) (contractsv1.CampaignDriveReceipt, error)
+	ReplayAt(context.Context, CampaignRef, ReceiptID, ReplayView) (CampaignReplay, error)
 }
 
 type CampaignRunRequest struct {
@@ -438,6 +439,10 @@ func (e *Engine) prepareCampaign(request CampaignRunRequest) (preparedCampaign, 
 	if e == nil || e.provider == nil || e.ledger == nil {
 		return preparedCampaign{}, errors.New("provider and ledger are required")
 	}
+	isolation, err := e.providerIsolation()
+	if err != nil {
+		return preparedCampaign{}, err
+	}
 	definitions, err := campaignWorkflowDefinitions(request)
 	if err != nil {
 		return preparedCampaign{}, err
@@ -453,10 +458,10 @@ func (e *Engine) prepareCampaign(request CampaignRunRequest) (preparedCampaign, 
 	}
 	now := time.Now().UTC()
 	state := contractsv1.CampaignExecutionState{
-		Kind: contractsv1.CampaignExecutionStateKindCampaignExecutionState, SchemaVersion: 2,
+		Kind: contractsv1.CampaignExecutionStateKindCampaignExecutionState, SchemaVersion: 3,
 		AggregateId: aggregateID, JobId: request.Job.Id, CampaignId: request.Campaign.Id,
 		JobHash: jobHash, CampaignHash: campaignHash, WorkflowHashes: contractsv1.CampaignExecutionStateWorkflowHashes{},
-		Status: contractsv1.CampaignExecutionStateStatusAdmitted, StartedAt: now, UpdatedAt: now,
+		Status: contractsv1.CampaignExecutionStateStatusAdmitted, StartedAt: now, UpdatedAt: now, ProviderIsolation: &isolation,
 	}
 	prepared := preparedCampaign{request: request, initial: state}
 	for index, definition := range definitions {
@@ -551,7 +556,11 @@ func (e *Engine) admitCampaign(prepared preparedCampaign, state contractsv1.Camp
 	if err != nil {
 		return err
 	}
-	receipt, err := sealReceiptVersion(2, state.AggregateId, 1, contractsv1.ReceiptReceiptTypeCampaignAdmission, state.StartedAt, nil,
+	receiptSchema := 2
+	if state.SchemaVersion >= 3 {
+		receiptSchema = 3
+	}
+	receipt, err := sealReceiptVersion(receiptSchema, state.AggregateId, 1, contractsv1.ReceiptReceiptTypeCampaignAdmission, state.StartedAt, nil,
 		campaignAdmissionInputs(prepared, state), []contractsv1.SHA256{contractsv1.SHA256(hash)}, map[string]any{"state": state})
 	if err != nil {
 		return err
@@ -561,6 +570,9 @@ func (e *Engine) admitCampaign(prepared preparedCampaign, state contractsv1.Camp
 
 func campaignAdmissionInputs(prepared preparedCampaign, state contractsv1.CampaignExecutionState) []contractsv1.SHA256 {
 	inputs := []contractsv1.SHA256{state.JobHash, state.CampaignHash}
+	if state.SchemaVersion >= 3 && state.ProviderIsolation != nil {
+		inputs = append(inputs, state.ProviderIsolation.EvidenceHash)
+	}
 	for _, workflow := range prepared.workflows {
 		inputs = append(inputs, workflow.admission.Receipt.ReceiptHash, workflow.compiled.DefinitionHash, workflow.compiled.CompileHash)
 	}
@@ -891,14 +903,18 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 	if err := VerifyReplay(replay); err != nil {
 		return contractsv1.CampaignExecutionState{}, err
 	}
-	if len(replay.Receipts) == 0 || replay.Receipts[0].ReceiptType != contractsv1.ReceiptReceiptTypeCampaignAdmission || replay.Receipts[0].SchemaVersion != 2 {
-		return contractsv1.CampaignExecutionState{}, errors.New("Campaign Replay does not start with a v2 admission")
+	if len(replay.Receipts) == 0 || replay.Receipts[0].ReceiptType != contractsv1.ReceiptReceiptTypeCampaignAdmission || (replay.Receipts[0].SchemaVersion != 2 && replay.Receipts[0].SchemaVersion != 3) {
+		return contractsv1.CampaignExecutionState{}, errors.New("Campaign Replay does not start with a supported admission")
 	}
 	var state contractsv1.CampaignExecutionState
 	if err := decodePayload(replay.Receipts[0].Payload["state"], &state); err != nil {
 		return contractsv1.CampaignExecutionState{}, err
 	}
 	expected := prepared.initial
+	if replay.Receipts[0].SchemaVersion == 2 {
+		expected.SchemaVersion = 2
+		expected.ProviderIsolation = nil
+	}
 	expected.StartedAt, expected.UpdatedAt = state.StartedAt, state.UpdatedAt
 	wantInputs := campaignAdmissionInputs(prepared, state)
 	stateHash, err := Digest(state)

@@ -39,6 +39,9 @@ func TestCampaignRuntimeDerivesDependenciesAndCompletesTheDAG(t *testing.T) {
 	if preview.State.NextNodeId == nil || *preview.State.NextNodeId != "research" {
 		t.Fatalf("Core did not derive the root Node: %+v", preview.State)
 	}
+	if preview.State.SchemaVersion != 3 || preview.State.ProviderIsolation == nil || preview.State.ProviderIsolation.Profile != contractsv1.ProviderIsolationProfileTrustedInProcess {
+		t.Fatalf("Campaign admission did not bind provider isolation: %+v", preview.State.ProviderIsolation)
+	}
 	if _, err := engine.RunNode(context.Background(), workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "review"}); err == nil || !strings.Contains(err.Error(), "not the Core-derived") || provider.starts != 0 {
 		t.Fatalf("caller selected a dependent Node: err=%v starts=%d", err, provider.starts)
 	}
@@ -49,6 +52,18 @@ func TestCampaignRuntimeDerivesDependenciesAndCompletesTheDAG(t *testing.T) {
 	}
 	if driven.Transitions != 2 || provider.starts != 2 || driven.State.Usage.Attempts != 2 || driven.State.Usage.Actions != 2 {
 		t.Fatalf("DAG did not advance exactly two Nodes: %+v starts=%d", driven.State, provider.starts)
+	}
+	if driven.CampaignReplay == nil || driven.CampaignReplay.Receipts[0].SchemaVersion != 3 || driven.CampaignReplay.Receipts[0].ReceiptType != contractsv1.ReceiptReceiptTypeCampaignAdmission {
+		t.Fatalf("Campaign admission receipt did not version the isolation binding: %#v", driven.CampaignReplay)
+	}
+	providerReceiptBound := false
+	for _, receipt := range driven.NodeReplay.Receipts {
+		if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeProviderExecution {
+			providerReceiptBound = receipt.SchemaVersion == 2 && receipt.Payload["isolation"] != nil
+		}
+	}
+	if !providerReceiptBound {
+		t.Fatal("provider execution receipt did not bind isolation evidence")
 	}
 	for _, node := range driven.State.Nodes {
 		if node.Status != contractsv1.CampaignNodeExecutionStatusCompleted {
@@ -82,6 +97,24 @@ func TestCampaignRuntimeDerivesDependenciesAndCompletesTheDAG(t *testing.T) {
 	}
 	if terminal.State.Status != contractsv1.CampaignExecutionStateStatusCompleted || terminal.Transitions != 1 {
 		t.Fatalf("Campaign did not close canonically: %+v", terminal)
+	}
+}
+
+func TestProductionCampaignAdmissionRejectsProviderWithoutStagedIsolation(t *testing.T) {
+	cutoff := time.Now().UTC().Add(-time.Hour)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := loadExample(t)
+	job, campaign := jobFixture(scope), campaignFixture(scope, cutoff)
+	ledger := workflow.NewMemoryLedger()
+	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), &dagProvider{results: map[string]workflow.ProviderResult{}}, ledger).
+		RequireProviderIsolation(contractsv1.ProviderIsolationProfileStagedSubprocess)
+	if _, err := engine.Preview(context.Background(), workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}); err == nil || !strings.Contains(err.Error(), "requires staged subprocess") {
+		t.Fatalf("production admission accepted trusted provider: %v", err)
 	}
 }
 

@@ -431,13 +431,24 @@
       "required": ["state"],
       "properties": { "state": { "const": "completed" } }
     },
+    "ProviderExecutionEventPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "idempotency_key", "completed_at", "isolation"],
+      "properties": {
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "isolation": { "$ref": "#/$defs/ProviderIsolationEvidence" }
+      }
+    },
     "Receipt": {
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "schema_version", "id", "receipt_type", "aggregate_id", "aggregate_version", "occurred_at", "input_hashes", "output_hashes", "previous_receipt_hash", "receipt_hash"],
       "properties": {
         "kind": { "type": "string", "enum": ["receipt"] },
-        "schema_version": { "type": "integer", "enum": [1, 2] },
+        "schema_version": { "type": "integer", "enum": [1, 2, 3] },
         "id": { "type": "string", "minLength": 1, "maxLength": 160 },
         "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal"] },
         "aggregate_id": { "type": "string", "minLength": 1, "maxLength": 160 },
@@ -467,8 +478,19 @@
               { "properties": { "receipt_type": { "const": "wait_started" }, "payload": { "$ref": "#/$defs/WaitStartedEventPayload" } }, "required": ["payload"] },
               { "properties": { "receipt_type": { "const": "wait_resumed" }, "payload": { "$ref": "#/$defs/WaitResumedEventPayload" } }, "required": ["payload"] },
               { "properties": { "receipt_type": { "const": "core_completed" }, "payload": { "$ref": "#/$defs/CoreCompletedEventPayload" } }, "required": ["payload"] },
+              { "properties": { "receipt_type": { "const": "provider_execution" }, "payload": { "$ref": "#/$defs/ProviderExecutionEventPayload" } }, "required": ["payload"] },
               { "properties": { "receipt_type": { "const": "terminal" }, "payload": { "$ref": "#/$defs/CampaignTerminalEventPayload" } }, "required": ["payload"] }
             ]
+          }
+        },
+        {
+          "if": { "properties": { "schema_version": { "const": 3 } }, "required": ["schema_version"] },
+          "then": {
+            "properties": {
+              "receipt_type": { "const": "campaign_admission" },
+              "payload": { "$ref": "#/$defs/CampaignAdmissionEventPayload" }
+            },
+            "required": ["payload"]
           }
         }
       ]
@@ -484,6 +506,82 @@
         "cutoff_receipt_hash": { "$ref": "#/$defs/SHA256" },
         "receipts": { "type": "array", "items": { "$ref": "#/$defs/Receipt" } },
         "bundle_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "ProviderIsolationProfile": {
+      "enum": ["trusted_in_process", "staged_subprocess"]
+    },
+    "ProviderIsolationEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "profile", "driver", "declared_environment", "evidence_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["provider_isolation_evidence"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "profile": { "$ref": "#/$defs/ProviderIsolationProfile" },
+        "driver": { "enum": ["in_process", "sandbox_exec", "bubblewrap"] },
+        "executable_sha256": { "$ref": "#/$defs/SHA256" },
+        "staged_root_sha256": { "$ref": "#/$defs/SHA256" },
+        "declared_environment": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$", "maxLength": 128 }
+        },
+        "evidence_hash": { "$ref": "#/$defs/SHA256" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "profile": { "const": "staged_subprocess" } }, "required": ["profile"] },
+          "then": { "required": ["executable_sha256", "staged_root_sha256"] }
+        }
+      ]
+    },
+    "RedactedReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "receipt_type", "aggregate_version", "occurred_at", "input_hashes", "output_hashes", "previous_receipt_hash", "receipt_hash"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal"] },
+        "aggregate_version": { "type": "integer", "minimum": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "input_hashes": { "type": "array", "items": { "$ref": "#/$defs/SHA256" }, "uniqueItems": true },
+        "output_hashes": { "type": "array", "items": { "$ref": "#/$defs/SHA256" }, "uniqueItems": true },
+        "previous_receipt_hash": { "anyOf": [{ "$ref": "#/$defs/SHA256" }, { "type": "null" }] },
+        "receipt_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "ReplayRedactionProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "policy", "source_bundle_hash", "cutoff_receipt_hash", "excluded_classes", "proof_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["replay_redaction_proof"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "policy": { "type": "string", "enum": ["public_metadata@1"] },
+        "source_bundle_hash": { "$ref": "#/$defs/SHA256" },
+        "cutoff_receipt_hash": { "$ref": "#/$defs/SHA256" },
+        "excluded_classes": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["actor", "payload"] }
+        },
+        "proof_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "RedactedReplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "aggregate_id", "cutoff_receipt_id", "cutoff_receipt_hash", "receipts", "proof"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["redacted_replay"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "aggregate_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "cutoff_receipt_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "cutoff_receipt_hash": { "$ref": "#/$defs/SHA256" },
+        "receipts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/RedactedReceipt" } },
+        "proof": { "$ref": "#/$defs/ReplayRedactionProof" }
       }
     },
     "CampaignExecutionUsage": {
@@ -523,7 +621,7 @@
       "required": ["kind", "schema_version", "aggregate_id", "job_id", "campaign_id", "job_hash", "campaign_hash", "workflow_hashes", "status", "nodes", "usage", "started_at", "updated_at"],
       "properties": {
         "kind": { "type": "string", "enum": ["campaign_execution_state"] },
-        "schema_version": { "type": "integer", "enum": [2] },
+        "schema_version": { "type": "integer", "enum": [2, 3] },
         "aggregate_id": { "type": "string", "minLength": 1, "maxLength": 160 },
         "job_id": { "$ref": "#/$defs/Identifier" },
         "campaign_id": { "$ref": "#/$defs/Identifier" },
@@ -542,8 +640,15 @@
         "updated_at": { "type": "string", "format": "date-time" },
         "next_workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
         "next_node_id": { "$ref": "#/$defs/Identifier" },
-        "blocker_code": { "$ref": "#/$defs/Identifier" }
-      }
+        "blocker_code": { "$ref": "#/$defs/Identifier" },
+        "provider_isolation": { "$ref": "#/$defs/ProviderIsolationEvidence" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "schema_version": { "const": 3 } }, "required": ["schema_version"] },
+          "then": { "required": ["provider_isolation"] }
+        }
+      ]
     },
     "CampaignDrivePreview": {
       "type": "object",
