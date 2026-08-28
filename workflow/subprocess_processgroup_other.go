@@ -10,5 +10,6 @@ func killProcessGroup(cmd *exec.Cmd) {
 		_ = cmd.Process.Kill()
 	}
 }
-func processAlive(int) bool { return false }
-func terminateProcess(int)  {}
+func processAlive(int) bool    { return false }
+func terminateProcess(int)     {}
+func childPIDObservable() bool { return false }

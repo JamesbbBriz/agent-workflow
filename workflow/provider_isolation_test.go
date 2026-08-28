@@ -158,13 +158,15 @@ func TestSubprocessProviderEnforcesCancellationAndOutputLimit(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("canceled provider process did not stop")
 		}
-		stopBy := time.Now().Add(time.Second)
-		for processAlive(childPID) && time.Now().Before(stopBy) {
-			time.Sleep(10 * time.Millisecond)
-		}
-		if processAlive(childPID) {
-			terminateProcess(childPID)
-			t.Fatal("canceled provider child process survived")
+		if childPIDObservable() {
+			stopBy := time.Now().Add(time.Second)
+			for processAlive(childPID) && time.Now().Before(stopBy) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if processAlive(childPID) {
+				terminateProcess(childPID)
+				t.Fatal("canceled provider child process survived")
+			}
 		}
 	})
 
