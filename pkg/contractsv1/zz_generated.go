@@ -108,6 +108,10 @@ type AgentWorkflowContractCatalog struct {
 	// "campaign_terminal_event_payload".
 	CampaignTerminalEventPayload *CampaignTerminalEventPayload `json:"campaign_terminal_event_payload,omitempty,omitzero"`
 
+	// CanvasPortfolioSnapshot corresponds to the JSON schema field
+	// "canvas_portfolio_snapshot".
+	CanvasPortfolioSnapshot *CanvasPortfolioSnapshot `json:"canvas_portfolio_snapshot,omitempty,omitzero"`
+
 	// CanvasSnapshot corresponds to the JSON schema field "canvas_snapshot".
 	CanvasSnapshot *CanvasSnapshot `json:"canvas_snapshot,omitempty,omitzero"`
 
@@ -794,6 +798,43 @@ const CanvasNextSafeActionKindRequestContext CanvasNextSafeActionKind = "request
 const CanvasNextSafeActionKindRetry CanvasNextSafeActionKind = "retry"
 const CanvasNextSafeActionKindStartNode CanvasNextSafeActionKind = "start_node"
 const CanvasNextSafeActionKindTerminal CanvasNextSafeActionKind = "terminal"
+
+type CanvasPortfolioCampaign struct {
+	// CampaignId corresponds to the JSON schema field "campaign_id".
+	CampaignId Identifier `json:"campaign_id"`
+
+	// Canvas corresponds to the JSON schema field "canvas".
+	Canvas CanvasSnapshot `json:"canvas"`
+
+	// State corresponds to the JSON schema field "state".
+	State CanvasEntityStatus `json:"state"`
+}
+
+type CanvasPortfolioSnapshot struct {
+	// Campaigns corresponds to the JSON schema field "campaigns".
+	Campaigns []CanvasPortfolioCampaign `json:"campaigns"`
+
+	// GeneratedAt corresponds to the JSON schema field "generated_at".
+	GeneratedAt time.Time `json:"generated_at"`
+
+	// Job corresponds to the JSON schema field "job".
+	Job JobDefinition `json:"job"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind CanvasPortfolioSnapshotKind `json:"kind"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion CanvasPortfolioSnapshotSchemaVersion `json:"schema_version"`
+
+	// SelectedCampaignId corresponds to the JSON schema field "selected_campaign_id".
+	SelectedCampaignId Identifier `json:"selected_campaign_id"`
+}
+
+type CanvasPortfolioSnapshotKind string
+
+const CanvasPortfolioSnapshotKindCanvasPortfolioSnapshot CanvasPortfolioSnapshotKind = "canvas_portfolio_snapshot"
+
+type CanvasPortfolioSnapshotSchemaVersion int
 
 type CanvasReceiptLink struct {
 	// Id corresponds to the JSON schema field "id".
@@ -1707,8 +1748,6 @@ type WorkflowLintIssueSeverity string
 const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
 const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
 
-type ReceiptPreviousReceiptHash_0 = SHA256
-
 type WorkflowLintReport struct {
 	// Issues corresponds to the JSON schema field "issues".
 	Issues []WorkflowLintIssue `json:"issues"`
@@ -1730,3 +1769,5 @@ const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflo
 type WorkflowLintReportSchemaVersion int
 
 type WorkflowRef string
+
+type ReceiptPreviousReceiptHash_0 = SHA256

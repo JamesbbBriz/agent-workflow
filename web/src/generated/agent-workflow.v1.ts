@@ -13,6 +13,7 @@ export interface AgentWorkflowV1 {
     campaign_drive_receipt?:           CampaignDriveReceipt;
     campaign_execution_state?:         CampaignExecutionStateClass;
     campaign_terminal_event_payload?:  CampaignTerminalEventPayload;
+    canvas_portfolio_snapshot?:        CanvasPortfolioSnapshot;
     canvas_snapshot?:                  CanvasSnapshot;
     capability_manifest?:              CapabilityManifest;
     context_bundle?:                   Bundle;
@@ -329,6 +330,21 @@ export interface CampaignTerminalEventPayload {
 
 export type StateEnum = "completed";
 
+export interface CanvasPortfolioSnapshot {
+    campaigns:            [CanvasPortfolioCampaign, ...CanvasPortfolioCampaign[]];
+    generated_at:         string;
+    job:                  Job;
+    kind:                 CanvasPortfolioSnapshotKind;
+    schema_version:       number;
+    selected_campaign_id: string;
+}
+
+export interface CanvasPortfolioCampaign {
+    campaign_id: string;
+    canvas:      CanvasSnapshot;
+    state:       CampaignState;
+}
+
 export interface CanvasSnapshot {
     admission_replays?: CampaignReplay[];
     approval_replays?:  CampaignReplay[];
@@ -525,6 +541,8 @@ export interface NextSafeAction {
 }
 
 export type NextSafeActionKind = "none" | "start_node" | "request_context" | "request_approval" | "retry" | "terminal";
+
+export type CanvasPortfolioSnapshotKind = "canvas_portfolio_snapshot";
 
 export interface CapabilityManifest {
     capabilities:   Capability[];

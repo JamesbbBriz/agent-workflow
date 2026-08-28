@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,11 +21,19 @@ const maxRequestBytes = 2 << 20
 const localApprovalActor = "local-operator"
 
 type Handler struct {
-	core   *workflow.AuthoringCore
-	now    func() time.Time
-	mu     sync.Mutex
-	canvas *contractsv1.CanvasSnapshot
-	webMCP *webMCPGate
+	core      *workflow.AuthoringCore
+	now       func() time.Time
+	mu        sync.Mutex
+	canvas    *contractsv1.CanvasSnapshot
+	portfolio *contractsv1.CanvasPortfolioSnapshot
+	jobs      map[contractsv1.Identifier]contractsv1.JobDefinition
+	campaigns map[contractsv1.Identifier]contractsv1.CampaignDefinition
+	webMCP    *webMCPGate
+}
+
+type DefinitionHistory struct {
+	Jobs      []contractsv1.JobDefinition
+	Campaigns []contractsv1.CampaignDefinition
 }
 
 func New(core *workflow.AuthoringCore, now func() time.Time) http.Handler {
@@ -32,10 +41,42 @@ func New(core *workflow.AuthoringCore, now func() time.Time) http.Handler {
 }
 
 func NewWithCanvas(core *workflow.AuthoringCore, now func() time.Time, snapshot *contractsv1.CanvasSnapshot) http.Handler {
+	var portfolio *contractsv1.CanvasPortfolioSnapshot
+	if snapshot != nil {
+		projected, err := canvas.ProjectPortfolio(snapshot.Definition.Job, []contractsv1.CanvasSnapshot{*snapshot}, snapshot.Definition.Campaign.Id)
+		if err == nil {
+			portfolio = &projected
+		}
+	}
+	return NewWithPortfolio(core, now, portfolio)
+}
+
+func NewWithPortfolio(core *workflow.AuthoringCore, now func() time.Time, portfolio *contractsv1.CanvasPortfolioSnapshot) http.Handler {
+	return NewWithPortfolioHistory(core, now, portfolio, DefinitionHistory{})
+}
+
+func NewWithPortfolioHistory(core *workflow.AuthoringCore, now func() time.Time, portfolio *contractsv1.CanvasPortfolioSnapshot, history DefinitionHistory) http.Handler {
 	if now == nil {
 		now = time.Now
 	}
-	return &Handler{core: core, now: now, canvas: snapshot}
+	handler := &Handler{core: core, now: now, portfolio: portfolio, jobs: map[contractsv1.Identifier]contractsv1.JobDefinition{}, campaigns: map[contractsv1.Identifier]contractsv1.CampaignDefinition{}}
+	for _, job := range history.Jobs {
+		handler.jobs[job.Id] = job
+	}
+	for _, campaign := range history.Campaigns {
+		handler.campaigns[campaign.Id] = campaign
+	}
+	if portfolio != nil {
+		handler.jobs[portfolio.Job.Id] = portfolio.Job
+		for index := range portfolio.Campaigns {
+			handler.campaigns[portfolio.Campaigns[index].Canvas.Definition.Campaign.Id] = portfolio.Campaigns[index].Canvas.Definition.Campaign
+			if portfolio.Campaigns[index].CampaignId == portfolio.SelectedCampaignId {
+				handler.canvas = &portfolio.Campaigns[index].Canvas
+				break
+			}
+		}
+	}
+	return handler
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +94,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/v2/canvas":
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.portfolio == nil {
+			h.write(w, nil, errors.New("trusted Canvas portfolio is unavailable"))
+			return
+		}
+		h.write(w, *h.portfolio, nil)
+		return
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/canvas":
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -108,6 +158,14 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		h.mu.Lock()
 		defer h.mu.Unlock()
+		if job, ok := h.jobs[request.Preview.Job.Id]; ok && !reflect.DeepEqual(job, request.Preview.Job) {
+			h.write(w, nil, errors.New("Job definition is immutable after its first Campaign admission"))
+			return
+		}
+		if campaign, ok := h.campaigns[request.Preview.Campaign.Id]; ok && !reflect.DeepEqual(campaign, request.Preview.Campaign) {
+			h.write(w, nil, errors.New("Campaign definition is immutable after its first Workflow admission"))
+			return
+		}
 		definitions, err := h.admissionDefinitions(request.Preview)
 		if err != nil {
 			h.write(w, nil, err)
@@ -125,15 +183,18 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		snapshot, err := canvas.ProjectWithAdmissions(admission.Job, admission.Campaign, definitions, []contractsv1.ReplayBundle{replay})
 		if err == nil {
-			if h.canvas != nil {
-				snapshot = canvas.MergeAdmissionReadback(*h.canvas, snapshot)
+			err = h.mergeCampaignCanvas(snapshot)
+			if err == nil {
+				h.jobs[admission.Job.Id] = admission.Job
+				h.campaigns[admission.Campaign.Id] = admission.Campaign
+				snapshot = *h.canvas
 			}
-			h.canvas = &snapshot
 		}
 		h.write(w, struct {
-			Admission contractsv1.WorkflowAdmission `json:"admission"`
-			Canvas    contractsv1.CanvasSnapshot    `json:"canvas"`
-		}{admission, snapshot}, err)
+			Admission contractsv1.WorkflowAdmission        `json:"admission"`
+			Canvas    contractsv1.CanvasSnapshot           `json:"canvas"`
+			Portfolio *contractsv1.CanvasPortfolioSnapshot `json:"portfolio,omitempty"`
+		}{admission, snapshot, h.portfolio}, err)
 		return
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workflows/"):
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/workflows/"), "/")
@@ -172,7 +233,8 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		if h.canvas == nil {
+		target, err := h.campaignCanvas(request.Preview.Brief.Action.CampaignId)
+		if err != nil {
 			h.write(w, nil, errors.New("trusted Canvas is unavailable"))
 			return
 		}
@@ -182,10 +244,10 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 				h.write(w, nil, err)
 				return
 			}
-			h.writeApproval(w, receipt, replay)
+			h.writeApproval(w, target, receipt, replay)
 			return
 		}
-		if err := canvas.ValidateApprovalTarget(*h.canvas, request.Preview.Brief); err != nil {
+		if err := canvas.ValidateApprovalTarget(target, request.Preview.Brief); err != nil {
 			h.write(w, nil, err)
 			return
 		}
@@ -199,31 +261,84 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 			h.write(w, nil, err)
 			return
 		}
-		h.writeApproval(w, receipt, replay)
+		h.writeApproval(w, target, receipt, replay)
 		return
 	default:
 		h.notFound(w)
 	}
 }
 
-func (h *Handler) writeApproval(w http.ResponseWriter, receipt contractsv1.Receipt, replay contractsv1.ReplayBundle) {
-	for _, projected := range h.canvas.ApprovalReplays {
+func (h *Handler) writeApproval(w http.ResponseWriter, target contractsv1.CanvasSnapshot, receipt contractsv1.Receipt, replay contractsv1.ReplayBundle) {
+	for _, projected := range target.ApprovalReplays {
 		if projected.BundleHash == replay.BundleHash {
 			h.write(w, struct {
 				Receipt contractsv1.Receipt        `json:"receipt"`
 				Canvas  contractsv1.CanvasSnapshot `json:"canvas"`
-			}{receipt, *h.canvas}, nil)
+			}{receipt, target}, nil)
 			return
 		}
 	}
-	next, err := canvas.ApplyApproval(*h.canvas, replay)
+	next, err := canvas.ApplyApproval(target, replay)
 	if err == nil {
-		h.canvas = &next
+		err = h.replaceCampaignCanvas(next)
 	}
 	h.write(w, struct {
 		Receipt contractsv1.Receipt        `json:"receipt"`
 		Canvas  contractsv1.CanvasSnapshot `json:"canvas"`
 	}{receipt, next}, err)
+}
+
+func (h *Handler) campaignCanvas(campaignID contractsv1.Identifier) (contractsv1.CanvasSnapshot, error) {
+	if h.portfolio != nil {
+		for _, item := range h.portfolio.Campaigns {
+			if item.CampaignId == campaignID {
+				return item.Canvas, nil
+			}
+		}
+	}
+	if h.canvas != nil && h.canvas.Definition.Campaign.Id == campaignID {
+		return *h.canvas, nil
+	}
+	return contractsv1.CanvasSnapshot{}, errors.New("Campaign Canvas is unavailable")
+}
+
+func (h *Handler) mergeCampaignCanvas(next contractsv1.CanvasSnapshot) error {
+	if h.portfolio != nil && reflect.DeepEqual(h.portfolio.Job, next.Definition.Job) {
+		for _, current := range h.portfolio.Campaigns {
+			if current.CampaignId == next.Definition.Campaign.Id {
+				next = canvas.MergeAdmissionReadback(current.Canvas, next)
+				break
+			}
+		}
+	}
+	return h.replaceCampaignCanvas(next)
+}
+
+func (h *Handler) replaceCampaignCanvas(next contractsv1.CanvasSnapshot) error {
+	campaigns := []contractsv1.CanvasSnapshot{next}
+	if h.portfolio != nil && reflect.DeepEqual(h.portfolio.Job, next.Definition.Job) {
+		campaigns = make([]contractsv1.CanvasSnapshot, 0, len(h.portfolio.Campaigns)+1)
+		for _, item := range h.portfolio.Campaigns {
+			campaigns = append(campaigns, item.Canvas)
+		}
+		replaced := false
+		for index := range campaigns {
+			if campaigns[index].Definition.Campaign.Id == next.Definition.Campaign.Id {
+				campaigns[index] = next
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			campaigns = append(campaigns, next)
+		}
+	}
+	portfolio, err := canvas.ProjectPortfolio(next.Definition.Job, campaigns, next.Definition.Campaign.Id)
+	if err != nil {
+		return err
+	}
+	h.canvas, h.portfolio = &next, &portfolio
+	return nil
 }
 
 func (h *Handler) admissionDefinitions(preview contractsv1.WorkflowAdmissionPreview) ([]contractsv1.WorkflowDefinition, error) {

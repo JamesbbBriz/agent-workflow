@@ -155,7 +155,6 @@ func project(job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinit
 		}
 	}
 	sort.Slice(executions, func(i, j int) bool { return executions[i].AggregateId < executions[j].AggregateId })
-
 	snapshot := contractsv1.CanvasSnapshot{
 		Kind: contractsv1.CanvasSnapshotKindCanvasSnapshot, SchemaVersion: 1, GeneratedAt: generatedAt,
 		Definition: contractsv1.CanvasDefinitionGraph{

@@ -17,6 +17,10 @@ import (
 type ExecutorCatalog map[string]contractsv1.NodeDefinitionKind
 type ApprovalAuthorityCatalog map[string][]string
 
+type admissionDefinitionLedger interface {
+	AppendAdmission(contractsv1.Receipt, contractsv1.JobDefinition, contractsv1.CampaignDefinition) error
+}
+
 type AuthoringCore struct {
 	registry         *Registry
 	executors        ExecutorCatalog
@@ -323,7 +327,14 @@ func (c *AuthoringCore) ConfirmWithAudit(preview contractsv1.WorkflowAdmissionPr
 	if err != nil {
 		return contractsv1.WorkflowAdmission{}, err
 	}
-	if err := c.ledger.Append(receipt); err != nil {
+	authority, ok := c.ledger.(admissionDefinitionLedger)
+	if !ok {
+		return contractsv1.WorkflowAdmission{}, errors.New("ledger does not support immutable Job and Campaign admission")
+	}
+	if err := authority.AppendAdmission(receipt, preview.Job, preview.Campaign); err != nil {
+		if existing, ok := c.existingAdmission(aggregate, preview.PreviewHash); ok && existing.Receipt.Actor != nil && *existing.Receipt.Actor == actor {
+			return existing, nil
+		}
 		return contractsv1.WorkflowAdmission{}, err
 	}
 	admission := contractsv1.WorkflowAdmission{Kind: contractsv1.WorkflowAdmissionKindWorkflowAdmission, SchemaVersion: 1, Job: preview.Job, Campaign: preview.Campaign, Workflow: preview.Workflow, Revision: current + 1, JobHash: preview.JobHash, CampaignHash: preview.CampaignHash, DefinitionHash: preview.DefinitionHash, CompileHash: preview.CompileHash, PreviewHash: preview.PreviewHash, Receipt: receipt}
@@ -331,6 +342,27 @@ func (c *AuthoringCore) ConfirmWithAudit(preview contractsv1.WorkflowAdmissionPr
 		return contractsv1.WorkflowAdmission{}, err
 	}
 	return admission, nil
+}
+
+func validateAdmissionDefinitionBindings(all map[string][]contractsv1.Receipt, job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition) error {
+	for _, receipts := range all {
+		for _, receipt := range receipts {
+			if receipt.ReceiptType != contractsv1.ReceiptReceiptTypeAdmission {
+				continue
+			}
+			admission, err := admissionFromReceipt(receipt)
+			if err != nil {
+				return err
+			}
+			if admission.Job.Id == job.Id && !reflect.DeepEqual(admission.Job, job) {
+				return errors.New("Job definition is immutable after its first Campaign admission")
+			}
+			if admission.Campaign.Id == campaign.Id && !reflect.DeepEqual(admission.Campaign, campaign) {
+				return errors.New("Campaign definition is immutable after its first Workflow admission")
+			}
+		}
+	}
+	return nil
 }
 
 func (c *AuthoringCore) ReadWorkflow(id string, version int) (contractsv1.WorkflowAdmission, error) {
@@ -456,12 +488,9 @@ func (c *AuthoringCore) ConfirmApproval(preview contractsv1.ApprovalPreview, act
 	if strings.TrimSpace(actor) != preview.Actor {
 		return contractsv1.Receipt{}, errors.New("confirmation actor does not match")
 	}
-	if replay, err := c.ledger.Replay(approvalAggregate(string(preview.Brief.Id))); err == nil {
-		for _, receipt := range replay.Receipts {
-			if fmt.Sprint(receipt.Payload["preview_hash"]) == string(preview.PreviewHash) && fmt.Sprint(receipt.Payload["selected_option_id"]) == optionID && receipt.Actor != nil && *receipt.Actor == actor {
-				return receipt, nil
-			}
-		}
+	aggregate := approvalAggregate(string(preview.Brief.Id))
+	if receipt, ok := existingApproval(c.ledger, aggregate, preview.PreviewHash, optionID, actor); ok {
+		return receipt, nil
 	}
 	if preview.ExpiresAt != nil && occurredAt.After(*preview.ExpiresAt) {
 		return contractsv1.Receipt{}, errors.New("approval preview has expired")
@@ -501,14 +530,30 @@ func (c *AuthoringCore) ConfirmApproval(preview contractsv1.ApprovalPreview, act
 	if !selected {
 		return contractsv1.Receipt{}, errors.New("approval option is invalid")
 	}
-	receipt, err := sealActorReceipt(approvalAggregate(string(preview.Brief.Id)), 1, contractsv1.ReceiptReceiptTypeApproval, actor, occurredAt, nil, []contractsv1.SHA256{preview.BriefHash, preview.Brief.Action.ContentSha256}, []contractsv1.SHA256{preview.PreviewHash}, map[string]any{"brief": preview.Brief, "preview": preview, "preview_hash": preview.PreviewHash, "selected_option_id": optionID})
+	receipt, err := sealActorReceipt(aggregate, 1, contractsv1.ReceiptReceiptTypeApproval, actor, occurredAt, nil, []contractsv1.SHA256{preview.BriefHash, preview.Brief.Action.ContentSha256}, []contractsv1.SHA256{preview.PreviewHash}, map[string]any{"brief": preview.Brief, "preview": preview, "preview_hash": preview.PreviewHash, "selected_option_id": optionID})
 	if err != nil {
 		return contractsv1.Receipt{}, err
 	}
 	if err := c.ledger.Append(receipt); err != nil {
+		if existing, ok := existingApproval(c.ledger, aggregate, preview.PreviewHash, optionID, actor); ok {
+			return existing, nil
+		}
 		return contractsv1.Receipt{}, err
 	}
 	return receipt, nil
+}
+
+func existingApproval(ledger Ledger, aggregate string, previewHash contractsv1.SHA256, optionID, actor string) (contractsv1.Receipt, bool) {
+	replay, err := ledger.Replay(aggregate)
+	if err != nil {
+		return contractsv1.Receipt{}, false
+	}
+	for _, receipt := range replay.Receipts {
+		if fmt.Sprint(receipt.Payload["preview_hash"]) == string(previewHash) && fmt.Sprint(receipt.Payload["selected_option_id"]) == optionID && receipt.Actor != nil && *receipt.Actor == actor {
+			return receipt, true
+		}
+	}
+	return contractsv1.Receipt{}, false
 }
 
 func (c *AuthoringCore) currentRevision(id string) (int, error) {

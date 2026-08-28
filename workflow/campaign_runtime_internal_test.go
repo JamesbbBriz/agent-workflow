@@ -8,6 +8,16 @@ import (
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
 
+func TestCampaignScopeCannotDropJobLabels(t *testing.T) {
+	job := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}, Labels: map[string]string{"tenant": "a"}}
+	if scopeWithin(job, contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}) {
+		t.Fatal("Campaign scope dropped a Job label")
+	}
+	if !scopeWithin(job, contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}, Labels: map[string]string{"tenant": "a", "region": "us"}}) {
+		t.Fatal("Campaign scope could not add a narrower label")
+	}
+}
+
 func TestCampaignReducerRejectsAttemptBeforeDependencies(t *testing.T) {
 	engine, prepared, state, replay := campaignReducerFixture(t)
 	at, workflowRef, campaignHash := state.StartedAt, prepared.workflows[0].compiled.WorkflowRef, state.CampaignHash

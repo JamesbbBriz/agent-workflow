@@ -53,6 +53,72 @@ func TestBuilderHTTPDraftPreviewConfirmReadback(t *testing.T) {
 	}
 }
 
+func TestBuilderHTTPKeepsTwoCampaignsInTheCanonicalPortfolio(t *testing.T) {
+	definition := loadDefinition(t)
+	job, firstCampaign := definitions(definition)
+	job.Scope.SubjectIds = []string{"example-project", "second-project"}
+	handler := builderapi.New(testCore(t), time.Now)
+
+	firstPreview := preview(t, handler, job, firstCampaign, definition)
+	if response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": firstPreview}); response.Code != http.StatusOK {
+		t.Fatalf("confirm first Campaign: %s", response.Body.String())
+	}
+	reboundJob := job
+	reboundJob.Budget.MaxAttempts++
+	reboundDefinition := definition
+	reboundDefinition.Id = "rebound-review"
+	reboundDefinition.DefaultContext = reboundDefinition.DefaultContext[:1]
+	reboundCampaign := firstCampaign
+	reboundCampaign.Id = "rebound-campaign"
+	reboundCampaign.WorkflowPlan = []contractsv1.WorkflowRef{"rebound-review@1"}
+	reboundPreview := preview(t, handler, reboundJob, reboundCampaign, reboundDefinition)
+	if response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": reboundPreview}); response.Code != http.StatusConflict {
+		t.Fatalf("same Job ID was rebound before commit: %s", response.Body.String())
+	}
+	readRejected := httptest.NewRecorder()
+	handler.ServeHTTP(readRejected, httptest.NewRequest(http.MethodGet, "/v1/workflows/rebound-review/versions/1", nil))
+	if readRejected.Code != http.StatusConflict {
+		t.Fatalf("rejected Job rebind still persisted: %s", readRejected.Body.String())
+	}
+
+	secondDefinition := definition
+	secondDefinition.Id = "second-review"
+	secondDefinition.DefaultContext = secondDefinition.DefaultContext[:1]
+	secondCampaign := firstCampaign
+	secondCampaign.Id = "second-campaign"
+	secondCampaign.Scope.SubjectIds = []string{"second-project"}
+	secondCampaign.Budget.MaxAttempts = 7
+	secondCampaign.WorkflowPlan = []contractsv1.WorkflowRef{"second-review@1"}
+	secondPreview := preview(t, handler, job, secondCampaign, secondDefinition)
+	if response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": secondPreview}); response.Code != http.StatusOK {
+		t.Fatalf("confirm second Campaign: %s", response.Body.String())
+	}
+	secondDefinition.Version = 2
+	secondCampaign.WorkflowPlan = []contractsv1.WorkflowRef{"second-review@2"}
+	secondPreview = preview(t, handler, job, secondCampaign, secondDefinition)
+	if response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": secondPreview}); response.Code != http.StatusConflict {
+		t.Fatalf("admitted Campaign changed its pinned Workflow: %s", response.Body.String())
+	}
+
+	read := httptest.NewRecorder()
+	handler.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/v2/canvas", nil))
+	var response struct {
+		Data contractsv1.CanvasPortfolioSnapshot `json:"data"`
+	}
+	decodeBody(t, read, &response)
+	if read.Code != http.StatusOK || response.Data.SelectedCampaignId != secondCampaign.Id || len(response.Data.Campaigns) != 2 {
+		t.Fatalf("multi-Campaign readback failed: %s", read.Body.String())
+	}
+	if response.Data.Campaigns[0].Canvas.Definition.Campaign.Id != firstCampaign.Id || response.Data.Campaigns[1].Canvas.Definition.Campaign.WorkflowPlan[0] != "second-review@1" {
+		t.Fatalf("Campaign definitions were merged or invented: %+v", response.Data.Campaigns)
+	}
+	for _, item := range response.Data.Campaigns {
+		if item.State != contractsv1.CanvasEntityStatusAdmitted || item.Canvas.Definition.CampaignState != contractsv1.CanvasEntityStatusConfigured {
+			t.Fatalf("v2 state=%q rewrote v1 state=%q", item.State, item.Canvas.Definition.CampaignState)
+		}
+	}
+}
+
 func TestBuilderHTTPAdmissionReadbackKeepsTrustedRuntime(t *testing.T) {
 	body, err := os.ReadFile("../../web/public/canvas.response.json")
 	if err != nil {
@@ -82,7 +148,7 @@ func TestBuilderHTTPAdmissionReadbackKeepsTrustedRuntime(t *testing.T) {
 	}
 }
 
-func TestBuilderHTTPDoesNotRebindRuntimeAcrossDefinitions(t *testing.T) {
+func TestBuilderHTTPRejectsJobRebindingAcrossDefinitions(t *testing.T) {
 	body, err := os.ReadFile("../../web/public/canvas.response.json")
 	if err != nil {
 		t.Fatal(err)
@@ -100,8 +166,8 @@ func TestBuilderHTTPDoesNotRebindRuntimeAcrossDefinitions(t *testing.T) {
 	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@1", "rebound-review@1"}
 	handler := builderapi.NewWithCanvas(testCore(t), time.Now, &envelope.Data)
 	admissionPreview := preview(t, handler, job, campaign, definition)
-	if response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": admissionPreview}); response.Code != http.StatusOK {
-		t.Fatalf("confirm: %s", response.Body.String())
+	if response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": admissionPreview}); response.Code != http.StatusConflict {
+		t.Fatalf("Job rebind was accepted: %s", response.Body.String())
 	}
 	read := httptest.NewRecorder()
 	handler.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/v1/canvas", nil))
@@ -109,10 +175,10 @@ func TestBuilderHTTPDoesNotRebindRuntimeAcrossDefinitions(t *testing.T) {
 		Data contractsv1.CanvasSnapshot `json:"data"`
 	}
 	decodeBody(t, read, &response)
-	if len(response.Data.Executions) != 0 || len(response.Data.Replays) != 0 || response.Data.Definition.Job.Intent.Title != "Rebound job title" {
-		t.Fatalf("historical runtime was rebound to changed definitions: %s", read.Body.String())
+	if len(response.Data.Executions) != len(envelope.Data.Executions) || response.Data.Definition.Job.Intent.Title == "Rebound job title" {
+		t.Fatalf("rejected Job rebind changed historical runtime: %s", read.Body.String())
 	}
-	if response.Data.Definition.WorkflowStates["research-review@1"] == contractsv1.CanvasEntityStatusAdmitted || len(response.Data.AdmissionReplays) != 1 {
+	if _, ok := response.Data.Definition.WorkflowStates["rebound-review@1"]; ok || len(response.Data.AdmissionReplays) != 1 {
 		t.Fatalf("historical admission was rebound to changed definitions: %s", read.Body.String())
 	}
 }
@@ -144,7 +210,7 @@ func TestBuilderHTTPBindsTargetBeforeAdmission(t *testing.T) {
 	}
 }
 
-func TestBuilderHTTPProjectsOnlyCurrentWorkflowAdmissionVersion(t *testing.T) {
+func TestBuilderHTTPRejectsWorkflowVersionChangeInsideAdmittedCampaign(t *testing.T) {
 	definition := loadDefinition(t)
 	job, campaign := definitions(definition)
 	handler := builderapi.New(testCore(t), time.Now)
@@ -158,8 +224,8 @@ func TestBuilderHTTPProjectsOnlyCurrentWorkflowAdmissionVersion(t *testing.T) {
 	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@2"}
 	previewV2 := preview(t, handler, job, campaign, definition)
 	response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": previewV2})
-	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"research-review@2":"admitted"`)) {
-		t.Fatalf("confirm v2 did not project current admission: %s", response.Body.String())
+	if response.Code != http.StatusConflict {
+		t.Fatalf("admitted Campaign changed its pinned Workflow version: %s", response.Body.String())
 	}
 }
 
@@ -235,7 +301,21 @@ func TestBuilderHTTPValidatesApprovalCanvasBeforeCommit(t *testing.T) {
 	if _, err := core.ApprovalReplay(string(previewBody.Data.Brief.Id)); err == nil {
 		t.Fatal("approval was committed before Canvas validation")
 	}
-	handler = builderapi.NewWithCanvas(core, time.Now, &snapshot)
+	second := snapshot
+	second.Definition.Campaign.Id = "second-campaign"
+	second.Definition.Campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@1"}
+	second.Executions = []contractsv1.CanvasExecution{}
+	second.Replays = []contractsv1.ReplayBundle{}
+	second.ApprovalReplays = []contractsv1.ReplayBundle{}
+	portfolio := contractsv1.CanvasPortfolioSnapshot{
+		Kind: contractsv1.CanvasPortfolioSnapshotKindCanvasPortfolioSnapshot, SchemaVersion: 2,
+		Job: snapshot.Definition.Job, SelectedCampaignId: second.Definition.Campaign.Id,
+		Campaigns: []contractsv1.CanvasPortfolioCampaign{
+			{CampaignId: snapshot.Definition.Campaign.Id, State: contractsv1.CanvasEntityStatusAwaitingHuman, Canvas: snapshot},
+			{CampaignId: second.Definition.Campaign.Id, State: contractsv1.CanvasEntityStatusConfigured, Canvas: second},
+		},
+	}
+	handler = builderapi.NewWithPortfolio(core, time.Now, &portfolio)
 	request := map[string]any{"option_id": "approve", "preview": previewBody.Data}
 	if response := post(t, handler, "/v1/approvals/confirm", request); response.Code != http.StatusOK {
 		t.Fatalf("valid approval failed: %s", response.Body.String())

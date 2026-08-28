@@ -36,6 +36,7 @@ func TestAuthoringPreviewConfirmKeepsImmutableVersions(t *testing.T) {
 
 	definition.Version = 2
 	definition.Intent.Summary = "A revised immutable version."
+	campaign.Id = "revised-campaign"
 	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@2"}
 	secondPreview, _, err := core.Preview(job, campaign, definition, "operator@example.com")
 	if err != nil || secondPreview.BaseRevision != 1 {
@@ -48,6 +49,134 @@ func TestAuthoringPreviewConfirmKeepsImmutableVersions(t *testing.T) {
 	if err != nil || old.Workflow.Version != 1 || old.Workflow.Intent.Summary == definition.Intent.Summary {
 		t.Fatalf("old Workflow version changed: %+v err=%v", old, err)
 	}
+}
+
+func TestAuthoringCoreKeepsJobAndCampaignDefinitionsImmutable(t *testing.T) {
+	core := authoringCore(t)
+	firstWorkflow := authoringDefinition(t)
+	job, campaign := testDefinitions(firstWorkflow)
+	first, _, err := core.Preview(job, campaign, firstWorkflow, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Confirm(first, "operator@example.com", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	secondWorkflow := firstWorkflow
+	secondWorkflow.Id = "second-review"
+	changedJob := job
+	changedJob.Budget.MaxAttempts++
+	secondCampaign := campaign
+	secondCampaign.Id = "second-campaign"
+	secondCampaign.WorkflowPlan = []contractsv1.WorkflowRef{"second-review@1"}
+	preview, _, err := core.Preview(changedJob, secondCampaign, secondWorkflow, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Confirm(preview, "operator@example.com", time.Now().UTC()); err == nil {
+		t.Fatal("Core admitted a second definition for the same Job ID")
+	}
+
+	changedCampaign := campaign
+	changedCampaign.Budget.MaxAttempts++
+	changedCampaign.WorkflowPlan = []contractsv1.WorkflowRef{"second-review@1"}
+	preview, _, err = core.Preview(job, changedCampaign, secondWorkflow, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Confirm(preview, "operator@example.com", time.Now().UTC()); err == nil {
+		t.Fatal("Core admitted a second definition for the same Campaign ID")
+	}
+}
+
+func TestFileLedgerSerializesImmutableDefinitionsAcrossCoreInstances(t *testing.T) {
+	path := t.TempDir() + "/admissions.jsonl"
+	firstLedger, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondLedger, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := authoringDefinition(t)
+	job, campaign := testDefinitions(definition)
+	campaign.EvidenceFrontier.Cutoff = time.Now().UTC()
+	firstCore := authoringCoreWithLedger(t, firstLedger)
+	preview, report, err := firstCore.Preview(job, campaign, definition, "operator@example.com")
+	if err != nil {
+		t.Fatalf("preview: %v report=%+v", err, report)
+	}
+	if _, err := firstCore.Confirm(preview, "operator@example.com", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	definition.Id = "other-review"
+	job.Budget.MaxAttempts++
+	campaign.Id = "other-campaign"
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"other-review@1"}
+	other := authoringCoreWithLedger(t, secondLedger)
+	preview, _, err = other.Preview(job, campaign, definition, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.Confirm(preview, "operator@example.com", time.Now().UTC()); err == nil {
+		t.Fatal("a second Core instance rebound an admitted Job")
+	}
+}
+
+func TestConcurrentExactAdmissionConfirmationConverges(t *testing.T) {
+	ledger := &barrierAdmissionLedger{Ledger: workflow.NewMemoryLedger(), arrived: make(chan struct{}, 2), release: make(chan struct{})}
+	first, second := authoringCoreWithLedger(t, ledger), authoringCoreWithLedger(t, ledger)
+	definition := authoringDefinition(t)
+	job, campaign := testDefinitions(definition)
+	preview, _, err := first.Preview(job, campaign, definition, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan contractsv1.WorkflowAdmission, 2)
+	errors := make(chan error, 2)
+	for index, core := range []*workflow.AuthoringCore{first, second} {
+		go func(index int, core *workflow.AuthoringCore) {
+			admission, err := core.Confirm(preview, "operator@example.com", time.Now().UTC().Add(time.Duration(index)*time.Second))
+			results <- admission
+			errors <- err
+		}(index, core)
+	}
+	<-ledger.arrived
+	<-ledger.arrived
+	close(ledger.release)
+	left, right := <-results, <-results
+	if err := <-errors; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errors; err != nil {
+		t.Fatal(err)
+	}
+	if left.Receipt.ReceiptHash != right.Receipt.ReceiptHash {
+		t.Fatalf("exact concurrent confirmations diverged: %s != %s", left.Receipt.ReceiptHash, right.Receipt.ReceiptHash)
+	}
+}
+
+type barrierAdmissionLedger struct {
+	workflow.Ledger
+	arrived chan struct{}
+	release chan struct{}
+}
+
+func (l *barrierAdmissionLedger) Append(receipt contractsv1.Receipt) error {
+	l.arrived <- struct{}{}
+	<-l.release
+	return l.Ledger.Append(receipt)
+}
+
+func (l *barrierAdmissionLedger) AppendAdmission(receipt contractsv1.Receipt, job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition) error {
+	l.arrived <- struct{}{}
+	<-l.release
+	return l.Ledger.(interface {
+		AppendAdmission(contractsv1.Receipt, contractsv1.JobDefinition, contractsv1.CampaignDefinition) error
+	}).AppendAdmission(receipt, job, campaign)
 }
 
 func TestAuthoringPreviewRejectsUnavailableRequiredContext(t *testing.T) {
@@ -65,6 +194,16 @@ func TestAuthoringPreviewRejectsUnavailableRequiredContext(t *testing.T) {
 	_, report, err := core.Preview(job, campaign, definition, "operator@example.com")
 	if err == nil || report.Valid || report.Issues[0].Code != "context-unavailable" {
 		t.Fatalf("unavailable required Context received an admission token: report=%+v err=%v", report, err)
+	}
+}
+
+func TestAuthoringPreviewRejectsCampaignThatDropsJobLabels(t *testing.T) {
+	definition := authoringDefinition(t)
+	definition.DefaultContext = definition.DefaultContext[:1]
+	job, campaign := testDefinitions(definition)
+	job.Scope.Labels = map[string]string{"tenant": "north"}
+	if _, report, err := authoringCore(t).Preview(job, campaign, definition, "operator@example.com"); err == nil {
+		t.Fatalf("Campaign without the Job label received an admission token: report=%+v err=%v", report, err)
 	}
 }
 
@@ -167,6 +306,29 @@ func TestApprovalBindsBriefActorOptionAndStaleToken(t *testing.T) {
 	}
 	if _, err := core.ConfirmApproval(preview, "human@example.com", "approve", preview.ExpiresAt.Add(time.Second)); err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("expired approval token was accepted: %v", err)
+	}
+	barrier := &barrierAdmissionLedger{Ledger: ledger, arrived: make(chan struct{}, 2), release: make(chan struct{})}
+	results := make(chan contractsv1.Receipt, 2)
+	errors := make(chan error, 2)
+	for index, candidate := range []*workflow.AuthoringCore{authoringCoreWithLedger(t, barrier), authoringCoreWithLedger(t, barrier)} {
+		go func(index int, candidate *workflow.AuthoringCore) {
+			receipt, err := candidate.ConfirmApproval(preview, "human@example.com", "approve", time.Date(2026, 8, 28, 12, 0, index, 0, time.UTC))
+			results <- receipt
+			errors <- err
+		}(index, candidate)
+	}
+	<-barrier.arrived
+	<-barrier.arrived
+	close(barrier.release)
+	left, right := <-results, <-results
+	if err := <-errors; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errors; err != nil {
+		t.Fatal(err)
+	}
+	if left.ReceiptHash != right.ReceiptHash {
+		t.Fatal("concurrent exact approval confirmation did not converge")
 	}
 	receipt, err := core.ConfirmApproval(preview, "human@example.com", "approve", time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC))
 	if err != nil || receipt.ReceiptType != contractsv1.ReceiptReceiptTypeApproval {

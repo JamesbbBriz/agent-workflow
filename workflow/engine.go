@@ -687,8 +687,8 @@ func validateCampaignWorkflowBinding(job contractsv1.JobDefinition, campaign con
 	if campaign.JobId != job.Id {
 		return errors.New("campaign is not bound to the job")
 	}
-	if !reflect.DeepEqual(job.Scope, campaign.Scope) {
-		return errors.New("campaign scope does not match the job")
+	if !scopeWithin(job.Scope, campaign.Scope) {
+		return errors.New("campaign scope is outside the job")
 	}
 	found := false
 	for _, candidate := range campaign.WorkflowPlan {
@@ -701,6 +701,27 @@ func validateCampaignWorkflowBinding(job contractsv1.JobDefinition, campaign con
 		return errors.New("workflow is not pinned by the campaign")
 	}
 	return nil
+}
+
+func scopeWithin(job, campaign contractsv1.Scope) bool {
+	if job.SubjectType != campaign.SubjectType {
+		return false
+	}
+	allowed := make(map[string]bool, len(job.SubjectIds))
+	for _, id := range job.SubjectIds {
+		allowed[id] = true
+	}
+	for _, id := range campaign.SubjectIds {
+		if !allowed[id] {
+			return false
+		}
+	}
+	for key, value := range job.Labels {
+		if candidate, ok := campaign.Labels[key]; !ok || candidate != value {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *Engine) admissionForRun(request RunRequest) (contractsv1.WorkflowAdmission, contractsv1.ReplayBundle, error) {
@@ -1003,8 +1024,23 @@ func (l *memoryLedger) Append(receipt contractsv1.Receipt) error {
 }
 
 func (l *memoryLedger) AppendBatch(receipts []contractsv1.Receipt) error {
+	return l.appendBatch(receipts, nil)
+}
+
+func (l *memoryLedger) AppendAdmission(receipt contractsv1.Receipt, job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition) error {
+	return l.appendBatch([]contractsv1.Receipt{receipt}, func(all map[string][]contractsv1.Receipt) error {
+		return validateAdmissionDefinitionBindings(all, job, campaign)
+	})
+}
+
+func (l *memoryLedger) appendBatch(receipts []contractsv1.Receipt, validate func(map[string][]contractsv1.Receipt) error) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if validate != nil {
+		if err := validate(l.receipts); err != nil {
+			return err
+		}
+	}
 	next := make(map[string][]contractsv1.Receipt, len(l.receipts))
 	for aggregate, current := range l.receipts {
 		next[aggregate] = append([]contractsv1.Receipt(nil), current...)

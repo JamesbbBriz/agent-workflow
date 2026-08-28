@@ -813,6 +813,7 @@
       }
     },
     "CanvasSnapshot": {
+      "title": "CanvasSnapshot",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "schema_version", "generated_at", "definition", "executions", "next_safe_action", "replays"],
@@ -826,6 +827,31 @@
         "replays": { "type": "array", "items": { "$ref": "#/$defs/ReplayBundle" } },
         "admission_replays": { "type": "array", "items": { "$ref": "#/$defs/ReplayBundle" } },
         "approval_replays": { "type": "array", "items": { "$ref": "#/$defs/ReplayBundle" } }
+      }
+    },
+    "CanvasPortfolioCampaign": {
+      "title": "CanvasPortfolioCampaign",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["campaign_id", "state", "canvas"],
+      "properties": {
+        "campaign_id": { "$ref": "#/$defs/Identifier" },
+        "state": { "$ref": "#/$defs/CanvasEntityStatus" },
+        "canvas": { "$ref": "#/$defs/CanvasSnapshot" }
+      }
+    },
+    "CanvasPortfolioSnapshot": {
+      "title": "CanvasPortfolioSnapshot",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "generated_at", "job", "selected_campaign_id", "campaigns"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["canvas_portfolio_snapshot"] },
+        "schema_version": { "type": "integer", "enum": [2] },
+        "generated_at": { "type": "string", "format": "date-time" },
+        "job": { "$ref": "#/$defs/JobDefinition" },
+        "selected_campaign_id": { "$ref": "#/$defs/Identifier" },
+        "campaigns": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/CanvasPortfolioCampaign" } }
       }
     }
   }
