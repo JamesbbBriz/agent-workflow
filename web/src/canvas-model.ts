@@ -41,14 +41,14 @@ export interface BundleDifference {
   state: "added" | "removed" | "changed";
 }
 
-export function buildGraph(snapshot: CanvasSnapshot, mode: CanvasMode): CanvasGraph {
+export function buildGraph(snapshot: CanvasSnapshot, mode: CanvasMode, campaignState: CampaignState = snapshot.definition.campaign_state): CanvasGraph {
   const nodes: CanvasGraphNode[] = [];
   const edges: Edge[] = [];
   const jobNode = `job:${snapshot.definition.job.id}`;
   const campaignNode = `campaign:${snapshot.definition.campaign.id}`;
 
   nodes.push(graphNode(jobNode, 40, 220, "job", snapshot.definition.job.intent.title, snapshot.definition.job.scope.subject_ids.join(", "), "configured", snapshot.definition.job.intent));
-  nodes.push(graphNode(campaignNode, 340, 220, "campaign", snapshot.definition.campaign.intent.title, snapshot.definition.campaign.archetype, snapshot.definition.campaign_state, snapshot.definition.campaign.intent));
+  nodes.push(graphNode(campaignNode, 340, 220, "campaign", snapshot.definition.campaign.intent.title, snapshot.definition.campaign.archetype, campaignState, snapshot.definition.campaign.intent));
   edges.push(graphEdge(jobNode, campaignNode, "contains"));
 
   snapshot.definition.workflows.forEach((workflow, workflowIndex) => {

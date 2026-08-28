@@ -184,6 +184,18 @@ func TestBuilderRestartRestoresCanonicalApprovalProjection(t *testing.T) {
 	if _, err := core.ConfirmApproval(preview, "local-operator", "approve", time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
+	approval, err := core.ApprovalReplay(string(preview.Brief.Id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := *snapshot
+	other.Executions = append([]contractsv1.CanvasExecution(nil), snapshot.Executions...)
+	other.Executions[0].Outputs = append([]contractsv1.ActionArtifact(nil), snapshot.Executions[0].Outputs...)
+	other.Definition.Campaign.Id = "other-campaign"
+	other.Executions[0].Outputs[0].CampaignId = other.Definition.Campaign.Id
+	if visible, err := approvalActionVisible(other, approval); err != nil || visible {
+		t.Fatalf("approval crossed Campaigns through a shared artifact ID: visible=%v err=%v", visible, err)
+	}
 	reopened, err := workflow.OpenFileLedger(path)
 	if err != nil {
 		t.Fatal(err)
@@ -245,6 +257,7 @@ func TestBuilderRestartRestoresCanonicalAdmissionProjection(t *testing.T) {
 	definition := loadExampleWorkflow(t)
 	definition.Id = "restart-review"
 	job, campaign := snapshot.Definition.Job, snapshot.Definition.Campaign
+	campaign.Id = "restart-campaign"
 	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"restart-review@1"}
 	preview, _, err := core.Preview(job, campaign, definition, "operator@example.com")
 	if err != nil {
@@ -266,7 +279,88 @@ func TestBuilderRestartRestoresCanonicalAdmissionProjection(t *testing.T) {
 	}
 }
 
-func TestBuilderRestartDoesNotRebindAdmissionAcrossCampaignPlanChanges(t *testing.T) {
+func TestBuilderRestartRestoresTwoCampaigns(t *testing.T) {
+	sources, snapshot, err := loadCanvasSources("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "builder.jsonl")
+	ledger, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := demoAuthoringCore(ledger, sources, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := loadExampleWorkflow(t)
+	definition.Id = "second-campaign-review"
+	job, campaign := snapshot.Definition.Job, snapshot.Definition.Campaign
+	campaign.Id = "second-campaign"
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"second-campaign-review@1"}
+	preview, _, err := core.Preview(job, campaign, definition, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Confirm(preview, "operator@example.com", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	portfolio, _, err := restoreCanvasPortfolio(snapshot, reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(portfolio.Campaigns) != 2 || portfolio.SelectedCampaignId != campaign.Id {
+		t.Fatalf("restart lost independent Campaigns: %+v", portfolio)
+	}
+}
+
+func TestBuilderRestartRejectsConflictingJobDefinitions(t *testing.T) {
+	sources, snapshot, err := loadCanvasSources("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := workflow.NewMemoryLedger()
+	core, err := demoAuthoringCore(ledger, sources, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := loadExampleWorkflow(t)
+	definition.Id = "conflicting-job-review"
+	job, campaign := snapshot.Definition.Job, snapshot.Definition.Campaign
+	job.Budget.MaxAttempts++
+	campaign.Id = "conflicting-job-campaign"
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"conflicting-job-review@1"}
+	preview, _, err := core.Preview(job, campaign, definition, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Confirm(preview, "operator@example.com", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "builder.jsonl")
+	file, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := core.AdmissionReplay(string(definition.Id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, receipt := range replay.Receipts {
+		if err := file.Append(receipt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := restoreCanvasPortfolio(snapshot, file); err == nil {
+		t.Fatal("restart accepted conflicting definitions for one Job")
+	}
+}
+
+func TestBuilderRejectsAdmissionAcrossCampaignPlanChanges(t *testing.T) {
 	sources, snapshot, err := loadCanvasSources("../../web/public/canvas.response.json")
 	if err != nil {
 		t.Fatal(err)
@@ -298,19 +392,8 @@ func TestBuilderRestartDoesNotRebindAdmissionAcrossCampaignPlanChanges(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := core.Confirm(preview, "operator@example.com", time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)); err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := workflow.OpenFileLedger(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	restored, err := restoreCanvasAdmissions(snapshot, reopened)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if restored.Definition.WorkflowStates["first-review@1"] == contractsv1.CanvasEntityStatusAdmitted || restored.Definition.WorkflowStates["second-review@1"] != contractsv1.CanvasEntityStatusAdmitted || len(restored.AdmissionReplays) != 1 {
-		t.Fatalf("historical admission was rebound across Campaign definitions: %+v", restored.Definition.WorkflowStates)
+	if _, err := core.Confirm(preview, "operator@example.com", time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)); err == nil {
+		t.Fatal("Core accepted a changed Workflow plan for an admitted Campaign")
 	}
 }
 

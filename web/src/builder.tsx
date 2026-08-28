@@ -8,9 +8,11 @@ type BuilderDraft = { job: CanvasSnapshot["definition"]["job"]; campaign: Canvas
 
 export function BuilderPanel({ snapshot, onClose, onCanvas }: { snapshot: CanvasSnapshot; onClose: () => void; onCanvas: (snapshot: CanvasSnapshot) => void }) {
   const initial = snapshot.definition.workflows[0];
-  const storageKey = `agent-workflow:draft:${initial.id}`;
+  const storageKey = `agent-workflow:drafts:${snapshot.definition.job.id}`;
+  const initialDraft = { job: snapshot.definition.job, campaign: snapshot.definition.campaign, workflow: initial };
   const [catalog, setCatalog] = useState<AuthoringCatalog>();
-  const [draft, setDraft] = useState<BuilderDraft>(() => loadDraft(storageKey, { job: snapshot.definition.job, campaign: snapshot.definition.campaign, workflow: initial }));
+  const [drafts, setDrafts] = useState<BuilderDraft[]>(() => loadDrafts(storageKey, initialDraft));
+  const [selectedDraft, setSelectedDraft] = useState(() => loadSelectedDraft(`${storageKey}:selected`, snapshot.definition.campaign.id));
   const [actor, setActor] = useState("operator@example.com");
   const [lint, setLint] = useState<WorkflowLintReport>();
   const [preview, setPreview] = useState<WorkflowAdmissionPreview>();
@@ -19,12 +21,29 @@ export function BuilderPanel({ snapshot, onClose, onCanvas }: { snapshot: Canvas
 
   useEffect(() => { request<AuthoringCatalog>("/v1/catalog").then(setCatalog).catch((reason) => setError(reason.message)); }, []);
   const nodeKinds = useMemo(() => [...new Set(catalog?.executors.map((item) => item.node_kind) ?? [])], [catalog]);
+  const draft = drafts.find((item) => item.campaign.id === selectedDraft) ?? drafts[0] ?? initialDraft;
 
   const update = (next: BuilderDraft) => {
-    setDraft(next); setPreview(undefined); setLint(undefined); setError(undefined);
-    localStorage.setItem(storageKey, JSON.stringify(next));
+    const nextDrafts = drafts.map((item) => item.campaign.id === draft.campaign.id ? next : item);
+    setDrafts(nextDrafts); setSelectedDraft(next.campaign.id); setPreview(undefined); setLint(undefined); setError(undefined);
+    localStorage.setItem(storageKey, JSON.stringify(nextDrafts)); localStorage.setItem(`${storageKey}:selected`, next.campaign.id);
   };
-  const updateWorkflow = (workflow: WorkflowDefinitionElement) => update({ ...draft, workflow });
+  const updateWorkflow = (workflow: WorkflowDefinitionElement) => update({
+    ...draft,
+    campaign: { ...draft.campaign, workflow_plan: draft.campaign.workflow_plan.map((ref) => ref.startsWith(`${draft.workflow.id}@`) ? `${workflow.id}@${workflow.version}` : ref) as typeof draft.campaign.workflow_plan },
+    workflow,
+  });
+  const newCampaign = () => {
+    const workflow = { ...draft.workflow, id: `${draft.workflow.id}-new`, version: 1 };
+    const next = {
+      job: draft.job,
+      campaign: { ...draft.campaign, id: `${draft.campaign.id}-new`, workflow_plan: [`${workflow.id}@1`] },
+      workflow,
+    } as BuilderDraft;
+    const nextDrafts = [...drafts, next];
+    setDrafts(nextDrafts); setSelectedDraft(next.campaign.id); setPreview(undefined); setLint(undefined); setError(undefined);
+    localStorage.setItem(storageKey, JSON.stringify(nextDrafts)); localStorage.setItem(`${storageKey}:selected`, next.campaign.id);
+  };
   const addNode = () => {
     const executor = catalog?.executors[0];
     const outputSchema = catalog?.output_schemas[0];
@@ -53,7 +72,9 @@ export function BuilderPanel({ snapshot, onClose, onCanvas }: { snapshot: Canvas
     setBusy(true); setError(undefined);
     try {
       const result = await request<{ canvas: CanvasSnapshot }>("/v1/workflows/confirm", { actor, preview });
-      onCanvas(mergeAdmissionReadback(snapshot, result.canvas)); localStorage.removeItem(storageKey); onClose();
+      const remaining = drafts.filter((item) => item.campaign.id !== draft.campaign.id);
+      if (remaining.length > 0) localStorage.setItem(storageKey, JSON.stringify(remaining)); else localStorage.removeItem(storageKey);
+      localStorage.removeItem(`${storageKey}:selected`); onCanvas(mergeAdmissionReadback(snapshot, result.canvas)); onClose();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Confirmation failed"); }
     finally { setBusy(false); }
   };
@@ -66,14 +87,20 @@ export function BuilderPanel({ snapshot, onClose, onCanvas }: { snapshot: Canvas
       </header>
       <div className="builder-body">
         <section className="builder-section">
-          <h3>Job and Campaign boundary</h3>
+          <h3>Job and Campaign boundary <button type="button" onClick={newCampaign}><Plus size={15} /> New Campaign</button></h3>
           <div className="form-grid">
+            <Field label="Draft Campaign" wide><select value={draft.campaign.id} onChange={(event) => { setSelectedDraft(event.target.value); localStorage.setItem(`${storageKey}:selected`, event.target.value); setPreview(undefined); setLint(undefined); setError(undefined); }}>{drafts.map((item) => <option key={item.campaign.id} value={item.campaign.id}>{item.campaign.intent.title}</option>)}</select></Field>
             <Field label="Job ID"><input value={draft.job.id} onChange={(event) => update({ ...draft, job: { ...draft.job, id: event.target.value } })} /></Field>
             <Field label="Job title"><input value={draft.job.intent.title} onChange={(event) => update({ ...draft, job: { ...draft.job, intent: { ...draft.job.intent, title: event.target.value } } })} /></Field>
             <Field label="Campaign ID"><input value={draft.campaign.id} onChange={(event) => update({ ...draft, campaign: { ...draft.campaign, id: event.target.value } })} /></Field>
             <Field label="Campaign title"><input value={draft.campaign.intent.title} onChange={(event) => update({ ...draft, campaign: { ...draft.campaign, intent: { ...draft.campaign.intent, title: event.target.value } } })} /></Field>
             <Field label="Job objective" wide><textarea value={draft.job.intent.objective} onChange={(event) => update({ ...draft, job: { ...draft.job, intent: { ...draft.job.intent, objective: event.target.value } } })} /></Field>
             <Field label="Campaign objective" wide><textarea value={draft.campaign.intent.objective} onChange={(event) => update({ ...draft, campaign: { ...draft.campaign, intent: { ...draft.campaign.intent, objective: event.target.value } } })} /></Field>
+            <Field label="Campaign scope" wide><input value={draft.campaign.scope.subject_ids.join(", ")} onChange={(event) => { const ids = event.target.value.split(",").map((item) => item.trim()).filter(Boolean); if (ids.length > 0) update({ ...draft, campaign: { ...draft.campaign, scope: { ...draft.campaign.scope, subject_ids: ids as typeof draft.campaign.scope.subject_ids } } }); }} /></Field>
+            <Field label="Evidence cutoff"><input value={draft.campaign.evidence_frontier.cutoff} onChange={(event) => update({ ...draft, campaign: { ...draft.campaign, evidence_frontier: { ...draft.campaign.evidence_frontier, cutoff: event.target.value } } })} /></Field>
+            <Field label="Campaign attempts"><input type="number" min={1} value={draft.campaign.budget.max_attempts} onChange={(event) => update({ ...draft, campaign: { ...draft.campaign, budget: { ...draft.campaign.budget, max_attempts: Number(event.target.value) } } })} /></Field>
+            <Field label="Campaign actions"><input type="number" min={0} value={draft.campaign.budget.max_actions} onChange={(event) => update({ ...draft, campaign: { ...draft.campaign, budget: { ...draft.campaign.budget, max_actions: Number(event.target.value) } } })} /></Field>
+            <Field label="Campaign candidates"><input type="number" min={0} value={draft.campaign.budget.max_candidates} onChange={(event) => update({ ...draft, campaign: { ...draft.campaign, budget: { ...draft.campaign.budget, max_candidates: Number(event.target.value) } } })} /></Field>
             <Field label="Job attempts"><input type="number" min={1} value={draft.job.budget.max_attempts} onChange={(event) => update({ ...draft, job: { ...draft.job, budget: { ...draft.job.budget, max_attempts: Number(event.target.value) } } })} /></Field>
             <Field label="Job actions"><input type="number" min={0} value={draft.job.budget.max_actions} onChange={(event) => update({ ...draft, job: { ...draft.job, budget: { ...draft.job.budget, max_actions: Number(event.target.value) } } })} /></Field>
           </div>
@@ -238,14 +265,19 @@ function updateNode(draft: WorkflowDefinitionElement, index: number, patch: Part
   const nodes = [...draft.nodes] as WorkflowDefinitionElement["nodes"]; nodes[index] = { ...nodes[index], ...patch }; update({ ...draft, nodes });
 }
 
-function loadDraft(key: string, fallback: BuilderDraft): BuilderDraft {
+function loadDrafts(key: string, fallback: BuilderDraft): BuilderDraft[] {
   try {
     const stored = localStorage.getItem(key);
-    if (!stored) return structuredClone(fallback);
-    const parsed = JSON.parse(stored) as BuilderDraft | WorkflowDefinitionElement;
-    return "workflow" in parsed ? parsed : { ...structuredClone(fallback), workflow: parsed };
+    if (!stored) return [structuredClone(fallback)];
+    const parsed = JSON.parse(stored) as BuilderDraft[];
+    return parsed.length > 0 ? parsed : [structuredClone(fallback)];
   }
-  catch { return structuredClone(fallback); }
+  catch { return [structuredClone(fallback)]; }
+}
+
+function loadSelectedDraft(key: string, fallback: string): string {
+  try { return localStorage.getItem(key) ?? fallback; }
+  catch { return fallback; }
 }
 
 async function request<T>(path: string, body?: unknown): Promise<T> {

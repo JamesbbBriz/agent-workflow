@@ -117,6 +117,16 @@ func (l *FileLedger) Append(receipt contractsv1.Receipt) error {
 }
 
 func (l *FileLedger) AppendBatch(receipts []contractsv1.Receipt) error {
+	return l.appendBatch(receipts, nil)
+}
+
+func (l *FileLedger) AppendAdmission(receipt contractsv1.Receipt, job contractsv1.JobDefinition, campaign contractsv1.CampaignDefinition) error {
+	return l.appendBatch([]contractsv1.Receipt{receipt}, func(all map[string][]contractsv1.Receipt) error {
+		return validateAdmissionDefinitionBindings(all, job, campaign)
+	})
+}
+
+func (l *FileLedger) appendBatch(receipts []contractsv1.Receipt, validate func(map[string][]contractsv1.Receipt) error) error {
 	if len(receipts) == 0 {
 		return nil
 	}
@@ -130,6 +140,11 @@ func (l *FileLedger) AppendBatch(receipts []contractsv1.Receipt) error {
 	all, err := l.load()
 	if err != nil {
 		return err
+	}
+	if validate != nil {
+		if err := validate(all); err != nil {
+			return err
+		}
 	}
 	missing := make([]contractsv1.Receipt, 0, len(receipts))
 	for _, receipt := range receipts {

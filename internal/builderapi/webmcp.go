@@ -71,6 +71,14 @@ type webMCPAuditRecord struct {
 }
 
 func NewWithWebMCP(core *workflow.AuthoringCore, now func() time.Time, snapshot *contractsv1.CanvasSnapshot, config WebMCPConfig) (http.Handler, error) {
+	return newWithWebMCP(NewWithCanvas(core, now, snapshot).(*Handler), config)
+}
+
+func NewWithWebMCPPortfolio(core *workflow.AuthoringCore, now func() time.Time, portfolio *contractsv1.CanvasPortfolioSnapshot, config WebMCPConfig) (http.Handler, error) {
+	return newWithWebMCP(NewWithPortfolio(core, now, portfolio).(*Handler), config)
+}
+
+func newWithWebMCP(handler *Handler, config WebMCPConfig) (http.Handler, error) {
 	if config.Audit == nil {
 		return nil, errors.New("WebMCP audit writer is required")
 	}
@@ -89,7 +97,6 @@ func NewWithWebMCP(core *workflow.AuthoringCore, now func() time.Time, snapshot 
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return nil, errors.New("WebMCP session token is unavailable")
 	}
-	handler := NewWithCanvas(core, now, snapshot).(*Handler)
 	handler.webMCP = &webMCPGate{origin: origin.String(), token: hex.EncodeToString(tokenBytes), subject: webMCPLocalSubject, audit: config.Audit, limit: limit, usage: map[string]webMCPUsage{}}
 	return handler, nil
 }

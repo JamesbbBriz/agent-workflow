@@ -20,7 +20,7 @@ import {
   Wrench,
   X,
 } from "@phosphor-icons/react";
-import type { CanvasSnapshot, ContextPortElement } from "./generated/agent-workflow.v1";
+import type { CanvasPortfolioSnapshot, CanvasSnapshot, ContextPortElement } from "./generated/agent-workflow.v1";
 import { buildGraph, compareBundles, humanize, type CanvasGraphNode, type CanvasMode, type CanvasNodeData } from "./canvas-model";
 import { ApprovalPanel, BuilderPanel } from "./builder";
 import { installWebMCP } from "./webmcp";
@@ -33,32 +33,28 @@ interface CanvasResponse {
   data: CanvasSnapshot;
 }
 
+interface PortfolioResponse {
+  ok: boolean;
+  data: CanvasPortfolioSnapshot;
+}
+
 export function App() {
-  const [snapshot, setSnapshot] = useState<CanvasSnapshot>();
+  const [portfolio, setPortfolio] = useState<CanvasPortfolioSnapshot>();
   const [error, setError] = useState<string>();
   const [mode, setMode] = useState<CanvasMode>("runtime");
   const [selection, setSelection] = useState<Selection>();
   const [comparing, setComparing] = useState(false);
   const [building, setBuilding] = useState(false);
   const [approving, setApproving] = useState<CanvasNodeData>();
+  const selectedCampaign = portfolio?.campaigns.find((item) => item.campaign_id === portfolio.selected_campaign_id);
+  const snapshot = selectedCampaign?.canvas;
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
 
+  const setSnapshot = (next: CanvasSnapshot) => { void loadPortfolio().then(setPortfolio).catch(() => setPortfolio((current) => mergeCanvasIntoPortfolio(current, next))); };
+
   useEffect(() => {
-    fetch("/v1/canvas")
-      .then((response) => {
-        if (!response.ok) return fetch("/canvas.response.json");
-        return response;
-      })
-      .then((response) => {
-        if (!response.ok) throw new Error("Canvas data is unavailable.");
-        return response.json() as Promise<CanvasResponse>;
-      })
-      .then((response) => {
-        if (!response.ok) throw new Error("Canvas data was rejected by the Core.");
-        setSnapshot(response.data);
-      })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Canvas data is unavailable."));
+    void loadPortfolio().then(setPortfolio).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Canvas data is unavailable."));
   }, []);
 
   useEffect(() => {
@@ -76,9 +72,9 @@ export function App() {
       },
     }).then((cleanup) => disposed ? cleanup() : (uninstall = cleanup)).catch(() => undefined);
     return () => { disposed = true; lifecycle.abort(); uninstall(); };
-  }, [snapshot?.definition.job.id]);
+  }, [snapshot?.definition.job.id, snapshot?.definition.campaign.id]);
 
-  const graph = useMemo(() => snapshot ? buildGraph(snapshot, mode) : { nodes: [], edges: [] }, [snapshot, mode]);
+  const graph = useMemo(() => snapshot ? buildGraph(snapshot, mode, selectedCampaign?.state) : { nodes: [], edges: [] }, [snapshot, mode, selectedCampaign?.state]);
   const nodes = useMemo(() => graph.nodes.map((node) => ({
     ...node,
 	data: {
@@ -89,7 +85,7 @@ export function App() {
   })), [graph.nodes]);
 
   if (error) return <StateScreen title="Canvas unavailable" detail={error} />;
-  if (!snapshot) return <StateScreen title="Loading canonical graph" detail="Reading the generated Canvas snapshot." loading />;
+  if (!snapshot || !portfolio) return <StateScreen title="Loading canonical graph" detail="Reading the generated Canvas snapshot." loading />;
 
   const canCompare = snapshot.executions.length > 1;
   return (
@@ -100,6 +96,12 @@ export function App() {
           <span>Job</span>
           <select aria-label="Select Job" value={snapshot.definition.job.id} onChange={() => undefined}>
             <option value={snapshot.definition.job.id}>{snapshot.definition.job.intent.title}</option>
+          </select>
+        </label>
+        <label className="job-picker">
+          <span>Campaign</span>
+          <select aria-label="Select Campaign" value={snapshot.definition.campaign.id} onChange={(event) => setPortfolio({ ...portfolio, selected_campaign_id: event.target.value })}>
+            {portfolio.campaigns.map((item) => <option key={item.campaign_id} value={item.campaign_id}>{item.canvas.definition.campaign.intent.title}</option>)}
           </select>
         </label>
         <div className="view-switch" aria-label="Canvas view">
@@ -139,6 +141,32 @@ export function App() {
       </footer>
     </main>
   );
+}
+
+async function loadPortfolio(): Promise<CanvasPortfolioSnapshot> {
+  const portfolioResponse = await fetch("/v2/canvas");
+  if (portfolioResponse.ok) {
+    const body = await portfolioResponse.json() as PortfolioResponse;
+    if (!body.ok) throw new Error("Canvas data was rejected by the Core.");
+    return body.data;
+  }
+  let response = await fetch("/v1/canvas");
+  if (!response.ok) response = await fetch("/canvas.response.json");
+  if (!response.ok) throw new Error("Canvas data is unavailable.");
+  const body = await response.json() as CanvasResponse;
+  if (!body.ok) throw new Error("Canvas data was rejected by the Core.");
+  return mergeCanvasIntoPortfolio(undefined, body.data);
+}
+
+function mergeCanvasIntoPortfolio(current: CanvasPortfolioSnapshot | undefined, next: CanvasSnapshot): CanvasPortfolioSnapshot {
+  if (!current || current.job.id !== next.definition.job.id) {
+    return { kind: "canvas_portfolio_snapshot", schema_version: 2, generated_at: next.generated_at, job: next.definition.job, selected_campaign_id: next.definition.campaign.id, campaigns: [{ campaign_id: next.definition.campaign.id, state: next.definition.campaign_state, canvas: next }] };
+  }
+  const campaign = { campaign_id: next.definition.campaign.id, state: next.definition.campaign_state, canvas: next } as CanvasPortfolioSnapshot["campaigns"][number];
+  const campaigns = (current.campaigns.some((item) => item.campaign_id === campaign.campaign_id)
+    ? current.campaigns.map((item) => item.campaign_id === campaign.campaign_id ? campaign : item)
+    : [...current.campaigns, campaign]) as CanvasPortfolioSnapshot["campaigns"];
+  return { ...current, generated_at: next.generated_at > current.generated_at ? next.generated_at : current.generated_at, selected_campaign_id: next.definition.campaign.id, campaigns };
 }
 
 function GraphNodeCard({ data, selected }: NodeProps<CanvasGraphNode>) {
