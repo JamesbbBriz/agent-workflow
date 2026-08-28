@@ -23,10 +23,11 @@ func TestChangeCaseCoordinatesTwoCampaignsThroughConflictApprovalAndReadback(t *
 	authority := &testResourceAuthority{current: resource}
 	mutation := &testMutationAdapter{}
 	core := workflow.NewChangeCaseCore(workflow.NewMemoryLedger(), sources, outputCatalog(), workflow.ChangeCaseCatalog{
-		Mergers:        map[contractsv1.Identifier]workflow.ChangeMergeAdapter{"document": conflictMerge{}},
-		Resources:      map[contractsv1.Identifier]workflow.ResourceAuthority{"document": authority},
-		Mutations:      map[contractsv1.Identifier]workflow.MutationAdapter{"document": mutation},
-		ApprovalActors: map[contractsv1.Identifier][]string{"document": {"reviewer@example.com"}},
+		Mergers:           map[contractsv1.Identifier]workflow.ChangeMergeAdapter{"document": conflictMerge{}},
+		Resources:         map[contractsv1.Identifier]workflow.ResourceAuthority{"document": authority},
+		Mutations:         map[contractsv1.Identifier]workflow.MutationAdapter{"document": mutation},
+		ApprovalActors:    map[contractsv1.Identifier][]string{"document": {"reviewer@example.com"}},
+		ResolutionSources: map[contractsv1.Identifier][]workflow.ResolutionSourceAuthority{"document": {{WorkflowRef: "workflow-campaign-resolver@1", NodeID: "research", Reason: contractsv1.ProposalReplacementReasonResolver}}},
 	})
 	at := time.Now().UTC()
 	ready, err := core.SubmitProposal(ctx, resource, first, at)
@@ -46,6 +47,11 @@ func TestChangeCaseCoordinatesTwoCampaignsThroughConflictApprovalAndReadback(t *
 		t.Fatal("conflicted case acquired a lease without an exact resolution approval")
 	}
 	resolutionSource.Replacement = &contractsv1.ProposalReplacement{ProposalId: conflicted.Proposals[0].Id, Reason: contractsv1.ProposalReplacementReasonResolver}
+	selfAttested := first
+	selfAttested.Replacement = resolutionSource.Replacement
+	if _, err := core.ProposeResolution(conflicted.Id, selfAttested, at.Add(3*time.Second)); err == nil {
+		t.Fatal("a conflicting source self-attested as the resolver")
+	}
 	resolved, err := core.ProposeResolution(conflicted.Id, resolutionSource, at.Add(3*time.Second))
 	if err != nil || resolved.Status != contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval {
 		t.Fatalf("resolution was not reviewable: state=%+v err=%v", resolved, err)
@@ -153,13 +159,55 @@ func TestChangeCaseResumesReadbackWithoutRepeatingAppliedEffect(t *testing.T) {
 	if _, err = core.Apply(context.Background(), approved.Id, at.Add(3*time.Second)); err == nil {
 		t.Fatal("injected readback receipt failure was not observed")
 	}
-	now = leased.Lease.ExpiresAt.Add(time.Second)
+	now = leased.Lease.ExpiresAt
 	if _, err = core.AcquireLease(context.Background(), approved.Id, time.Minute, now); err == nil {
 		t.Fatal("an applied change case acquired another mutation lease")
 	}
 	completed, err := core.Apply(context.Background(), approved.Id, at.Add(4*time.Second))
 	if err != nil || completed.Status != contractsv1.ChangeCaseStateStatusCompleted || mutation.applies != 1 || mutation.readbacks != 2 {
 		t.Fatalf("readback recovery repeated apply or failed: state=%+v adapter=%+v err=%v", completed, mutation, err)
+	}
+}
+
+func TestChangeCaseDoesNotReplaceLeaseAfterUncertainApply(t *testing.T) {
+	sources := workflow.NewMemoryLedger()
+	source := completedChangeSource(t, sources, "campaign-a", map[string]any{"recommendation": "A"})
+	resource := resourceFixture(t, 1, map[string]any{"title": "baseline"})
+	ledger := &failNthAppendLedger{Ledger: workflow.NewMemoryLedger(), failAt: 5}
+	mutation := &testMutationAdapter{}
+	now := time.Now().UTC()
+	core := workflow.NewChangeCaseCore(ledger, sources, outputCatalog(), workflow.ChangeCaseCatalog{
+		Mergers:        map[contractsv1.Identifier]workflow.ChangeMergeAdapter{"document": conflictMerge{}},
+		Resources:      map[contractsv1.Identifier]workflow.ResourceAuthority{"document": &testResourceAuthority{current: resource}},
+		Mutations:      map[contractsv1.Identifier]workflow.MutationAdapter{"document": mutation},
+		ApprovalActors: map[contractsv1.Identifier][]string{"document": {"reviewer@example.com"}},
+		Clock:          func() time.Time { return now },
+	})
+	ready, err := core.SubmitProposal(context.Background(), resource, source, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := core.PreviewApproval(ready.Id, "reviewer@example.com", now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved, err := core.ConfirmApproval(preview, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leased, err := core.AcquireLease(context.Background(), approved.Id, time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Apply(context.Background(), approved.Id, now); err == nil || mutation.applies != 1 {
+		t.Fatalf("fixture did not stop after the uncertain external apply: applies=%d err=%v", mutation.applies, err)
+	}
+	now = leased.Lease.ExpiresAt
+	if _, err := core.AcquireLease(context.Background(), approved.Id, time.Minute, now); err == nil {
+		t.Fatal("uncertain external apply obtained replacement mutation authority")
+	}
+	if _, err := core.Apply(context.Background(), approved.Id, now); err == nil || mutation.applies != 1 {
+		t.Fatalf("expired uncertain apply repeated the external effect: applies=%d err=%v", mutation.applies, err)
 	}
 }
 
@@ -289,7 +337,7 @@ func TestChangeCaseUsesTrustedClockForApprovalAndLeaseExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	now = leased.Lease.ExpiresAt.Add(time.Second)
+	now = leased.Lease.ExpiresAt
 	if _, err := core.Apply(context.Background(), approved.Id, leased.Lease.AcquiredAt); err == nil {
 		t.Fatal("caller-supplied timestamp revived an expired mutation lease")
 	}

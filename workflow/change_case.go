@@ -32,23 +32,31 @@ type MutationAdapter interface {
 	Readback(context.Context, contractsv1.MutationLease) (contractsv1.SHA256, error)
 }
 
+type ResolutionSourceAuthority struct {
+	WorkflowRef contractsv1.WorkflowRef
+	NodeID      contractsv1.Identifier
+	Reason      contractsv1.ProposalReplacementReason
+}
+
 type ChangeCaseCatalog struct {
-	Mergers        map[contractsv1.Identifier]ChangeMergeAdapter
-	Resources      map[contractsv1.Identifier]ResourceAuthority
-	Mutations      map[contractsv1.Identifier]MutationAdapter
-	ApprovalActors map[contractsv1.Identifier][]string
-	Clock          func() time.Time
+	Mergers           map[contractsv1.Identifier]ChangeMergeAdapter
+	Resources         map[contractsv1.Identifier]ResourceAuthority
+	Mutations         map[contractsv1.Identifier]MutationAdapter
+	ApprovalActors    map[contractsv1.Identifier][]string
+	ResolutionSources map[contractsv1.Identifier][]ResolutionSourceAuthority
+	Clock             func() time.Time
 }
 
 type ChangeCaseCore struct {
-	ledger         Ledger
-	sources        Ledger
-	outputs        OutputCatalog
-	mergers        map[contractsv1.Identifier]ChangeMergeAdapter
-	resources      map[contractsv1.Identifier]ResourceAuthority
-	mutations      map[contractsv1.Identifier]MutationAdapter
-	approvalActors map[contractsv1.Identifier]map[string]bool
-	now            func() time.Time
+	ledger            Ledger
+	sources           Ledger
+	outputs           OutputCatalog
+	mergers           map[contractsv1.Identifier]ChangeMergeAdapter
+	resources         map[contractsv1.Identifier]ResourceAuthority
+	mutations         map[contractsv1.Identifier]MutationAdapter
+	approvalActors    map[contractsv1.Identifier]map[string]bool
+	resolutionSources map[contractsv1.Identifier]map[ResolutionSourceAuthority]bool
+	now               func() time.Time
 }
 
 var ErrResourceGenerationAdvanced = errors.New("resource_generation_advanced")
@@ -74,8 +82,15 @@ func NewChangeCaseCore(ledger, sources Ledger, outputs OutputCatalog, catalog Ch
 	core := &ChangeCaseCore{
 		ledger: ledger, sources: sources, outputs: outputs,
 		mergers: catalog.Mergers, resources: catalog.Resources, mutations: catalog.Mutations,
-		approvalActors: make(map[contractsv1.Identifier]map[string]bool, len(catalog.ApprovalActors)),
-		now:            catalog.Clock,
+		approvalActors:    make(map[contractsv1.Identifier]map[string]bool, len(catalog.ApprovalActors)),
+		resolutionSources: make(map[contractsv1.Identifier]map[ResolutionSourceAuthority]bool, len(catalog.ResolutionSources)),
+		now:               catalog.Clock,
+	}
+	for resourceType, sources := range catalog.ResolutionSources {
+		core.resolutionSources[resourceType] = map[ResolutionSourceAuthority]bool{}
+		for _, source := range sources {
+			core.resolutionSources[resourceType][source] = true
+		}
 	}
 	if core.now == nil {
 		core.now = time.Now
@@ -227,6 +242,9 @@ func (c *ChangeCaseCore) ProposeResolution(caseID string, source ChangeProposalS
 	if state.Resolution != nil && state.Resolution.ResolutionProposalId == proposal.Id {
 		return state, nil
 	}
+	if !c.resolutionSources[state.Resource.ResourceType][ResolutionSourceAuthority{WorkflowRef: proposal.WorkflowRef, NodeID: proposal.NodeId, Reason: source.Replacement.Reason}] || proposalResultPresent(state.Proposals, proposal.SourceResultAggregateId) {
+		return contractsv1.ChangeCaseState{}, errors.New("resolution proposal is not from a registered distinct resolver or human implementation Node")
+	}
 	if state.Status != contractsv1.ChangeCaseStateStatusConflicted || state.Conflicts == nil {
 		return contractsv1.ChangeCaseState{}, errors.New("change case has no unresolved conflict")
 	}
@@ -334,7 +352,7 @@ func (c *ChangeCaseCore) AcquireLease(ctx context.Context, caseID string, ttl ti
 	if state.ResolutionApprovalHash == nil || state.MergedChangeHash == nil {
 		return contractsv1.ChangeCaseState{}, errors.New("exact change approval is required")
 	}
-	if state.Status != contractsv1.ChangeCaseStateStatusReady && state.Status != contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval && state.Status != contractsv1.ChangeCaseStateStatusLeased {
+	if state.Status != contractsv1.ChangeCaseStateStatusReady && state.Status != contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval {
 		return contractsv1.ChangeCaseState{}, errors.New("change case cannot acquire another mutation lease")
 	}
 	if !c.approvalAllowed(state, *replay) {
@@ -385,7 +403,7 @@ func (c *ChangeCaseCore) Apply(ctx context.Context, caseID string, occurredAt ti
 		return contractsv1.ChangeCaseState{}, errors.New("resource type has no mutation adapter")
 	}
 	if state.Status == contractsv1.ChangeCaseStateStatusLeased {
-		if now.After(state.Lease.ExpiresAt) {
+		if !now.Before(state.Lease.ExpiresAt) {
 			return contractsv1.ChangeCaseState{}, errors.New("an active exact mutation lease is required")
 		}
 		if err := c.checkCurrent(ctx, state.Resource); err != nil {
@@ -693,7 +711,7 @@ func validateChangeCaseTransition(previous, next contractsv1.ChangeCaseState, re
 	case contractsv1.ReceiptReceiptTypeResolutionApproved:
 		valid = sameProposalCount && (previous.Status == contractsv1.ChangeCaseStateStatusReady || previous.Status == contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval) && next.Status == previous.Status && receipt.Actor != nil
 	case contractsv1.ReceiptReceiptTypeMutationLeaseAcquired:
-		valid = sameProposalCount && previous.ResolutionApprovalHash != nil && (previous.Status == contractsv1.ChangeCaseStateStatusReady || previous.Status == contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval || previous.Status == contractsv1.ChangeCaseStateStatusLeased) && next.Status == contractsv1.ChangeCaseStateStatusLeased && next.Lease != nil && next.Lease.ApprovalReceiptHash == *previous.ResolutionApprovalHash
+		valid = sameProposalCount && previous.ResolutionApprovalHash != nil && (previous.Status == contractsv1.ChangeCaseStateStatusReady || previous.Status == contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval) && next.Status == contractsv1.ChangeCaseStateStatusLeased && next.Lease != nil && next.Lease.ApprovalReceiptHash == *previous.ResolutionApprovalHash
 	case contractsv1.ReceiptReceiptTypeMutationApplied:
 		valid = sameProposalCount && previous.Status == contractsv1.ChangeCaseStateStatusLeased && next.Status == contractsv1.ChangeCaseStateStatusApplied && next.ApplyEvidence != nil
 	case contractsv1.ReceiptReceiptTypeMutationReadback:
@@ -824,6 +842,15 @@ func conflictContainsProposal(conflicts *contractsv1.ConflictSet, id contractsv1
 			if proposalID == id {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func proposalResultPresent(proposals []contractsv1.ChangeProposal, resultAggregateID string) bool {
+	for _, proposal := range proposals {
+		if proposal.SourceResultAggregateId == resultAggregateID {
+			return true
 		}
 	}
 	return false
