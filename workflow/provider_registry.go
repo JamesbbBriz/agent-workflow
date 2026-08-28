@@ -21,11 +21,19 @@ type ProviderReadiness struct {
 }
 
 var bundledProviders = []contractsv1.ProviderDescriptor{
-	providerDescriptor(contractsv1.ProviderIDCodex, "Codex", "agent-workflow-codex", []string{"OPENAI_API_KEY"}, contractsv1.ProviderCapabilityStreaming, contractsv1.ProviderCapabilityPolling, contractsv1.ProviderCapabilityScopedCancel, contractsv1.ProviderCapabilityResume, contractsv1.ProviderCapabilityStructuredOutput, contractsv1.ProviderCapabilityToolAllowlist, contractsv1.ProviderCapabilityUsage, contractsv1.ProviderCapabilityEventCursor),
-	providerDescriptor(contractsv1.ProviderIDClaudeCode, "Claude Code", "agent-workflow-claude-code", []string{"ANTHROPIC_API_KEY"}, contractsv1.ProviderCapabilityStreaming, contractsv1.ProviderCapabilityPolling, contractsv1.ProviderCapabilityScopedCancel, contractsv1.ProviderCapabilityResume, contractsv1.ProviderCapabilityStructuredOutput, contractsv1.ProviderCapabilityToolAllowlist, contractsv1.ProviderCapabilityUsage, contractsv1.ProviderCapabilityEventCursor),
-	providerDescriptor(contractsv1.ProviderIDPi, "Pi", "agent-workflow-pi", nil, contractsv1.ProviderCapabilityStreaming, contractsv1.ProviderCapabilityPolling, contractsv1.ProviderCapabilityScopedCancel, contractsv1.ProviderCapabilityResume, contractsv1.ProviderCapabilityToolAllowlist, contractsv1.ProviderCapabilityUsage, contractsv1.ProviderCapabilityEventCursor),
-	providerDescriptor(contractsv1.ProviderIDOpenclaw, "OpenClaw", "agent-workflow-openclaw", nil, contractsv1.ProviderCapabilityStreaming, contractsv1.ProviderCapabilityPolling, contractsv1.ProviderCapabilityScopedCancel, contractsv1.ProviderCapabilityResume, contractsv1.ProviderCapabilityToolAllowlist, contractsv1.ProviderCapabilityInteractiveApproval, contractsv1.ProviderCapabilityUsage, contractsv1.ProviderCapabilityEventCursor),
-	providerDescriptor(contractsv1.ProviderIDHermesAgent, "Hermes Agent", "agent-workflow-hermes", nil, contractsv1.ProviderCapabilityStreaming, contractsv1.ProviderCapabilityPolling, contractsv1.ProviderCapabilityScopedCancel, contractsv1.ProviderCapabilityResume, contractsv1.ProviderCapabilityToolAllowlist, contractsv1.ProviderCapabilityInteractiveApproval, contractsv1.ProviderCapabilityUsage, contractsv1.ProviderCapabilityEventCursor),
+	providerDescriptor(contractsv1.ProviderIDCodex, "Codex", "agent-workflow-codex", []string{"OPENAI_API_KEY"}, contractsv1.ProviderCapabilityPolling, contractsv1.ProviderCapabilityScopedCancel, contractsv1.ProviderCapabilityStructuredOutput, contractsv1.ProviderCapabilityToolAllowlist, contractsv1.ProviderCapabilityEventCursor),
+	providerDescriptor(contractsv1.ProviderIDClaudeCode, "Claude Code", "agent-workflow-claude-code", []string{"ANTHROPIC_API_KEY"}, contractsv1.ProviderCapabilityPolling, contractsv1.ProviderCapabilityScopedCancel, contractsv1.ProviderCapabilityStructuredOutput, contractsv1.ProviderCapabilityToolAllowlist, contractsv1.ProviderCapabilityEventCursor),
+	providerDescriptor(contractsv1.ProviderIDPi, "Pi", "agent-workflow-pi", []string{"AGENT_WORKFLOW_PROVIDER_TOKEN"}, contractsv1.ProviderCapabilityPolling, contractsv1.ProviderCapabilityScopedCancel, contractsv1.ProviderCapabilityStructuredOutput, contractsv1.ProviderCapabilityToolAllowlist, contractsv1.ProviderCapabilityEventCursor),
+	providerDescriptor(contractsv1.ProviderIDOpenclaw, "OpenClaw", "agent-workflow-openclaw", []string{"AGENT_WORKFLOW_PROVIDER_TOKEN"}, contractsv1.ProviderCapabilityPolling, contractsv1.ProviderCapabilityScopedCancel, contractsv1.ProviderCapabilityStructuredOutput, contractsv1.ProviderCapabilityToolAllowlist, contractsv1.ProviderCapabilityEventCursor),
+	providerDescriptor(contractsv1.ProviderIDHermesAgent, "Hermes Agent", "agent-workflow-hermes", []string{"AGENT_WORKFLOW_PROVIDER_TOKEN"}, contractsv1.ProviderCapabilityPolling, contractsv1.ProviderCapabilityScopedCancel, contractsv1.ProviderCapabilityStructuredOutput, contractsv1.ProviderCapabilityToolAllowlist, contractsv1.ProviderCapabilityEventCursor),
+}
+
+var bundledUpstreams = map[contractsv1.ProviderID]string{
+	contractsv1.ProviderIDCodex:       "codex",
+	contractsv1.ProviderIDClaudeCode:  "claude",
+	contractsv1.ProviderIDPi:          "pi",
+	contractsv1.ProviderIDOpenclaw:    "openclaw",
+	contractsv1.ProviderIDHermesAgent: "hermes",
 }
 
 func providerDescriptor(id contractsv1.ProviderID, name, executable string, auth []string, capabilities ...contractsv1.ProviderCapability) contractsv1.ProviderDescriptor {
@@ -72,6 +80,11 @@ func InspectProviderReadiness(id contractsv1.ProviderID) (ProviderReadiness, err
 	missing := make([]string, 0, len(descriptor.AuthEnvironment)+1)
 	if _, err := exec.LookPath(descriptor.Executable); err != nil {
 		missing = append(missing, "binary:"+descriptor.Executable)
+	}
+	if upstream := bundledUpstreams[id]; upstream != "" {
+		if _, err := exec.LookPath(upstream); err != nil {
+			missing = append(missing, "upstream:"+upstream)
+		}
 	}
 	for _, name := range descriptor.AuthEnvironment {
 		if strings.TrimSpace(os.Getenv(name)) == "" {

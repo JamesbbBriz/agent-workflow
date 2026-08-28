@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -62,6 +64,40 @@ func TestProviderProtocolFailsClosed(t *testing.T) {
 	if validateEventPage(page, "run-a", 0) == nil {
 		t.Fatal("non-contiguous provider cursor was accepted")
 	}
+}
+
+func TestProviderProtocolWriteHonorsContext(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	configureProcessGroup(cmd)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_, cancelRun := context.WithCancel(context.Background())
+	run := &agentRunnerRun{cmd: cmd, stdin: stdin, scanner: bufio.NewScanner(stdout), cancel: cancelRun}
+	profile := testExecutorProfile(t, "blocked-write")
+	invocationID := "blocked-write"
+	deadline := time.Now().Add(time.Minute)
+	workspace := contractsv1.ProviderProtocolRequestStagedWorkspaceWorkspace
+	request := contractsv1.ProviderProtocolRequest{
+		ProtocolVersion: 1, RequestId: "blocked-write:start", Operation: contractsv1.ProviderProtocolRequestOperationStart,
+		InvocationId: &invocationID, IdempotencyKey: &invocationID, Deadline: &deadline, StagedWorkspace: &workspace,
+		InputManifestHash: ptrSHA(repeatedSHA('1')), OutputContractHash: ptrSHA(repeatedSHA('2')), ExecutorProfile: &profile,
+		Invocation: contractsv1.ProviderProtocolRequestInvocation{"padding": string(make([]byte, 128<<10))},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := run.requestContext(ctx, request); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("blocked protocol write error=%v want deadline exceeded", err)
+	}
+	_ = cmd.Wait()
 }
 
 func TestAgentRunnerProviderUsesBoundedProtocolAndExactResult(t *testing.T) {

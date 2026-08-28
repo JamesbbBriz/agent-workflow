@@ -87,10 +87,11 @@ npm run generate
 npm run check:generated
 ```
 
-Inspect the five bundled Agent Runner profiles without installing their
-provider dependencies:
+Build the five bundled bridges, then inspect the bridge and upstream CLI
+requirements:
 
 ```bash
+./adapters/install.sh
 go run ./cmd/agent-workflow provider list
 go run ./cmd/agent-workflow provider doctor --id codex
 ```
@@ -125,7 +126,7 @@ See [Architecture](docs/architecture.md), [Security](SECURITY.md), [Compatibilit
 
 ## Status
 
-The v1 definitions plus versioned Campaign execution, Context recovery, approvals/waits, multi-Campaign Builder/Canvas, exact-cutoff redacted Replay, reference provider isolation, domain-neutral Change Case coordination, and five bundled Agent Runner profiles are implemented. The SEO Ops conformance consumer remains release work; see the [runtime closure plan](docs/runtime-closure-plan.md). WebMCP is not a Core dependency.
+The v1 definitions plus versioned Campaign execution, Context recovery, approvals/waits, multi-Campaign Builder/Canvas, exact-cutoff redacted Replay, reference provider isolation, domain-neutral Change Case coordination, and five bundled Agent Runner bridges are implemented. The SEO Ops conformance consumer remains release work; see the [runtime closure plan](docs/runtime-closure-plan.md). WebMCP is not a Core dependency.
 
 ## License
 

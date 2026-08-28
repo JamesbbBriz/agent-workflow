@@ -1,21 +1,28 @@
 # Bundled Agent Runner profiles
 
-The Go registry bundles five profiles: Codex, Claude Code, Pi, OpenClaw, and
-Hermes Agent. Each profile names a separately installed adapter executable:
+The repository bundles five thin Go bridges: Codex, Claude Code, Pi, OpenClaw,
+and Hermes Agent. Install them into `GOBIN` with:
 
-| Provider | Executable |
-| --- | --- |
-| Codex | `agent-workflow-codex` |
-| Claude Code | `agent-workflow-claude-code` |
-| Pi | `agent-workflow-pi` |
-| OpenClaw | `agent-workflow-openclaw` |
-| Hermes Agent | `agent-workflow-hermes` |
+```sh
+./adapters/install.sh
+```
 
-Every executable implements the same generated `ProviderProtocolRequest` /
-`ProviderProtocolResponse` NDJSON contract. It owns provider-specific SDK or
-CLI dependencies; stdout is protocol-only. The Core launches one isolated
-adapter process per invocation, allows only declared environment variables,
-and accepts only `output/result` whose hash matches the terminal observation.
+Each bridge implements the same bounded NDJSON protocol and invokes the named
+upstream CLI:
+
+| Provider | Bridge | Upstream CLI |
+| --- | --- | --- |
+| Codex | `agent-workflow-codex` | `codex` |
+| Claude Code | `agent-workflow-claude-code` | `claude` |
+| Pi | `agent-workflow-pi` | `pi` |
+| OpenClaw | `agent-workflow-openclaw` | `openclaw` |
+| Hermes Agent | `agent-workflow-hermes` | `hermes` |
+
+The shared bridge owns no provider SDK dependency. It translates the admitted
+invocation into each CLI's documented one-shot form, normalizes its structured
+output, and keeps stdout protocol-only. The Core launches one isolated adapter
+process per invocation, allows only declared environment variables, and accepts
+only `output/result` whose hash matches the terminal observation.
 
 Use `agent-workflow provider doctor` before execution and
 `agent-workflow provider conformance` to run the shared admitted fixture. An

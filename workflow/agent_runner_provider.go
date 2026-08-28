@@ -29,6 +29,7 @@ type AgentRunnerProvider struct {
 	sandbox    *SubprocessProvider
 	mu         sync.Mutex
 	runs       map[string]*agentRunnerRun
+	starting   map[string]bool
 	results    map[string]ProviderResult
 }
 
@@ -84,7 +85,7 @@ func NewAgentRunnerProvider(config SubprocessProviderConfig, profile contractsv1
 	if err != nil {
 		return nil, err
 	}
-	return &AgentRunnerProvider{descriptor: descriptor, profile: profile, sandbox: sandbox, runs: map[string]*agentRunnerRun{}, results: map[string]ProviderResult{}}, nil
+	return &AgentRunnerProvider{descriptor: descriptor, profile: profile, sandbox: sandbox, runs: map[string]*agentRunnerRun{}, starting: map[string]bool{}, results: map[string]ProviderResult{}}, nil
 }
 
 func (p *AgentRunnerProvider) IsolationEvidence() contractsv1.ProviderIsolationEvidence {
@@ -114,11 +115,21 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 		return errors.New("provider invocation does not match the admitted isolation evidence")
 	}
 	p.mu.Lock()
-	if _, ok := p.results[invocation.IdempotencyKey]; ok || p.runs[invocation.IdempotencyKey] != nil {
+	if _, ok := p.results[invocation.IdempotencyKey]; ok || p.runs[invocation.IdempotencyKey] != nil || p.starting[invocation.IdempotencyKey] {
 		p.mu.Unlock()
 		return nil
 	}
+	p.starting[invocation.IdempotencyKey] = true
 	p.mu.Unlock()
+	started := false
+	defer func() {
+		if started {
+			return
+		}
+		p.mu.Lock()
+		delete(p.starting, invocation.IdempotencyKey)
+		p.mu.Unlock()
+	}()
 	if err := p.sandbox.verifyInputs(); err != nil {
 		return err
 	}
@@ -159,14 +170,9 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 		return err
 	}
 	p.mu.Lock()
-	if p.runs[invocation.IdempotencyKey] != nil {
-		p.mu.Unlock()
-		cancel()
-		killProcessGroup(cmd)
-		_ = cmd.Wait()
-		return nil
-	}
+	delete(p.starting, invocation.IdempotencyKey)
 	p.runs[invocation.IdempotencyKey] = run
+	started = true
 	p.mu.Unlock()
 	return nil
 }
@@ -392,8 +398,21 @@ func (r *agentRunnerRun) requestUnlockedContext(ctx context.Context, request con
 	if err != nil {
 		return contractsv1.ProviderProtocolResponse{}, err
 	}
-	if _, err := r.stdin.Write(append(body, '\n')); err != nil {
-		return contractsv1.ProviderProtocolResponse{}, err
+	written := make(chan error, 1)
+	go func() {
+		_, err := r.stdin.Write(append(body, '\n'))
+		written <- err
+	}()
+	select {
+	case err := <-written:
+		if err != nil {
+			return contractsv1.ProviderProtocolResponse{}, err
+		}
+	case <-ctx.Done():
+		r.cancel()
+		killProcessGroup(r.cmd)
+		<-written
+		return contractsv1.ProviderProtocolResponse{}, ctx.Err()
 	}
 	scanned := make(chan bool, 1)
 	go func() { scanned <- r.scanner.Scan() }()
