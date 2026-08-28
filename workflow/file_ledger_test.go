@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/JamesbbBriz/agent-workflow/internal/contract"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
 
@@ -39,6 +41,37 @@ func TestFileLedgerPreservesExactJSONNumbers(t *testing.T) {
 	}
 	if replay.Receipts[0].Payload["large"] != json.Number("9007199254740993") {
 		t.Fatalf("large JSON number changed: %#v", replay.Receipts[0].Payload["large"])
+	}
+}
+
+func TestFileLedgerReopensExactLimitReceipt(t *testing.T) {
+	at := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	receipt, err := sealReceipt("aggregate-limit", 1, contractsv1.ReceiptReceiptTypeCompile, at, nil, nil, nil, map[string]any{"padding": ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err = sealReceipt("aggregate-limit", 1, contractsv1.ReceiptReceiptTypeCompile, at, nil, nil, nil, map[string]any{"padding": strings.Repeat("x", contract.MaxDocumentBytes-len(body))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err = json.Marshal(receipt)
+	if err != nil || len(body) != contract.MaxDocumentBytes {
+		t.Fatalf("receipt bytes=%d err=%v", len(body), err)
+	}
+	path := filepath.Join(t.TempDir(), "receipts.jsonl")
+	ledger, err := OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Append(receipt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenFileLedger(path); err != nil {
+		t.Fatalf("exact-limit receipt could not be reopened: %v", err)
 	}
 }
 
