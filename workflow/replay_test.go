@@ -17,7 +17,7 @@ func TestReplayAtUsesExactCanonicalCutoffAndRedactsPrivateFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 8, 28, 1, 2, 3, 0, time.UTC)
-	first, err := sealActorReceipt(aggregateID, 1, contractsv1.ReceiptReceiptTypeCompile, "private-actor-canary", at, nil, nil, nil, map[string]any{"secret": "private-payload-canary"})
+	first, err := sealActorReceipt(aggregateID, 1, contractsv1.ReceiptReceiptTypeCompile, "private-actor-canary", at, nil, nil, nil, map[string]any{"secret": "private-payload-canary", "large_integer": json.Number("9007199254740993")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +40,9 @@ func TestReplayAtUsesExactCanonicalCutoffAndRedactsPrivateFields(t *testing.T) {
 	}
 	if raw.Raw == nil || len(raw.Raw.Receipts) != 2 || raw.Raw.CutoffReceiptHash != second.ReceiptHash {
 		t.Fatalf("wrong exact prefix: %#v", raw.Raw)
+	}
+	if raw.Raw.Receipts[0].Payload["large_integer"] != json.Number("9007199254740993") {
+		t.Fatalf("raw Replay changed an exact JSON integer: %#v", raw.Raw.Receipts[0].Payload)
 	}
 	raw.Raw.Receipts[0].Payload["secret"] = "caller-mutation"
 	again, err := engine.ReplayAt(context.Background(), ref, ReceiptID(second.Id), ReplayViewRaw)

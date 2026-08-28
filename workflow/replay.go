@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -78,7 +79,12 @@ func cloneReplay(source contractsv1.ReplayBundle) (contractsv1.ReplayBundle, err
 		return contractsv1.ReplayBundle{}, err
 	}
 	var clone contractsv1.ReplayBundle
-	if err := json.Unmarshal(body, &clone); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&clone); err != nil {
+		return contractsv1.ReplayBundle{}, err
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
 		return contractsv1.ReplayBundle{}, err
 	}
 	return clone, VerifyReplay(clone)
