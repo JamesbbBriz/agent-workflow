@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -22,6 +23,14 @@ import (
 )
 
 const providerProtocolMaxLine = 1 << 20
+
+const providerAttemptReservationFile = ".agent-workflow-attempt.json"
+const providerAcceptedResultFile = ".agent-workflow-result.json"
+
+type providerAttemptReservation struct {
+	IdempotencyKey string             `json:"idempotency_key"`
+	InvocationHash contractsv1.SHA256 `json:"invocation_hash"`
+}
 
 type AgentRunnerProvider struct {
 	descriptor contractsv1.ProviderDescriptor
@@ -130,6 +139,24 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 		delete(p.starting, invocation.IdempotencyKey)
 		p.mu.Unlock()
 	}()
+	reserved, recovered, err := p.reserveAttempt(invocation)
+	if err != nil {
+		return err
+	}
+	if recovered != nil {
+		p.mu.Lock()
+		delete(p.starting, invocation.IdempotencyKey)
+		p.results[invocation.IdempotencyKey] = *recovered
+		started = true
+		p.mu.Unlock()
+		return nil
+	}
+	removeReservation := reserved
+	defer func() {
+		if removeReservation {
+			_ = os.Remove(p.attemptReservationPath())
+		}
+	}()
 	if err := p.sandbox.verifyInputs(); err != nil {
 		return err
 	}
@@ -161,6 +188,7 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 		cancel()
 		return err
 	}
+	removeReservation = false
 	run := &agentRunnerRun{cmd: cmd, stdin: stdin, scanner: bufio.NewScanner(stdout), cancel: cancel}
 	run.scanner.Buffer(make([]byte, 64<<10), providerProtocolMaxLine)
 	if err := p.handshake(ctx, run, invocation); err != nil {
@@ -175,6 +203,79 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 	started = true
 	p.mu.Unlock()
 	return nil
+}
+
+func (p *AgentRunnerProvider) attemptReservationPath() string {
+	return filepath.Join(p.sandbox.config.StagedRoot, "output", providerAttemptReservationFile)
+}
+
+func (p *AgentRunnerProvider) reserveAttempt(invocation Invocation) (bool, *ProviderResult, error) {
+	hash, err := Digest(invocation)
+	if err != nil {
+		return false, nil, err
+	}
+	want := providerAttemptReservation{IdempotencyKey: invocation.IdempotencyKey, InvocationHash: contractsv1.SHA256(hash)}
+	path := p.attemptReservationPath()
+	body, err := json.Marshal(want)
+	if err != nil {
+		return false, nil, err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), ".agent-workflow-attempt-")
+	if err != nil {
+		return false, nil, err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(0600); err == nil {
+		_, err = temp.Write(body)
+	}
+	if err == nil {
+		err = temp.Sync()
+	}
+	if closeErr := temp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return false, nil, err
+	}
+	if err := os.Link(tempPath, path); err == nil {
+		directory, openErr := os.Open(filepath.Dir(path))
+		if openErr == nil {
+			openErr = directory.Sync()
+			if closeErr := directory.Close(); openErr == nil {
+				openErr = closeErr
+			}
+		}
+		if openErr != nil {
+			_ = os.Remove(path)
+			return false, nil, openErr
+		}
+		return true, nil, nil
+	} else if !errors.Is(err, os.ErrExist) {
+		return false, nil, err
+	}
+	body, err = os.ReadFile(path)
+	if err != nil {
+		return false, nil, err
+	}
+	var existing providerAttemptReservation
+	if json.Unmarshal(body, &existing) != nil || existing != want {
+		return false, nil, errors.New("provider attempt reservation does not match the invocation")
+	}
+	resultBody, err := os.ReadFile(filepath.Join(p.sandbox.config.StagedRoot, "output", providerAcceptedResultFile))
+	if err == nil && len(resultBody) > 0 {
+		var result ProviderResult
+		decoder := json.NewDecoder(bytes.NewReader(resultBody))
+		decoder.UseNumber()
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&result) == nil && ensureJSONEOF(decoder) == nil && result.IdempotencyKey == invocation.IdempotencyKey && result.Observation != nil && result.Observation.OutputHash != nil {
+			_, rawHash, readErr := readBoundedResult(filepath.Join(p.sandbox.config.StagedRoot, "output", "result"), int64(p.sandbox.config.MaxOutputBytes))
+			if readErr == nil && rawHash == *result.Observation.OutputHash {
+				return false, &result, nil
+			}
+		}
+	}
+	return false, nil, errors.New("provider attempt is already reserved without a recoverable result")
 }
 
 func (p *AgentRunnerProvider) handshake(ctx context.Context, run *agentRunnerRun, invocation Invocation) error {
@@ -327,8 +428,50 @@ func (p *AgentRunnerProvider) acceptResult(key string, run *agentRunnerRun) (Pro
 	result.Run = &run.ref
 	result.Events = append([]contractsv1.ProviderEvent{}, run.events...)
 	result.Observation = &run.observation
+	if err := p.persistAcceptedResult(result); err != nil {
+		return ProviderResult{}, err
+	}
 	run.stop()
 	return result, nil
+}
+
+func (p *AgentRunnerProvider) persistAcceptedResult(result ProviderResult) error {
+	body, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	directoryPath := filepath.Join(p.sandbox.config.StagedRoot, "output")
+	temp, err := os.CreateTemp(directoryPath, ".agent-workflow-result-")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(0600); err == nil {
+		_, err = temp.Write(body)
+	}
+	if err == nil {
+		err = temp.Sync()
+	}
+	if closeErr := temp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(directoryPath, providerAcceptedResultFile)
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	directory, err := os.Open(directoryPath)
+	if err != nil {
+		return err
+	}
+	if err := directory.Sync(); err != nil {
+		directory.Close()
+		return err
+	}
+	return directory.Close()
 }
 
 func (p *AgentRunnerProvider) Cancel(ctx context.Context, key string) error {

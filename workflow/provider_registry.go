@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -82,9 +83,12 @@ func InspectProviderReadiness(id contractsv1.ProviderID) (ProviderReadiness, err
 		missing = append(missing, "binary:"+descriptor.Executable)
 	}
 	if upstream := bundledUpstreams[id]; upstream != "" {
-		if _, err := exec.LookPath(upstream); err != nil {
+		if _, err := ResolveBundledProviderUpstream(id); err != nil {
 			missing = append(missing, "upstream:"+upstream)
 		}
+	}
+	if _, err := sandboxDriver(); err != nil {
+		missing = append(missing, "isolation:staged_subprocess")
 	}
 	for _, name := range descriptor.AuthEnvironment {
 		if strings.TrimSpace(os.Getenv(name)) == "" {
@@ -99,6 +103,31 @@ func InspectProviderReadiness(id contractsv1.ProviderID) (ProviderReadiness, err
 		readiness.Code = "unavailable"
 	}
 	return readiness, nil
+}
+
+// ResolveBundledProviderUpstream uses exactly the paths visible in the Linux
+// Bubblewrap sandbox. User-local PATH entries are intentionally not advertised
+// as runnable because the sandbox does not expose their runtime closure.
+func ResolveBundledProviderUpstream(id contractsv1.ProviderID) (string, error) {
+	name := bundledUpstreams[id]
+	if name == "" {
+		return "", errors.New("unknown bundled provider")
+	}
+	return resolveSystemExecutable(name)
+}
+
+func resolveSystemExecutable(name string) (string, error) {
+	for _, root := range []string{"/usr/local/bin", "/usr/bin", "/bin"} {
+		path := filepath.Join(root, name)
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil || (!strings.HasPrefix(resolved, "/usr/") && !strings.HasPrefix(resolved, "/bin/")) {
+			continue
+		}
+		if info, err := os.Stat(resolved); err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {
+			return resolved, nil
+		}
+	}
+	return "", errors.New("system executable is unavailable")
 }
 
 func SealExecutorProfile(profile contractsv1.ExecutorProfile) (contractsv1.ExecutorProfile, error) {

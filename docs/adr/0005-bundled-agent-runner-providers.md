@@ -81,6 +81,21 @@ Codex, Claude Code, and Pi run inside the same staged-workspace isolation
 boundary owned by the subprocess adapter. Provider-native sandbox claims are
 recorded as evidence but do not replace the Core isolation profile.
 
+The bundled profiles initially support one exact Node authority:
+`read-evidence`. The bridge rejects any different Capability Manifest or tool
+allowlist, then maps that authority to each CLI's native read-only flags.
+OpenClaw additionally selects a dedicated staged agent profile whose workspace
+and tool allowlist are verified before launch. Hermes runs without user config
+or durable session state; its file toolset is contained by the read-only staged
+input mount and single writable result file.
+
+Readiness and execution resolve upstream CLIs from the same system roots exposed
+inside Bubblewrap (`/usr/local/bin`, `/usr/bin`, and `/bin`) and include the
+isolation probe. User-local PATH entries are not reported ready. Before launching
+an upstream, the subprocess adapter durably reserves the exact invocation in the
+staged output directory. A restarted Core may recover an exact hash-bound result;
+if the external attempt is uncertain, it blocks instead of launching it again.
+
 ## Compatibility
 
 The current in-process `Provider` remains a trusted test compatibility adapter.

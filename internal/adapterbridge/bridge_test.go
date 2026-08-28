@@ -15,20 +15,31 @@ import (
 
 func TestBundledBridgesTranslateTheSameInvocation(t *testing.T) {
 	tests := []struct {
-		id    contractsv1.ProviderID
-		first string
+		id       contractsv1.ProviderID
+		first    string
+		contains []string
+		excludes []string
 	}{
-		{contractsv1.ProviderIDCodex, "exec"},
-		{contractsv1.ProviderIDClaudeCode, "-p"},
-		{contractsv1.ProviderIDPi, "-p"},
-		{contractsv1.ProviderIDOpenclaw, "agent"},
-		{contractsv1.ProviderIDHermesAgent, "-z"},
+		{contractsv1.ProviderIDCodex, "exec", []string{"--sandbox\nread-only\n", "--ephemeral\n", "--ignore-user-config\n", "--ignore-rules\n"}, nil},
+		{contractsv1.ProviderIDClaudeCode, "-p", []string{"--bare\n", "--allowedTools\nRead,Glob,Grep\n"}, nil},
+		{contractsv1.ProviderIDPi, "-p", []string{"--no-extensions\n", "--no-skills\n", "--tools\nread,grep,find,ls\n"}, nil},
+		{contractsv1.ProviderIDOpenclaw, "agent", []string{"--agent\ntest\n"}, []string{"--local\n"}},
+		{contractsv1.ProviderIDHermesAgent, "-z", []string{"--toolsets\nfile\n", "--ignore-user-config\n", "--ignore-rules\n"}, []string{"--safe-mode\n"}},
 	}
 	for _, test := range tests {
 		t.Run(string(test.id), func(t *testing.T) {
 			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, "input", "providers"), 0700); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.Mkdir(filepath.Join(root, "output"), 0700); err != nil {
 				t.Fatal(err)
+			}
+			if test.id == contractsv1.ProviderIDOpenclaw {
+				config := `{"agents":{"entries":{"test":{"workspace":"/workspace","tools":{"allow":["read"]}}}},"gateway":{"mode":"remote"}}`
+				if err := os.WriteFile(filepath.Join(root, "input", "providers", "test.json"), []byte(config), 0600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			argsPath := filepath.Join(root, "args")
 			script := filepath.Join(root, "upstream")
@@ -71,11 +82,55 @@ func TestBundledBridgesTranslateTheSameInvocation(t *testing.T) {
 			if err != nil || !strings.HasPrefix(string(args), test.first+"\n") {
 				t.Fatalf("upstream args=%q err=%v want first %q", args, err, test.first)
 			}
+			for _, value := range test.contains {
+				if !strings.Contains(string(args), value) {
+					t.Fatalf("upstream args=%q missing %q", args, value)
+				}
+			}
+			for _, value := range test.excludes {
+				if strings.Contains(string(args), value) {
+					t.Fatalf("upstream args=%q unexpectedly contains %q", args, value)
+				}
+			}
 			inputW.Close()
 			if err := <-done; err != nil {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestOpenClawBridgeRejectsProfileWithoutExactToolAuthority(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "input", "providers"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "output"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := `{"agents":{"entries":{"test":{"workspace":"/workspace","tools":{"allow":["read","exec"]}}}}}`
+	if err := os.WriteFile(filepath.Join(root, "input", "providers", "test.json"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	inputR, inputW := ioPipe(t)
+	outputR, outputW := ioPipe(t)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(Config{Provider: contractsv1.ProviderIDOpenclaw, Upstream: filepath.Join(root, "missing"), WorkspaceRoot: root}, inputR, outputW)
+	}()
+	if err := json.NewEncoder(inputW).Encode(providerStartRequest(t, contractsv1.ProviderIDOpenclaw)); err != nil {
+		t.Fatal(err)
+	}
+	var response contractsv1.ProviderProtocolResponse
+	if err := json.NewDecoder(bufio.NewReader(outputR)).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.ResponseType != contractsv1.ProviderProtocolResponseResponseTypeError {
+		t.Fatalf("response=%#v want tool authority rejection", response)
+	}
+	inputW.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -96,7 +151,13 @@ func providerStartRequest(t *testing.T, id contractsv1.ProviderID) contractsv1.P
 	invocationID := "same-admitted-node"
 	deadline := time.Now().Add(time.Minute).UTC()
 	workspace := contractsv1.ProviderProtocolRequestStagedWorkspaceWorkspace
-	invocation := workflow.Invocation{IdempotencyKey: invocationID, JobID: "job", CampaignID: "campaign", WorkflowRef: "workflow@1", Node: contractsv1.NodeDefinition{Id: "research", OutputSlots: []contractsv1.Slot{{Id: "recommendation", ArtifactType: "recommendation", MinItems: 1, MaxItems: 1}}}, InputHashes: []contractsv1.SHA256{"sha256:1111111111111111111111111111111111111111111111111111111111111111"}, Deadline: deadline, ExecutorProfile: &profile}
+	capabilities := contractsv1.CapabilityManifest{Kind: contractsv1.CapabilityManifestKindCapabilityManifest, SchemaVersion: 1, Id: "capability-read-evidence", Capabilities: []contractsv1.CapabilityManifestCapabilitiesElem{{Name: "read-evidence", Authority: contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}}}
+	capabilityHash, err := workflow.Digest(capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities.ManifestHash = contractsv1.SHA256(capabilityHash)
+	invocation := workflow.Invocation{IdempotencyKey: invocationID, JobID: "job", CampaignID: "campaign", WorkflowRef: "workflow@1", Node: contractsv1.NodeDefinition{Id: "research", OutputSlots: []contractsv1.Slot{{Id: "recommendation", ArtifactType: "recommendation", MinItems: 1, MaxItems: 1}}}, InputHashes: []contractsv1.SHA256{"sha256:1111111111111111111111111111111111111111111111111111111111111111"}, Capabilities: capabilities, Deadline: deadline, ExecutorProfile: &profile}
 	body, err := json.Marshal(invocation)
 	if err != nil {
 		t.Fatal(err)

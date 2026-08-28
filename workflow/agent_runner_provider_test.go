@@ -48,6 +48,34 @@ func TestBundledProviderRegistryAndProfilesAreClosed(t *testing.T) {
 	}
 }
 
+func TestBundledUpstreamResolutionIgnoresUnexposedUserPath(t *testing.T) {
+	dir := t.TempDir()
+	name := "agent-workflow-path-only-upstream"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	if _, err := resolveSystemExecutable(name); err == nil {
+		t.Fatal("readiness accepted an upstream path that the provider sandbox cannot expose")
+	}
+}
+
+func TestProviderAttemptReservationBlocksUncertainRestart(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "output"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	provider := &AgentRunnerProvider{sandbox: &SubprocessProvider{config: SubprocessProviderConfig{StagedRoot: root}}}
+	invocation := Invocation{IdempotencyKey: "attempt-1"}
+	created, recovered, err := provider.reserveAttempt(invocation)
+	if err != nil || !created || recovered != nil {
+		t.Fatalf("first reservation created=%v recovered=%#v err=%v", created, recovered, err)
+	}
+	if _, _, err := provider.reserveAttempt(invocation); err == nil {
+		t.Fatal("uncertain provider attempt was started again after restart")
+	}
+}
+
 func TestProviderProtocolFailsClosed(t *testing.T) {
 	request := contractsv1.ProviderProtocolRequest{ProtocolVersion: 1, RequestId: "r1", Operation: contractsv1.ProviderProtocolRequestOperationStart}
 	if validateProtocolRequest(request) == nil {
@@ -136,6 +164,20 @@ func TestAgentRunnerProviderUsesBoundedProtocolAndExactResult(t *testing.T) {
 	}
 	if result.Run.ProviderId != contractsv1.ProviderIDCodex || result.Observation.Status != contractsv1.ProviderObservationStatusSucceeded {
 		t.Fatalf("provider identity/status was not preserved: %#v", result)
+	}
+	restarted, err := NewAgentRunnerProvider(SubprocessProviderConfig{
+		Executable: executable, Args: []string{"-test.run=TestAgentRunnerProtocolHelper"}, StagedRoot: root,
+		Environment: map[string]string{"OPENAI_API_KEY": "agent-workflow-helper"},
+	}, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.Start(context.Background(), invocation); err != nil {
+		t.Fatal(err)
+	}
+	recovered, ready, err := restarted.Poll(context.Background(), invocation.IdempotencyKey)
+	if err != nil || !ready || !recovered.CompletedAt.Equal(result.CompletedAt) || recovered.Run == nil || recovered.Observation == nil {
+		t.Fatalf("restart recovery=%#v ready=%v err=%v want same completed_at=%s", recovered, ready, err, result.CompletedAt)
 	}
 	cancellation, err := provider.CancelRun(context.Background(), invocation.IdempotencyKey)
 	if err != nil || cancellation.Status != contractsv1.ProviderCancellationStatusAlreadyTerminal {

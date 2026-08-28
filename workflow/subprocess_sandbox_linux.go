@@ -29,7 +29,7 @@ func sandboxCommand(executable string, args []string, root string, maxOutputByte
 	if err != nil {
 		return "", nil, err
 	}
-	commandArgs := []string{"--die-with-parent", "--new-session", "--unshare-all", "--proc", "/proc", "--dev", "/dev", "--dir", "/workspace", "--ro-bind", root + "/input", "/workspace/input", "--ro-bind", root + "/output", "/workspace/output", "--bind", root + "/output/result", "/workspace/output/result", "--ro-bind", executable, "/provider", "--chdir", "/workspace"}
+	commandArgs := []string{"--die-with-parent", "--new-session", "--unshare-all", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/workspace", "--ro-bind", root + "/input", "/workspace/input", "--ro-bind", root + "/output", "/workspace/output", "--bind", root + "/output/result", "/workspace/output/result", "--ro-bind", executable, "/provider", "--chdir", "/workspace"}
 	if allowNetwork {
 		commandArgs = append(commandArgs, "--share-net")
 		for _, path := range []string{"/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/ssl/certs"} {

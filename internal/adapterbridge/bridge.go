@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -130,18 +131,24 @@ func (b *bridge) start(request contractsv1.ProviderProtocolRequest) (contractsv1
 	if err != nil {
 		return contractsv1.ProviderRunRef{}, err
 	}
-	args, err := upstreamArgs(b.config.Provider, request.ExecutorProfile.ModelRef, *request.IdempotencyKey, prompt)
+	if err := verifyToolBinding(b.config, *request.ExecutorProfile); err != nil {
+		return contractsv1.ProviderRunRef{}, err
+	}
+	args, err := upstreamArgs(b.config.Provider, *request.ExecutorProfile, *request.IdempotencyKey, prompt)
 	if err != nil {
 		return contractsv1.ProviderRunRef{}, err
 	}
-	upstream, err := resolveUpstream(b.config.Upstream)
+	upstream, err := resolveUpstream(b.config.Provider, b.config.Upstream)
 	if err != nil {
 		return contractsv1.ProviderRunRef{}, err
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), request.Deadline.UTC())
 	cmd := exec.CommandContext(ctx, upstream, args...)
 	cmd.Dir = b.config.WorkspaceRoot
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), "HOME="+b.config.WorkspaceRoot, "PATH=/usr/local/bin:/usr/bin:/bin", "TMPDIR=/tmp")
+	if b.config.Provider == contractsv1.ProviderIDOpenclaw {
+		cmd.Env = append(cmd.Env, "OPENCLAW_CONFIG_PATH="+filepath.Join(b.config.WorkspaceRoot, "input", "providers", request.ExecutorProfile.ConfigRef+".json"))
+	}
 	if token := os.Getenv("AGENT_WORKFLOW_PROVIDER_TOKEN"); token != "" {
 		name, err := tokenEnvironment(request.ExecutorProfile.ModelRef)
 		if err != nil {
@@ -172,6 +179,20 @@ func verifyStart(provider contractsv1.ProviderID, request contractsv1.ProviderPr
 	}
 	if invocation.ExecutorProfile == nil || !reflect.DeepEqual(*invocation.ExecutorProfile, *request.ExecutorProfile) || invocation.IdempotencyKey != *request.IdempotencyKey || invocation.IdempotencyKey != *request.InvocationId || !invocation.Deadline.Equal(request.Deadline.UTC()) {
 		return errors.New("invocation identity is invalid")
+	}
+	if err := workflow.VerifyCapabilityManifest(invocation.Capabilities); err != nil {
+		return errors.New("invocation capability manifest is invalid")
+	}
+	tools := make([]string, 0, len(invocation.Capabilities.Capabilities))
+	for _, capability := range invocation.Capabilities.Capabilities {
+		if capability.Authority != contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead {
+			return errors.New("bundled agent runners accept only read capabilities")
+		}
+		tools = append(tools, string(capability.Name))
+	}
+	sort.Strings(tools)
+	if !reflect.DeepEqual(tools, []string(request.ExecutorProfile.ToolAllowlist)) {
+		return errors.New("invocation capabilities do not match the executor tool allowlist")
 	}
 	if request.StagedWorkspace == nil || *request.StagedWorkspace != contractsv1.ProviderProtocolRequestStagedWorkspaceWorkspace || !request.Deadline.After(time.Now()) {
 		return errors.New("invocation workspace or deadline is invalid")
@@ -309,21 +330,58 @@ func buildPrompt(invocation workflow.Invocation) (string, error) {
 	return "Execute this already-authorized node using only /workspace/input as evidence. Return exactly one JSON object with an outputs object keyed by every output slot id; values are the content objects. No markdown fences. Invocation: " + string(body), nil
 }
 
-func upstreamArgs(provider contractsv1.ProviderID, model, runRef, prompt string) ([]string, error) {
+func upstreamArgs(provider contractsv1.ProviderID, profile contractsv1.ExecutorProfile, runRef, prompt string) ([]string, error) {
+	model := profile.ModelRef
 	switch provider {
 	case contractsv1.ProviderIDCodex:
-		return []string{"exec", "--model", model, "--sandbox", "read-only", "--skip-git-repo-check", prompt}, nil
+		return []string{"exec", "--model", model, "--sandbox", "read-only", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", prompt}, nil
 	case contractsv1.ProviderIDClaudeCode:
-		return []string{"-p", "--output-format", "text", "--model", model, "--no-session-persistence", "--allowedTools", "Read,Glob,Grep", prompt}, nil
+		return []string{"-p", "--bare", "--disable-slash-commands", "--output-format", "text", "--model", model, "--no-session-persistence", "--allowedTools", "Read,Glob,Grep", prompt}, nil
 	case contractsv1.ProviderIDPi:
-		return []string{"-p", "--mode", "text", "--no-session", "--tools", "read,grep,find,ls", "--model", model, prompt}, nil
+		return []string{"-p", "--mode", "text", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--tools", "read,grep,find,ls", "--model", model, prompt}, nil
 	case contractsv1.ProviderIDOpenclaw:
-		return []string{"agent", "--local", "--json", "--model", model, "--session-key", runRef, "--message", prompt}, nil
+		return []string{"agent", "--agent", profile.ConfigRef, "--json", "--model", model, "--session-key", runRef, "--message", prompt}, nil
 	case contractsv1.ProviderIDHermesAgent:
-		return []string{"-z", prompt, "--safe-mode", "--ignore-user-config", "--ignore-rules", "--model", model}, nil
+		return []string{"-z", prompt, "--ignore-user-config", "--ignore-rules", "--toolsets", "file", "--model", model}, nil
 	default:
 		return nil, errors.New("unknown provider")
 	}
+}
+
+func verifyToolBinding(config Config, profile contractsv1.ExecutorProfile) error {
+	if len(profile.ToolAllowlist) != 1 || profile.ToolAllowlist[0] != "read-evidence" {
+		return errors.New("bundled bridges support only the read-evidence tool authority")
+	}
+	if config.Provider != contractsv1.ProviderIDOpenclaw {
+		return nil
+	}
+	if filepath.Base(profile.ConfigRef) != profile.ConfigRef || profile.ConfigRef == "." || profile.ConfigRef == ".." {
+		return errors.New("OpenClaw isolated agent profile reference is invalid")
+	}
+	path := filepath.Join(config.WorkspaceRoot, "input", "providers", profile.ConfigRef+".json")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return errors.New("OpenClaw isolated agent profile is unavailable")
+	}
+	var document struct {
+		Agents struct {
+			Entries map[string]struct {
+				Workspace string `json:"workspace"`
+				Tools     struct {
+					Allow []string `json:"allow"`
+				} `json:"tools"`
+			} `json:"entries"`
+		} `json:"agents"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if err := decoder.Decode(&document); err != nil {
+		return errors.New("OpenClaw isolated agent profile is invalid")
+	}
+	agent, ok := document.Agents.Entries[profile.ConfigRef]
+	if ok && agent.Workspace == "/workspace" && reflect.DeepEqual(agent.Tools.Allow, []string{"read"}) {
+		return nil
+	}
+	return errors.New("OpenClaw isolated agent profile does not enforce read-evidence")
 }
 
 func tokenEnvironment(model string) (string, error) {
@@ -346,17 +404,15 @@ func tokenEnvironment(model string) (string, error) {
 	}
 }
 
-func resolveUpstream(name string) (string, error) {
+func resolveUpstream(provider contractsv1.ProviderID, name string) (string, error) {
 	if strings.ContainsRune(name, filepath.Separator) {
 		return name, nil
 	}
-	for _, root := range []string{"/usr/local/bin", "/usr/bin", "/bin"} {
-		path := filepath.Join(root, name)
-		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {
-			return path, nil
-		}
+	upstream, err := workflow.ResolveBundledProviderUpstream(provider)
+	if err == nil {
+		return upstream, nil
 	}
-	return "", fmt.Errorf("upstream executable %q is unavailable", name)
+	return "", fmt.Errorf("upstream executable %q is unavailable in the provider sandbox", name)
 }
 
 func decodeUpstreamOutput(body []byte, target *upstreamOutput) error {
