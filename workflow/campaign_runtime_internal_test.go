@@ -73,6 +73,52 @@ func TestCampaignReducerRejectsFabricatedBudgetExhaustion(t *testing.T) {
 	}
 }
 
+func TestCampaignReducerRejectsContextBundleMissingRequiredPack(t *testing.T) {
+	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	engine, prepared, state, replay := campaignReducerFixtureWithMutation(t, func(_ *contractsv1.CampaignExecutionState, prepared *preparedCampaign) {
+		prepared.request.Campaign.Scope = scope
+		prepared.request.Campaign.EvidenceFrontier = contractsv1.EvidenceFrontier{Cutoff: cutoff, SourceHashes: []contractsv1.SHA256{}}
+		prepared.workflows[0].compiled.Nodes[1].Definition.Kind = contractsv1.NodeDefinitionKindAgent
+		prepared.workflows[0].compiled.Nodes[1].Definition.Context = []contractsv1.ContextRequirement{{Id: "required", Selector: "required", PackType: "required", SchemaVersion: 1, Required: true}}
+	})
+	workflowRef := prepared.workflows[0].compiled.WorkflowRef
+	bundle := contractsv1.ContextBundle{Kind: contractsv1.ContextBundleKindContextBundle, SchemaVersion: 1, JobId: state.JobId, CampaignId: state.CampaignId, WorkflowRef: workflowRef, NodeId: "root", EvidenceCutoff: cutoff, Entries: []contractsv1.ContextPackRef{}}
+	identity, err := Digest(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle.Id = shortID("bundle-", identity)
+	hash, err := Digest(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle.BundleHash = contractsv1.SHA256(hash)
+	at := state.StartedAt.Add(time.Second)
+	if err := engine.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeContextBound, at, []contractsv1.SHA256{bundle.BundleHash}, []contractsv1.SHA256{bundle.BundleHash}, map[string]any{"workflow_ref": workflowRef, "node_id": "root", "bundle": bundle, "packs": []contractsv1.ContextPackEdition{}}); err != nil {
+		t.Fatal(err)
+	}
+	replay, err = engine.ledger.Replay(state.AggregateId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.reduceCampaignReplay(replay, prepared); err == nil || !strings.Contains(err.Error(), "Context transition binding is invalid") {
+		t.Fatalf("empty Context bundle satisfied a required Context: %v", err)
+	}
+}
+
+func TestApprovalActionUsesCampaignActionBudget(t *testing.T) {
+	_, prepared, state, _ := campaignReducerFixtureWithMutation(t, func(state *contractsv1.CampaignExecutionState, prepared *preparedCampaign) {
+		prepared.request.Campaign.Budget.MaxActions = 1
+		state.Usage.Actions = 1
+		prepared.workflows[0].compiled.Nodes[1].Definition.Kind = contractsv1.NodeDefinitionKindApproval
+	})
+	node := prepared.workflows[0].compiled.Nodes[1]
+	if blocker := approvalActionBudgetBlocker(state, prepared.request.Campaign.Budget, prepared.workflows[0].compiled.WorkflowRef, node.Definition); blocker != "action-budget-exhausted" {
+		t.Fatalf("approval crossed the Campaign action budget: %q", blocker)
+	}
+}
+
 func TestCampaignResultRechecksLegacyArtifactsAgainstCurrentBudget(t *testing.T) {
 	slot := contractsv1.Slot{ArtifactType: "candidate", CountsAsCandidates: true}
 	artifacts := []contractsv1.ActionArtifact{{ArtifactType: "candidate"}, {ArtifactType: "candidate"}}

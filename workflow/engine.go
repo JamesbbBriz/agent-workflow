@@ -86,6 +86,10 @@ type Ledger interface {
 	Replay(string) (contractsv1.ReplayBundle, error)
 }
 
+type atomicLedger interface {
+	AppendBatch([]contractsv1.Receipt) error
+}
+
 func NewEngine(registry *Registry, capabilities CapabilityCatalog, outputs OutputCatalog, provider Provider, ledger Ledger) *Engine {
 	capabilityCopy := make(CapabilityCatalog, len(capabilities))
 	for name, authority := range capabilities {
@@ -199,7 +203,7 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 		}
 	} else {
 		resolved = *preparedContext
-		if err := VerifyContextBundle(resolved.Bundle, resolved.Packs); err != nil {
+		if err := validateResolvedContextForNode(resolved, node, request.Campaign.Scope, request.Campaign.EvidenceFrontier.Cutoff); err != nil {
 			return RunResult{}, err
 		}
 	}
@@ -401,28 +405,14 @@ func (e *Engine) appendDeadlineTerminal(aggregateID string, occurredAt time.Time
 }
 
 func (e *Engine) finishInvocation(aggregateID string, occurredAt time.Time, invocation Invocation, providerResult ProviderResult, replay contractsv1.ReplayBundle) error {
-	artifacts := providerResult.Artifacts
-	artifactHashes, err := actionArtifactHashes(artifacts)
-	if err != nil {
-		return err
-	}
-	invocationReceipt, ok := receiptByType(replay, contractsv1.ReceiptReceiptTypeInvocation)
-	if !ok {
-		return errors.New("replay has no invocation receipt")
-	}
-	receipts, err := postExecutionReceipts(aggregateID, occurredAt, invocationReceipt, invocation, providerResult, artifactHashes)
-	if err != nil {
-		return err
-	}
-	for _, receipt := range receipts {
-		if err := e.ledger.Append(receipt); err != nil {
-			return err
-		}
-	}
-	return nil
+	return e.finishInvocationWithState(aggregateID, occurredAt, invocation, providerResult, replay, true, "node_completed")
 }
 
 func (e *Engine) finishRejectedInvocation(aggregateID string, occurredAt time.Time, invocation Invocation, providerResult ProviderResult, replay contractsv1.ReplayBundle) error {
+	return e.finishInvocationWithState(aggregateID, occurredAt, invocation, providerResult, replay, false, "budget_exhausted")
+}
+
+func (e *Engine) finishInvocationWithState(aggregateID string, occurredAt time.Time, invocation Invocation, providerResult ProviderResult, replay contractsv1.ReplayBundle, accepted bool, terminalState string) error {
 	artifactHashes, err := actionArtifactHashes(providerResult.Artifacts)
 	if err != nil {
 		return err
@@ -431,16 +421,33 @@ func (e *Engine) finishRejectedInvocation(aggregateID string, occurredAt time.Ti
 	if !ok {
 		return errors.New("replay has no invocation receipt")
 	}
-	receipts, err := postExecutionReceiptsWithState(aggregateID, occurredAt, invocationReceipt, invocation, providerResult, artifactHashes, false, "budget_exhausted")
+	receipts, err := postExecutionReceiptsWithState(aggregateID, occurredAt, invocationReceipt, invocation, providerResult, artifactHashes, accepted, terminalState)
 	if err != nil {
 		return err
 	}
-	for _, receipt := range receipts {
-		if err := e.ledger.Append(receipt); err != nil {
+	if providerReceipt, exists := receiptByType(replay, contractsv1.ReceiptReceiptTypeProviderExecution); exists {
+		acknowledged, err := providerAcknowledged(replay, invocation, providerResult)
+		if err != nil || !acknowledged {
+			return errors.New("provider execution receipt does not match the exact result")
+		}
+		resultAndTerminal, err := postResultReceiptsWithState(aggregateID, occurredAt, providerReceipt, providerResult, artifactHashes, accepted, terminalState)
+		if err != nil {
 			return err
 		}
+		return appendReceiptBatch(e.ledger, resultAndTerminal)
 	}
-	return nil
+	if err := e.ledger.Append(receipts[0]); err != nil {
+		return err
+	}
+	return appendReceiptBatch(e.ledger, receipts[1:])
+}
+
+func appendReceiptBatch(ledger Ledger, receipts []contractsv1.Receipt) error {
+	atomic, ok := ledger.(atomicLedger)
+	if !ok {
+		return errors.New("ledger does not support atomic receipt batches")
+	}
+	return atomic.AppendBatch(receipts)
 }
 
 func actionArtifactHashes(artifacts []contractsv1.ActionArtifact) ([]contractsv1.SHA256, error) {
@@ -933,21 +940,27 @@ func postExecutionReceiptsWithState(aggregateID string, occurredAt time.Time, pr
 	if err != nil {
 		return nil, err
 	}
-	receipts := []contractsv1.Receipt{providerReceipt}
-	previous = providerReceipt.ReceiptHash
-	resultReceipt, err := sealReceipt(aggregateID, version+1, contractsv1.ReceiptReceiptTypeResult, occurredAt, &previous,
+	resultAndTerminal, err := postResultReceiptsWithState(aggregateID, occurredAt, providerReceipt, providerResult, artifactHashes, accepted, terminalState)
+	if err != nil {
+		return nil, err
+	}
+	return append([]contractsv1.Receipt{providerReceipt}, resultAndTerminal...), nil
+}
+
+func postResultReceiptsWithState(aggregateID string, occurredAt time.Time, providerReceipt contractsv1.Receipt, providerResult ProviderResult, artifactHashes []contractsv1.SHA256, accepted bool, terminalState string) ([]contractsv1.Receipt, error) {
+	previous := providerReceipt.ReceiptHash
+	resultReceipt, err := sealReceipt(aggregateID, providerReceipt.AggregateVersion+1, contractsv1.ReceiptReceiptTypeResult, occurredAt, &previous,
 		artifactHashes, artifactHashes, map[string]any{"accepted": accepted, "provider_result": providerResult})
 	if err != nil {
 		return nil, err
 	}
-	receipts = append(receipts, resultReceipt)
 	previous = resultReceipt.ReceiptHash
-	terminalReceipt, err := sealReceipt(aggregateID, version+2, contractsv1.ReceiptReceiptTypeTerminal, occurredAt, &previous,
+	terminalReceipt, err := sealReceipt(aggregateID, providerReceipt.AggregateVersion+2, contractsv1.ReceiptReceiptTypeTerminal, occurredAt, &previous,
 		artifactHashes, nil, map[string]any{"state": terminalState})
 	if err != nil {
 		return nil, err
 	}
-	return append(receipts, terminalReceipt), nil
+	return []contractsv1.Receipt{resultReceipt, terminalReceipt}, nil
 }
 
 type memoryLedger struct {
@@ -960,20 +973,31 @@ func NewMemoryLedger() Ledger {
 }
 
 func (l *memoryLedger) Append(receipt contractsv1.Receipt) error {
+	return l.AppendBatch([]contractsv1.Receipt{receipt})
+}
+
+func (l *memoryLedger) AppendBatch(receipts []contractsv1.Receipt) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	current := l.receipts[receipt.AggregateId]
-	index := receipt.AggregateVersion - 1
-	if index < len(current) {
-		if current[index].ReceiptHash != receipt.ReceiptHash {
-			return fmt.Errorf("receipt version %d conflicts with canonical history", receipt.AggregateVersion)
+	next := make(map[string][]contractsv1.Receipt, len(l.receipts))
+	for aggregate, current := range l.receipts {
+		next[aggregate] = append([]contractsv1.Receipt(nil), current...)
+	}
+	for _, receipt := range receipts {
+		current := next[receipt.AggregateId]
+		index := receipt.AggregateVersion - 1
+		if index < len(current) {
+			if current[index].ReceiptHash != receipt.ReceiptHash {
+				return fmt.Errorf("receipt version %d conflicts with canonical history", receipt.AggregateVersion)
+			}
+			continue
 		}
-		return nil
+		if err := validateNextReceipt(current, receipt); err != nil {
+			return err
+		}
+		next[receipt.AggregateId] = append(current, receipt)
 	}
-	if err := validateNextReceipt(current, receipt); err != nil {
-		return err
-	}
-	l.receipts[receipt.AggregateId] = append(current, receipt)
+	l.receipts = next
 	return nil
 }
 

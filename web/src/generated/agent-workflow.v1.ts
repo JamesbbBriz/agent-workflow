@@ -53,6 +53,7 @@ export type ActionArtifactKind = "action_artifact";
 
 export interface ApprovalBrief {
     action:                ActionArtifact;
+    approval_policy?:      string;
     evidence:              [EvidenceElement, ...EvidenceElement[]];
     id:                    string;
     kind:                  ApprovalBriefKind;
@@ -113,6 +114,7 @@ export type ApprovalPreviewKind = "approval_preview";
 export interface ApprovalRequestedEventPayload {
     action_hash:        string;
     approval_id:        string;
+    approval_policy:    string;
     node_id:            string;
     source_replay_hash: string;
     workflow_ref:       string;

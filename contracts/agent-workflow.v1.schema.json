@@ -366,11 +366,12 @@
     "ApprovalRequestedEventPayload": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["workflow_ref", "node_id", "approval_id", "source_replay_hash", "action_hash"],
+      "required": ["workflow_ref", "node_id", "approval_id", "approval_policy", "source_replay_hash", "action_hash"],
       "properties": {
         "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
         "node_id": { "$ref": "#/$defs/Identifier" },
         "approval_id": { "$ref": "#/$defs/Identifier" },
+        "approval_policy": { "$ref": "#/$defs/Identifier" },
         "source_replay_hash": { "$ref": "#/$defs/SHA256" },
         "action_hash": { "$ref": "#/$defs/SHA256" }
       }
@@ -709,7 +710,8 @@
         "recommended_option_id": { "$ref": "#/$defs/Identifier" },
         "recommendation": { "type": "string", "minLength": 1, "maxLength": 1000 },
         "risks": { "$ref": "#/$defs/NonEmptyStrings" },
-        "action": { "$ref": "#/$defs/ActionArtifact" }
+        "action": { "$ref": "#/$defs/ActionArtifact" },
+        "approval_policy": { "$ref": "#/$defs/Identifier" }
       }
     },
     "ApprovalPreview": {

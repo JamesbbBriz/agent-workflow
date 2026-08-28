@@ -101,6 +101,13 @@ func TestProviderResultRecoveryConvergesAfterLedgerFailure(t *testing.T) {
 	if _, err := engine.RunNode(context.Background(), request); err == nil {
 		t.Fatal("injected ledger failure was ignored")
 	}
+	partial, err := canonical.Replay(executionIDForTest(t, request))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasReceiptType(partial, contractsv1.ReceiptReceiptTypeProviderExecution) || hasReceiptType(partial, contractsv1.ReceiptReceiptTypeResult) || hasReceiptType(partial, contractsv1.ReceiptReceiptTypeTerminal) {
+		t.Fatalf("failed atomic result batch left a partial accepted result: %+v", partial.Receipts)
+	}
 	time.Sleep(1100 * time.Millisecond)
 	result, err := engine.RunNode(context.Background(), request)
 	if err != nil {
@@ -116,6 +123,15 @@ func TestProviderResultRecoveryConvergesAfterLedgerFailure(t *testing.T) {
 	if preview.State.NextNodeId == nil || *preview.State.NextNodeId != "review" || preview.State.Nodes[0].Status != contractsv1.CampaignNodeExecutionStatusCompleted {
 		t.Fatalf("redelivery completed only the child Replay, not its Campaign transition: %+v", preview.State)
 	}
+}
+
+func hasReceiptType(replay contractsv1.ReplayBundle, receiptType contractsv1.ReceiptReceiptType) bool {
+	for _, receipt := range replay.Receipts {
+		if receipt.ReceiptType == receiptType {
+			return true
+		}
+	}
+	return false
 }
 
 func TestExpiredProviderPollBecomesOneTerminalReceipt(t *testing.T) {
@@ -249,6 +265,23 @@ func (l *failOnceLedger) Append(receipt contractsv1.Receipt) error {
 		return errors.New("injected append failure")
 	}
 	return l.Ledger.Append(receipt)
+}
+
+func (l *failOnceLedger) AppendBatch(receipts []contractsv1.Receipt) error {
+	for _, receipt := range receipts {
+		l.appendCount++
+		if !l.failed && receipt.ReceiptType == l.failType {
+			l.failed = true
+			return errors.New("injected append failure")
+		}
+	}
+	batch, ok := l.Ledger.(interface {
+		AppendBatch([]contractsv1.Receipt) error
+	})
+	if !ok {
+		return errors.New("test ledger does not support atomic batches")
+	}
+	return batch.AppendBatch(receipts)
 }
 
 func TestFileLedgerSurvivesCoreRestartAndRedelivery(t *testing.T) {

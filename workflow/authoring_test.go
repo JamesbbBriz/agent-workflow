@@ -164,6 +164,10 @@ func TestApprovalBindsBriefActorOptionAndStaleToken(t *testing.T) {
 	if err != nil || receipt.ReceiptType != contractsv1.ReceiptReceiptTypeApproval {
 		t.Fatalf("approval failed: %+v %v", receipt, err)
 	}
+	redelivered, err := core.ConfirmApproval(preview, "human@example.com", "approve", preview.ExpiresAt.Add(time.Second))
+	if err != nil || redelivered.ReceiptHash != receipt.ReceiptHash {
+		t.Fatalf("exact approval redelivery did not converge after expiry: %+v %v", redelivered, err)
+	}
 	if _, err := core.ConfirmApproval(preview, "other@example.com", "approve", time.Now()); err == nil {
 		t.Fatal("different actor reused approval token")
 	}

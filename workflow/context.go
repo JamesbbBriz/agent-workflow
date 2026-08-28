@@ -250,10 +250,51 @@ func resolveContext(ctx context.Context, registry *Registry, request RunRequest,
 	if err := contract.ValidateDefinition("ContextBundle", result.Bundle); err != nil {
 		return result, err
 	}
-	if err := VerifyContextBundle(result.Bundle, result.Packs); err != nil {
+	if err := validateResolvedContextForNode(result, node, request.Campaign.Scope, request.Campaign.EvidenceFrontier.Cutoff); err != nil {
 		return result, err
 	}
 	return result, nil
+}
+
+func validateResolvedContextForNode(resolved resolvedContext, node CompiledNode, scope contractsv1.Scope, cutoff time.Time) error {
+	if err := VerifyContextBundle(resolved.Bundle, resolved.Packs); err != nil {
+		return err
+	}
+	requirements := make(map[contractsv1.Identifier]contractsv1.ContextRequirement, len(node.Definition.Context))
+	for _, requirement := range node.Definition.Context {
+		requirements[requirement.Id] = requirement
+	}
+	present := make(map[contractsv1.Identifier]bool, len(resolved.Bundle.Entries))
+	for index, entry := range resolved.Bundle.Entries {
+		if entry.RequirementId == nil {
+			return errors.New("context bundle entry has no requirement binding")
+		}
+		requirement, ok := requirements[*entry.RequirementId]
+		if !ok || present[*entry.RequirementId] {
+			return errors.New("context bundle contains an unknown or duplicate requirement")
+		}
+		if err := validatePack(resolved.Packs[index], requirement, scope, cutoff); err != nil {
+			return err
+		}
+		present[*entry.RequirementId] = true
+	}
+	missingOptional := make([]string, 0)
+	for _, requirement := range node.Definition.Context {
+		if present[requirement.Id] {
+			continue
+		}
+		if requirement.Required {
+			return errors.New("context bundle is missing a required requirement")
+		}
+		missingOptional = append(missingOptional, string(requirement.Id))
+	}
+	sort.Strings(missingOptional)
+	actualMissing := append([]string(nil), resolved.Bundle.MissingOptional...)
+	sort.Strings(actualMissing)
+	if len(actualMissing) != len(missingOptional) || len(actualMissing) > 0 && !reflect.DeepEqual(actualMissing, missingOptional) || resolved.Bundle.Degraded != (len(missingOptional) > 0) {
+		return errors.New("context bundle optional coverage does not match")
+	}
+	return nil
 }
 
 func VerifyContextBundle(bundle contractsv1.ContextBundle, packs []contractsv1.ContextPackEdition) error {

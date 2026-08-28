@@ -433,15 +433,23 @@ func (c *AuthoringCore) ConfirmApproval(preview contractsv1.ApprovalPreview, act
 	if strings.TrimSpace(actor) != preview.Actor {
 		return contractsv1.Receipt{}, errors.New("confirmation actor does not match")
 	}
-	if preview.ExpiresAt != nil && occurredAt.After(*preview.ExpiresAt) {
-		return contractsv1.Receipt{}, errors.New("approval preview has expired")
-	}
 	if replay, err := c.ledger.Replay(approvalAggregate(string(preview.Brief.Id))); err == nil {
 		for _, receipt := range replay.Receipts {
 			if fmt.Sprint(receipt.Payload["preview_hash"]) == string(preview.PreviewHash) && fmt.Sprint(receipt.Payload["selected_option_id"]) == optionID && receipt.Actor != nil && *receipt.Actor == actor {
 				return receipt, nil
 			}
 		}
+	}
+	if preview.ExpiresAt != nil && occurredAt.After(*preview.ExpiresAt) {
+		return contractsv1.Receipt{}, errors.New("approval preview has expired")
+	}
+	source, err := c.sources.Replay(preview.SourceAggregateId)
+	if err != nil || !nodeCompletedReplay(source) {
+		return contractsv1.Receipt{}, errors.New("approval source is not canonical")
+	}
+	terminal, _ := receiptByType(source, contractsv1.ReceiptReceiptTypeTerminal)
+	if occurredAt.Before(terminal.OccurredAt) {
+		return contractsv1.Receipt{}, errors.New("approval predates its canonical source")
 	}
 	expected, err := c.PreviewApproval(preview.Brief, actor, preview.SourceAggregateId)
 	if err != nil || !reflect.DeepEqual(expected, preview) {
@@ -470,7 +478,7 @@ func (c *AuthoringCore) ConfirmApproval(preview contractsv1.ApprovalPreview, act
 	if !selected {
 		return contractsv1.Receipt{}, errors.New("approval option is invalid")
 	}
-	receipt, err := sealActorReceipt(approvalAggregate(string(preview.Brief.Id)), 1, contractsv1.ReceiptReceiptTypeApproval, actor, occurredAt, nil, []contractsv1.SHA256{preview.BriefHash, preview.Brief.Action.ContentSha256}, []contractsv1.SHA256{preview.PreviewHash}, map[string]any{"brief": preview.Brief, "preview_hash": preview.PreviewHash, "selected_option_id": optionID})
+	receipt, err := sealActorReceipt(approvalAggregate(string(preview.Brief.Id)), 1, contractsv1.ReceiptReceiptTypeApproval, actor, occurredAt, nil, []contractsv1.SHA256{preview.BriefHash, preview.Brief.Action.ContentSha256}, []contractsv1.SHA256{preview.PreviewHash}, map[string]any{"brief": preview.Brief, "preview": preview, "preview_hash": preview.PreviewHash, "selected_option_id": optionID})
 	if err != nil {
 		return contractsv1.Receipt{}, err
 	}

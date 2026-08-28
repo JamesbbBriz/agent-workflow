@@ -707,6 +707,9 @@ func (e *Engine) driveCoreNode(command CampaignDriveCommand, state contractsv1.C
 		}
 		return true, e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeWaitResumed, now, inputs, nil, payload)
 	case contractsv1.NodeDefinitionKindApproval:
+		if blocker := approvalActionBudgetBlocker(state, prepared.request.Campaign.Budget, ref, node.Definition); blocker != "" {
+			return true, e.exhaustCampaignNode(&state, replay, ref, id, blocker, nil)
+		}
 		sourceReplay, action, result, err := e.approvalSource(prepared, workflow, node)
 		if err != nil {
 			return false, err
@@ -717,7 +720,7 @@ func (e *Engine) driveCoreNode(command CampaignDriveCommand, state contractsv1.C
 		}
 		approvalID := contractsv1.Identifier(shortID("approval-", actionHash))
 		if current.Status == contractsv1.CampaignNodeExecutionStatusPending {
-			return true, e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeApprovalRequested, now, []contractsv1.SHA256{sourceReplay.BundleHash, result.ReceiptHash}, []contractsv1.SHA256{contractsv1.SHA256(actionHash)}, map[string]any{"workflow_ref": ref, "node_id": id, "approval_id": approvalID, "source_replay_hash": sourceReplay.BundleHash, "action_hash": actionHash})
+			return true, e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeApprovalRequested, now, []contractsv1.SHA256{sourceReplay.BundleHash, result.ReceiptHash}, []contractsv1.SHA256{contractsv1.SHA256(actionHash)}, map[string]any{"workflow_ref": ref, "node_id": id, "approval_id": approvalID, "approval_policy": *node.Definition.ApprovalPolicy, "source_replay_hash": sourceReplay.BundleHash, "action_hash": actionHash})
 		}
 		approvalReplay, err := e.ledger.Replay(approvalAggregate(string(approvalID)))
 		if errors.Is(err, ErrReplayEmpty) {
@@ -726,7 +729,7 @@ func (e *Engine) driveCoreNode(command CampaignDriveCommand, state contractsv1.C
 		if err != nil {
 			return false, err
 		}
-		decision, receipt, err := verifiedApprovalDecision(approvalReplay, action, result)
+		decision, receipt, err := verifiedApprovalDecision(approvalReplay, sourceReplay, action, result, node.Definition.ApprovalPolicy)
 		if err != nil {
 			return false, err
 		}
@@ -785,17 +788,42 @@ func (e *Engine) approvalSource(prepared preparedCampaign, workflow preparedWork
 	return matches[0].replay, matches[0].action, matches[0].result, nil
 }
 
-func verifiedApprovalDecision(replay contractsv1.ReplayBundle, action contractsv1.ActionArtifact, result contractsv1.Receipt) (contractsv1.ApprovalOptionDecision, contractsv1.Receipt, error) {
+func verifiedApprovalDecision(replay, source contractsv1.ReplayBundle, action contractsv1.ActionArtifact, result contractsv1.Receipt, approvalPolicy *contractsv1.Identifier) (contractsv1.ApprovalOptionDecision, contractsv1.Receipt, error) {
 	if err := VerifyReplay(replay); err != nil || len(replay.Receipts) != 1 {
 		return "", contractsv1.Receipt{}, errors.New("approval decision Replay is invalid")
 	}
+	if err := VerifyReplay(source); err != nil || !nodeCompletedReplay(source) {
+		return "", contractsv1.Receipt{}, errors.New("approval source Replay is invalid")
+	}
 	receipt := replay.Receipts[0]
-	if receipt.ReceiptType != contractsv1.ReceiptReceiptTypeApproval {
+	if receipt.ReceiptType != contractsv1.ReceiptReceiptTypeApproval || receipt.Actor == nil || receipt.AggregateVersion != 1 || receipt.PreviousReceiptHash != nil {
 		return "", contractsv1.Receipt{}, errors.New("approval decision receipt is invalid")
 	}
 	var brief contractsv1.ApprovalBrief
-	if err := decodePayload(receipt.Payload["brief"], &brief); err != nil || !reflect.DeepEqual(brief.Action, action) || !containsEvidenceReceipt(brief.Evidence, result) {
+	var preview contractsv1.ApprovalPreview
+	if err := decodePayload(receipt.Payload["brief"], &brief); err != nil {
+		return "", contractsv1.Receipt{}, errors.New("approval decision brief is invalid")
+	}
+	terminal, _ := receiptByType(source, contractsv1.ReceiptReceiptTypeTerminal)
+	if err := decodePayload(receipt.Payload["preview"], &preview); err != nil || !reflect.DeepEqual(preview.Brief, brief) || !reflect.DeepEqual(brief.Action, action) || !containsEvidenceReceipt(brief.Evidence, result) || approvalPolicy == nil || brief.ApprovalPolicy == nil || *brief.ApprovalPolicy != *approvalPolicy || preview.Actor != *receipt.Actor || preview.SourceAggregateId != source.AggregateId || preview.BaseRevision != 0 || preview.ExpiresAt == nil || receipt.OccurredAt.Before(terminal.OccurredAt) || receipt.OccurredAt.After(*preview.ExpiresAt) {
 		return "", contractsv1.Receipt{}, errors.New("approval decision is not bound to the exact action and result")
+	}
+	if err := contract.ValidateDefinition("ApprovalPreview", preview); err != nil {
+		return "", contractsv1.Receipt{}, errors.New("approval decision preview is invalid")
+	}
+	unsigned := preview
+	unsigned.PreviewHash, unsigned.CommitToken = "", ""
+	previewHash, err := Digest(unsigned)
+	if err != nil || contractsv1.SHA256(previewHash) != preview.PreviewHash || fmt.Sprint(receipt.Payload["preview_hash"]) != string(preview.PreviewHash) {
+		return "", contractsv1.Receipt{}, errors.New("approval decision preview hash is invalid")
+	}
+	token, err := Digest(struct {
+		Purpose string
+		Preview contractsv1.SHA256
+	}{"confirm-approval", preview.PreviewHash})
+	briefHash, briefErr := Digest(brief)
+	if err != nil || briefErr != nil || contractsv1.SHA256(token) != preview.CommitToken || preview.BriefHash != contractsv1.SHA256(briefHash) || receipt.AggregateId != approvalAggregate(string(brief.Id)) || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{preview.BriefHash, action.ContentSha256}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{preview.PreviewHash}) {
+		return "", contractsv1.Receipt{}, errors.New("approval decision authority is invalid")
 	}
 	selected := fmt.Sprint(receipt.Payload["selected_option_id"])
 	for _, option := range brief.Options {
@@ -874,7 +902,8 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			}
 			node := nodeStatePtr(&state, payload.WorkflowRef, string(payload.NodeId))
 			_, definition, exists := preparedNode(prepared, payload.WorkflowRef, string(payload.NodeId))
-			if node == nil || !exists || !campaignNodeReadyForContext(state, prepared, payload.WorkflowRef, string(payload.NodeId)) || definition.Definition.Kind != contractsv1.NodeDefinitionKindAgent || VerifyContextBundle(payload.Bundle, payload.Packs) != nil || payload.Bundle.JobId != state.JobId || payload.Bundle.CampaignId != state.CampaignId || payload.Bundle.WorkflowRef != payload.WorkflowRef || payload.Bundle.NodeId != payload.NodeId || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) {
+			resolved := resolvedContext{Bundle: payload.Bundle, Packs: payload.Packs}
+			if node == nil || !exists || !campaignNodeReadyForContext(state, prepared, payload.WorkflowRef, string(payload.NodeId)) || definition.Definition.Kind != contractsv1.NodeDefinitionKindAgent || validateResolvedContextForNode(resolved, definition, prepared.request.Campaign.Scope, prepared.request.Campaign.EvidenceFrontier.Cutoff) != nil || payload.Bundle.JobId != state.JobId || payload.Bundle.CampaignId != state.CampaignId || payload.Bundle.WorkflowRef != payload.WorkflowRef || payload.Bundle.NodeId != payload.NodeId || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) {
 				return state, errors.New("Campaign Context transition binding is invalid")
 			}
 			if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeContextBound {
@@ -922,7 +951,7 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			}
 			source, action, result, err := e.approvalSource(prepared, workflow, definition)
 			actionHash, hashErr := Digest(action)
-			if err != nil || hashErr != nil || payload.SourceReplayHash != source.BundleHash || payload.ActionHash != contractsv1.SHA256(actionHash) || payload.ApprovalId != contractsv1.Identifier(shortID("approval-", actionHash)) || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{source.BundleHash, result.ReceiptHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.ActionHash}) {
+			if err != nil || hashErr != nil || definition.Definition.ApprovalPolicy == nil || payload.ApprovalPolicy != *definition.Definition.ApprovalPolicy || payload.SourceReplayHash != source.BundleHash || payload.ActionHash != contractsv1.SHA256(actionHash) || payload.ApprovalId != contractsv1.Identifier(shortID("approval-", actionHash)) || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{source.BundleHash, result.ReceiptHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.ActionHash}) {
 				return state, errors.New("Campaign approval request binding is invalid")
 			}
 			node.Status, node.ApprovalId = contractsv1.CampaignNodeExecutionStatusAwaitingApproval, &payload.ApprovalId
@@ -934,12 +963,12 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			}
 			node := nodeStatePtr(&state, payload.WorkflowRef, string(payload.NodeId))
 			workflow, definition, exists := preparedNode(prepared, payload.WorkflowRef, string(payload.NodeId))
-			if node == nil || !exists || node.Status != contractsv1.CampaignNodeExecutionStatusAwaitingApproval || node.ApprovalId == nil || *node.ApprovalId != payload.ApprovalId {
+			if node == nil || !exists || node.Status != contractsv1.CampaignNodeExecutionStatusAwaitingApproval || node.ApprovalId == nil || *node.ApprovalId != payload.ApprovalId || approvalActionBudgetBlocker(state, prepared.request.Campaign.Budget, payload.WorkflowRef, definition.Definition) != "" {
 				return state, errors.New("Campaign approval decision is not eligible")
 			}
 			source, action, result, err := e.approvalSource(prepared, workflow, definition)
 			approvalReplay, replayErr := e.ledger.Replay(approvalAggregate(string(payload.ApprovalId)))
-			decision, approvalReceipt, decisionErr := verifiedApprovalDecision(approvalReplay, action, result)
+			decision, approvalReceipt, decisionErr := verifiedApprovalDecision(approvalReplay, source, action, result, definition.Definition.ApprovalPolicy)
 			expectedArtifact, artifactErr := e.approvalDecisionArtifact(prepared.request, workflow, definition, action, approvalReceipt, decision)
 			expectedArtifactHash, expectedHashErr := Digest(expectedArtifact)
 			payloadArtifactHash, payloadHashErr := Digest(payload.Artifact)
@@ -1118,7 +1147,9 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			}
 			node := nodeStatePtr(&state, workflowRef, nodeID)
 			workflow, definition, exists := preparedNode(prepared, workflowRef, nodeID)
-			if node == nil || !exists || (node.Status != contractsv1.CampaignNodeExecutionStatusRunning && (node.Status != contractsv1.CampaignNodeExecutionStatusPending || !campaignNodeReady(state, prepared, workflowRef, nodeID))) {
+			approvalBudgetNode := node != nil && exists && definition.Definition.Kind == contractsv1.NodeDefinitionKindApproval && (node.Status == contractsv1.CampaignNodeExecutionStatusPending || node.Status == contractsv1.CampaignNodeExecutionStatusAwaitingApproval)
+			approvalWaiting := approvalBudgetNode && node.Status == contractsv1.CampaignNodeExecutionStatusAwaitingApproval
+			if node == nil || !exists || (!approvalWaiting && node.Status != contractsv1.CampaignNodeExecutionStatusRunning && (node.Status != contractsv1.CampaignNodeExecutionStatusPending || !campaignNodeReady(state, prepared, workflowRef, nodeID))) {
 				return state, errors.New("Campaign budget exhaustion is not eligible")
 			}
 			var resultReplayHash contractsv1.SHA256
@@ -1129,6 +1160,9 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			}
 			if resultReplayHash == "" {
 				_, actual := remainingBudgetAt(state, prepared.request.Campaign.Budget, workflowRef, definition.Definition, receipt.OccurredAt)
+				if approvalBudgetNode {
+					actual = approvalActionBudgetBlocker(state, prepared.request.Campaign.Budget, workflowRef, definition.Definition)
+				}
 				if actual != blocker || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{state.CampaignHash}) || len(receipt.OutputHashes) != 0 {
 					return state, errors.New("Campaign budget exhaustion has no canonical condition")
 				}
@@ -1340,6 +1374,14 @@ func nextAction(state contractsv1.CampaignExecutionState) contractsv1.CampaignDr
 
 func remainingBudget(state contractsv1.CampaignExecutionState, campaign contractsv1.Budget, workflowRef contractsv1.WorkflowRef, node contractsv1.NodeDefinition) (contractsv1.Budget, contractsv1.Identifier) {
 	return remainingBudgetAt(state, campaign, workflowRef, node, time.Now())
+}
+
+func approvalActionBudgetBlocker(state contractsv1.CampaignExecutionState, campaign contractsv1.Budget, workflowRef contractsv1.WorkflowRef, node contractsv1.NodeDefinition) contractsv1.Identifier {
+	current := nodeState(state, workflowRef, string(node.Id))
+	if current.Usage.Actions >= node.Budget.MaxActions || state.Usage.Actions >= campaign.MaxActions {
+		return "action-budget-exhausted"
+	}
+	return ""
 }
 
 func remainingBudgetAt(state contractsv1.CampaignExecutionState, campaign contractsv1.Budget, workflowRef contractsv1.WorkflowRef, node contractsv1.NodeDefinition, now time.Time) (contractsv1.Budget, contractsv1.Identifier) {

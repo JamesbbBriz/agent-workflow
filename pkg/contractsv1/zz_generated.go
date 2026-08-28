@@ -171,6 +171,9 @@ type ApprovalBrief struct {
 	// Action corresponds to the JSON schema field "action".
 	Action ActionArtifact `json:"action"`
 
+	// ApprovalPolicy corresponds to the JSON schema field "approval_policy".
+	ApprovalPolicy *Identifier `json:"approval_policy,omitempty,omitzero"`
+
 	// Evidence corresponds to the JSON schema field "evidence".
 	Evidence []ArtifactRef `json:"evidence"`
 
@@ -297,6 +300,9 @@ type ApprovalRequestedEventPayload struct {
 
 	// ApprovalId corresponds to the JSON schema field "approval_id".
 	ApprovalId Identifier `json:"approval_id"`
+
+	// ApprovalPolicy corresponds to the JSON schema field "approval_policy".
+	ApprovalPolicy Identifier `json:"approval_policy"`
 
 	// NodeId corresponds to the JSON schema field "node_id".
 	NodeId Identifier `json:"node_id"`
