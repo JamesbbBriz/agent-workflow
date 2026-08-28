@@ -157,6 +157,10 @@ type AgentWorkflowContractCatalog struct {
 	// "context_transition_event_payload".
 	ContextTransitionEventPayload *ContextTransitionEventPayload `json:"context_transition_event_payload,omitempty,omitzero"`
 
+	// ControlPlaneSnapshot corresponds to the JSON schema field
+	// "control_plane_snapshot".
+	ControlPlaneSnapshot *ControlPlaneSnapshot `json:"control_plane_snapshot,omitempty,omitzero"`
+
 	// CoreCompletedEventPayload corresponds to the JSON schema field
 	// "core_completed_event_payload".
 	CoreCompletedEventPayload *CoreCompletedEventPayload `json:"core_completed_event_payload,omitempty,omitzero"`
@@ -217,6 +221,9 @@ type AgentWorkflowContractCatalog struct {
 	// ProviderProtocolResponse corresponds to the JSON schema field
 	// "provider_protocol_response".
 	ProviderProtocolResponse *ProviderProtocolResponse `json:"provider_protocol_response,omitempty,omitzero"`
+
+	// ProviderReadiness corresponds to the JSON schema field "provider_readiness".
+	ProviderReadiness *ProviderReadiness `json:"provider_readiness,omitempty,omitzero"`
 
 	// ProviderRunRef corresponds to the JSON schema field "provider_run_ref".
 	ProviderRunRef *ProviderRunRef `json:"provider_run_ref,omitempty,omitzero"`
@@ -1597,6 +1604,35 @@ type ContextTransitionEventPayload struct {
 	WorkflowRef WorkflowRef `json:"workflow_ref"`
 }
 
+type ControlPlaneSnapshot struct {
+	// ChangeCases corresponds to the JSON schema field "change_cases".
+	ChangeCases []ChangeCaseCanvas `json:"change_cases"`
+
+	// GeneratedAt corresponds to the JSON schema field "generated_at".
+	GeneratedAt time.Time `json:"generated_at"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ControlPlaneSnapshotKind `json:"kind"`
+
+	// Portfolios corresponds to the JSON schema field "portfolios".
+	Portfolios []CanvasPortfolioSnapshot `json:"portfolios"`
+
+	// Providers corresponds to the JSON schema field "providers".
+	Providers []ProviderReadiness `json:"providers"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ControlPlaneSnapshotSchemaVersion `json:"schema_version"`
+
+	// SelectedJobId corresponds to the JSON schema field "selected_job_id".
+	SelectedJobId Identifier `json:"selected_job_id"`
+}
+
+type ControlPlaneSnapshotKind string
+
+const ControlPlaneSnapshotKindControlPlaneSnapshot ControlPlaneSnapshotKind = "control_plane_snapshot"
+
+type ControlPlaneSnapshotSchemaVersion int
+
 type CoreCompletedEventPayload struct {
 	// CompletedAt corresponds to the JSON schema field "completed_at".
 	CompletedAt time.Time `json:"completed_at"`
@@ -2321,6 +2357,26 @@ const ProviderProtocolResponseResponseTypeEvents ProviderProtocolResponseRespons
 const ProviderProtocolResponseResponseTypeObservation ProviderProtocolResponseResponseType = "observation"
 const ProviderProtocolResponseResponseTypeRun ProviderProtocolResponseResponseType = "run"
 
+type ProviderReadiness struct {
+	// Code corresponds to the JSON schema field "code".
+	Code ProviderReadinessCode `json:"code"`
+
+	// Descriptor corresponds to the JSON schema field "descriptor".
+	Descriptor ProviderDescriptor `json:"descriptor"`
+
+	// Missing corresponds to the JSON schema field "missing".
+	Missing []string `json:"missing"`
+
+	// Ready corresponds to the JSON schema field "ready".
+	Ready bool `json:"ready"`
+}
+
+type ProviderReadinessCode string
+
+const ProviderReadinessCodeProfileRequired ProviderReadinessCode = "profile_required"
+const ProviderReadinessCodeReady ProviderReadinessCode = "ready"
+const ProviderReadinessCodeUnavailable ProviderReadinessCode = "unavailable"
+
 type ProviderRunRef struct {
 	// ExecutorConfigHash corresponds to the JSON schema field "executor_config_hash".
 	ExecutorConfigHash SHA256 `json:"executor_config_hash"`
@@ -2907,7 +2963,7 @@ type WorkflowLintIssueSeverity string
 const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
 const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
 
-type ReceiptPreviousReceiptHash_0 = SHA256
+type WorkflowRef string
 
 type RedactedReceiptPreviousReceiptHash_0 = SHA256
 
@@ -2931,4 +2987,4 @@ const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflo
 
 type WorkflowLintReportSchemaVersion int
 
-type WorkflowRef string
+type ReceiptPreviousReceiptHash_0 = SHA256

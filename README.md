@@ -45,18 +45,12 @@ go run ./cmd/agent-workflow canvas \
   --at 2026-08-27T00:00:00Z
 ```
 
-Open the full-screen React Flow Canvas:
+The application shell exposes Jobs and the React Flow Canvas, Runs, Approvals, Change Cases, bundled Provider readiness, and the append-only Audit trail. `GET /v1/control-plane` returns the generated `ControlPlaneSnapshot` contract that backs those views. Definition mode shows the exact configured graph; Runtime mode adds only executions, Context Pack editions, Action Artifacts, blockers, approval gates, and receipts present in the Core projection. The GUI never invents canonical state; Builder and approval actions still round-trip through the Go Core.
+
+Generate the initial Canvas fixture, then run the local Core and web application:
 
 ```bash
 npm run fixture:canvas
-npm run web:dev
-```
-
-Definition mode shows the exact configured graph. Runtime mode adds only executions, Context Pack editions, Action Artifacts, blockers, approval gates, and receipts present in the Core projection. The GUI never invents canonical state; builder and approval actions must round-trip through the Go Core.
-
-Run the local Workflow Builder beside the Canvas:
-
-```bash
 go run ./cmd/agent-workflow builder \
   --listen 127.0.0.1:4321 \
   --ledger .agent-workflow/builder.jsonl \
@@ -65,6 +59,8 @@ npm run web:dev
 ```
 
 The browser keeps unfinished drafts in local storage. The Builder reads the Go Core catalog, lints and expands the exact Node contracts, then requires a revision-bound preview token before the Core admits an immutable Workflow version. Pending Action Artifacts can be opened from the Runtime Canvas for a separate preview/confirm human decision. Only the Core writes admission and approval receipts; the GUI projects their Replay.
+
+The UI uses the open-source shadcn/ui composition model, Radix primitives, and Tailwind. Paid block source is not vendored, so the public repository stays redistributable.
 
 To opt into the browser's experimental `document.modelContext` API for this exact local page origin:
 

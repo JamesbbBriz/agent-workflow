@@ -744,6 +744,25 @@
         "auth_environment": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$", "maxLength": 128 } }
       }
     },
+    "ProviderReadiness": {
+      "title": "ProviderReadiness",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["descriptor", "ready", "code", "missing"],
+      "properties": {
+        "descriptor": { "$ref": "#/$defs/ProviderDescriptor" },
+        "ready": { "type": "boolean" },
+        "code": {
+          "type": "string",
+          "enum": ["ready", "unavailable", "profile_required"]
+        },
+        "missing": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        }
+      }
+    },
     "ExecutorProfile": {
       "type": "object",
       "additionalProperties": false,
@@ -1311,6 +1330,31 @@
         "job": { "$ref": "#/$defs/JobDefinition" },
         "selected_campaign_id": { "$ref": "#/$defs/Identifier" },
         "campaigns": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/CanvasPortfolioCampaign" } }
+      }
+    },
+    "ControlPlaneSnapshot": {
+      "title": "ControlPlaneSnapshot",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "generated_at", "selected_job_id", "portfolios", "change_cases", "providers"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["control_plane_snapshot"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "generated_at": { "type": "string", "format": "date-time" },
+        "selected_job_id": { "$ref": "#/$defs/Identifier" },
+        "portfolios": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/CanvasPortfolioSnapshot" }
+        },
+        "change_cases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ChangeCaseCanvas" }
+        },
+        "providers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProviderReadiness" }
+        }
       }
     },
     "ConformanceFixtureProfile": {

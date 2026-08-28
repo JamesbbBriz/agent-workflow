@@ -234,6 +234,10 @@ func (l *FileLedger) Replay(aggregateID string) (contractsv1.ReplayBundle, error
 }
 
 func (l *FileLedger) ReplaysByReceiptType(receiptType contractsv1.ReceiptReceiptType) ([]contractsv1.ReplayBundle, error) {
+	return l.ReplaysByReceiptTypes(receiptType)
+}
+
+func (l *FileLedger) ReplaysByReceiptTypes(receiptTypes ...contractsv1.ReceiptReceiptType) ([]contractsv1.ReplayBundle, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	lock, err := lockLedger(l.path, false)
@@ -246,10 +250,14 @@ func (l *FileLedger) ReplaysByReceiptType(receiptType contractsv1.ReceiptReceipt
 		return nil, err
 	}
 	ids := make([]string, 0, len(all))
+	accepted := make(map[contractsv1.ReceiptReceiptType]bool, len(receiptTypes))
+	for _, receiptType := range receiptTypes {
+		accepted[receiptType] = true
+	}
 	for id, receipts := range all {
-		matched := len(receipts) > 0
+		matched := len(receipts) > 0 && len(accepted) > 0
 		for _, receipt := range receipts {
-			matched = matched && receipt.ReceiptType == receiptType
+			matched = matched && accepted[receipt.ReceiptType]
 		}
 		if matched {
 			ids = append(ids, id)

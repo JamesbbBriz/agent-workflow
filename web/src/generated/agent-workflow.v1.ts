@@ -28,6 +28,7 @@ export interface AgentWorkflowV1 {
     context_bundle?:                   Bundle;
     context_pack_edition?:             Edition;
     context_transition_event_payload?: ContextTransitionEventPayload;
+    control_plane_snapshot?:           ControlPlaneSnapshot;
     core_completed_event_payload?:     CoreCompletedEventPayload;
     executor_profile?:                 ExecutorProfile;
     job_definition?:                   Job;
@@ -37,7 +38,7 @@ export interface AgentWorkflowV1 {
     node_completed_event_payload?:     NodeCompletedEventPayload;
     proposal_replacement?:             Replacement;
     provider_cancellation?:            ProviderCancellation;
-    provider_descriptor?:              ProviderDescriptor;
+    provider_descriptor?:              Descriptor;
     provider_event?:                   ProviderEvent;
     provider_event_page?:              ProviderEventPage;
     provider_execution_event_payload?: ProviderExecutionEventPayload;
@@ -45,6 +46,7 @@ export interface AgentWorkflowV1 {
     provider_observation?:             ProviderObservation;
     provider_protocol_request?:        ProviderProtocolRequest;
     provider_protocol_response?:       ProviderProtocolResponse;
+    provider_readiness?:               ProviderReadiness;
     provider_run_ref?:                 ProviderRun;
     receipt?:                          ReplayBundleReceipt;
     redacted_replay?:                  RedactedReplay;
@@ -807,6 +809,45 @@ export interface ContextTransitionEventPayload {
     workflow_ref:                  string;
 }
 
+export interface ControlPlaneSnapshot {
+    change_cases:    ChangeCaseCanvas[];
+    generated_at:    string;
+    kind:            ControlPlaneSnapshotKind;
+    portfolios:      [CanvasPortfolioSnapshot, ...CanvasPortfolioSnapshot[]];
+    providers:       ProviderReadiness[];
+    schema_version:  number;
+    selected_job_id: string;
+}
+
+export type ControlPlaneSnapshotKind = "control_plane_snapshot";
+
+export interface ProviderReadiness {
+    code:       Code;
+    descriptor: Descriptor;
+    missing:    string[];
+    ready:      boolean;
+}
+
+export type Code = "ready" | "unavailable" | "profile_required";
+
+export interface Descriptor {
+    adapter_version:  string;
+    auth_environment: string[];
+    capabilities:     [CapabilityEnum, ...CapabilityEnum[]];
+    display_name:     string;
+    executable:       string;
+    id:               ID;
+    kind:             ProviderDescriptorKind;
+    protocol_version: number;
+    schema_version:   number;
+}
+
+export type CapabilityEnum = "streaming" | "polling" | "scoped_cancel" | "resume" | "structured_output" | "tool_allowlist" | "interactive_approval" | "usage" | "event_cursor";
+
+export type ID = "codex" | "claude-code" | "pi" | "openclaw" | "hermes-agent";
+
+export type ProviderDescriptorKind = "provider_descriptor";
+
 export interface CoreCompletedEventPayload {
     completed_at: string;
     node_id:      string;
@@ -825,18 +866,14 @@ export interface ExecutorProfile {
     kind:              ExecutorProfileKind;
     model_ref:         string;
     network_access:    boolean;
-    provider_id:       ProviderID;
+    provider_id:       ID;
     provider_version:  string;
     schema_version:    number;
     secret_refs:       string[];
     tool_allowlist:    string[];
 }
 
-export type CapabilityEnum = "streaming" | "polling" | "scoped_cancel" | "resume" | "structured_output" | "tool_allowlist" | "interactive_approval" | "usage" | "event_cursor";
-
 export type ExecutorProfileKind = "executor_profile";
-
-export type ProviderID = "codex" | "claude-code" | "pi" | "openclaw" | "hermes-agent";
 
 export interface NeedsContextEventPayload {
     blocker_fingerprint: string;
@@ -867,20 +904,6 @@ export interface ProviderCancellation {
 export type ProviderCancellationKind = "provider_cancellation";
 
 export type ProviderCancellationStatus = "accepted" | "already_terminal" | "unsupported";
-
-export interface ProviderDescriptor {
-    adapter_version:  string;
-    auth_environment: string[];
-    capabilities:     [CapabilityEnum, ...CapabilityEnum[]];
-    display_name:     string;
-    executable:       string;
-    id:               ProviderID;
-    kind:             ProviderDescriptorKind;
-    protocol_version: number;
-    schema_version:   number;
-}
-
-export type ProviderDescriptorKind = "provider_descriptor";
 
 export interface ProviderEvent {
     cursor:         number;
@@ -944,7 +967,7 @@ export interface ProviderRun {
     executor_config_hash: string;
     invocation_id:        string;
     kind:                 ProviderRunRefKind;
-    provider_id:          ProviderID;
+    provider_id:          ID;
     run_ref:              string;
     schema_version:       number;
     session_ref?:         string;
@@ -975,7 +998,7 @@ export type StagedWorkspace = "/workspace";
 
 export interface ProviderProtocolResponse {
     cancellation?:    ProviderCancellation;
-    descriptor?:      ProviderDescriptor;
+    descriptor?:      Descriptor;
     error_code?:      string;
     events?:          ProviderEventPage;
     observation?:     ProviderObservation;

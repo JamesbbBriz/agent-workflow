@@ -135,6 +135,38 @@ func TestFileLedgerSerializesConcurrentCoreWriters(t *testing.T) {
 	}
 }
 
+func TestFileLedgerListsMixedReceiptFamiliesWithoutCrossingAggregates(t *testing.T) {
+	ledger, err := OpenFileLedger(filepath.Join(t.TempDir(), "receipts.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC)
+	first, err := sealReceipt("execution-a", 1, contractsv1.ReceiptReceiptTypeCompile, at, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := sealReceipt("execution-a", 2, contractsv1.ReceiptReceiptTypeTerminal, at.Add(time.Second), &first.ReceiptHash, nil, nil, map[string]any{"state": "node_completed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := sealReceipt("other-a", 1, contractsv1.ReceiptReceiptTypePackEdition, at, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, receipt := range []contractsv1.Receipt{first, second, other} {
+		if err := ledger.Append(receipt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	replays, err := ledger.ReplaysByReceiptTypes(contractsv1.ReceiptReceiptTypeCompile, contractsv1.ReceiptReceiptTypeTerminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replays) != 1 || replays[0].AggregateId != "execution-a" || len(replays[0].Receipts) != 2 {
+		t.Fatalf("mixed receipt family readback=%+v", replays)
+	}
+}
+
 func TestFileLedgerRejectsZeroVersionWithoutPanicking(t *testing.T) {
 	ledger, err := OpenFileLedger(filepath.Join(t.TempDir(), "receipts.jsonl"))
 	if err != nil {

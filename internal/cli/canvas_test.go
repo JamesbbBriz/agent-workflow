@@ -318,6 +318,46 @@ func TestBuilderRestartRestoresTwoCampaigns(t *testing.T) {
 	}
 }
 
+func TestBuilderRestartRestoresTwoJobs(t *testing.T) {
+	sources, snapshot, err := loadCanvasSources("../../web/public/canvas.response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "builder.jsonl")
+	ledger, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := demoAuthoringCore(ledger, sources, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := loadExampleWorkflow(t)
+	definition.Id = "second-job-review"
+	job, campaign := snapshot.Definition.Job, snapshot.Definition.Campaign
+	job.Id = "second-job"
+	campaign.Id, campaign.JobId = "second-job-campaign", job.Id
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"second-job-review@1"}
+	preview, _, err := core.Preview(job, campaign, definition, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Confirm(preview, "operator@example.com", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := workflow.OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	portfolios, selectedJobID, _, err := restoreCanvasPortfolios(snapshot, reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(portfolios) != 2 || selectedJobID != job.Id || portfolios[0].Job.Id != snapshot.Definition.Job.Id || portfolios[1].Job.Id != job.Id {
+		t.Fatalf("restart lost independent Jobs: selected=%s portfolios=%+v", selectedJobID, portfolios)
+	}
+}
+
 func TestBuilderRestartRejectsConflictingJobDefinitions(t *testing.T) {
 	sources, snapshot, err := loadCanvasSources("../../web/public/canvas.response.json")
 	if err != nil {

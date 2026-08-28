@@ -15,12 +15,7 @@ import (
 
 const bundledAdapterVersion = "1.0.0"
 
-type ProviderReadiness struct {
-	Descriptor contractsv1.ProviderDescriptor `json:"descriptor"`
-	Ready      bool                           `json:"ready"`
-	Code       string                         `json:"code"`
-	Missing    []string                       `json:"missing"`
-}
+type ProviderReadiness = contractsv1.ProviderReadiness
 
 var bundledProviders = []contractsv1.ProviderDescriptor{
 	providerDescriptor(contractsv1.ProviderIDCodex, "Codex", "agent-workflow-codex", []string{"OPENAI_API_KEY"}, contractsv1.ProviderCapabilityPolling, contractsv1.ProviderCapabilityScopedCancel, contractsv1.ProviderCapabilityStructuredOutput, contractsv1.ProviderCapabilityToolAllowlist, contractsv1.ProviderCapabilityEventCursor),
@@ -108,9 +103,9 @@ func InspectProviderReadinessAt(id contractsv1.ProviderID, stagedRoot, configRef
 	sort.Strings(missing)
 	readiness := ProviderReadiness{Descriptor: descriptor, Ready: len(missing) == 0, Missing: missing}
 	if readiness.Ready {
-		readiness.Code = "ready"
+		readiness.Code = contractsv1.ProviderReadinessCodeReady
 	} else {
-		readiness.Code = "unavailable"
+		readiness.Code = contractsv1.ProviderReadinessCodeUnavailable
 	}
 	return readiness, nil
 }

@@ -73,11 +73,11 @@ func ValidateWorkflow(raw []byte) (WorkflowIdentity, error) {
 
 func ValidateDefinition(name string, value any) error {
 	switch name {
-	case "JobDefinition", "CampaignDefinition", "ContextPackEdition", "ContextBundle", "CapabilityManifest", "ActionArtifact", "Receipt", "ReplayBundle", "RedactedReplay", "ProviderIsolationEvidence", "CanvasSnapshot", "CanvasPortfolioSnapshot", "CampaignExecutionState", "CampaignDrivePreview", "CampaignDriveReceipt",
+	case "JobDefinition", "CampaignDefinition", "ContextPackEdition", "ContextBundle", "CapabilityManifest", "ActionArtifact", "Receipt", "ReplayBundle", "RedactedReplay", "ProviderIsolationEvidence", "CanvasSnapshot", "CanvasPortfolioSnapshot", "ControlPlaneSnapshot", "CampaignExecutionState", "CampaignDrivePreview", "CampaignDriveReceipt",
 		"AuthoringCatalog", "WorkflowLintReport", "WorkflowAdmissionPreview", "WorkflowAdmission", "ApprovalBrief", "ApprovalPreview",
 		"ConformanceFixture", "ConformanceCheck", "ConformanceReport",
 		"ResourceRef", "ProposalReplacement", "ChangeProposal", "ConflictSet", "ResolutionArtifact", "MutationLease", "MutationEvidence", "ChangeCaseState", "ChangeCaseEventPayload", "ChangeCaseCanvas",
-		"ProviderDescriptor", "ExecutorProfile", "ProviderRunRef", "ProviderEvent", "ProviderEventPage", "ProviderObservation", "ProviderCancellation", "ProviderProtocolRequest", "ProviderProtocolResponse":
+		"ProviderDescriptor", "ProviderReadiness", "ExecutorProfile", "ProviderRunRef", "ProviderEvent", "ProviderEventPage", "ProviderObservation", "ProviderCancellation", "ProviderProtocolRequest", "ProviderProtocolResponse":
 	default:
 		return fmt.Errorf("public definition %q is unknown", name)
 	}

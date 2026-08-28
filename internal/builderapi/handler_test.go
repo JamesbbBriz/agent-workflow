@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/JamesbbBriz/agent-workflow/internal/builderapi"
+	"github.com/JamesbbBriz/agent-workflow/internal/contract"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 	"github.com/JamesbbBriz/agent-workflow/workflow"
 )
@@ -50,6 +52,45 @@ func TestBuilderHTTPDraftPreviewConfirmReadback(t *testing.T) {
 	handler.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/v1/workflows/research-review/versions/1", nil))
 	if read.Code != http.StatusOK || !bytes.Contains(read.Body.Bytes(), []byte(`"revision":1`)) {
 		t.Fatalf("readback failed: %s", read.Body.String())
+	}
+}
+
+func TestBuilderHTTPReturnsTypedControlPlaneReadModel(t *testing.T) {
+	definition := loadDefinition(t)
+	job, campaign := definitions(definition)
+	handler := builderapi.New(testCore(t), func() time.Time { return time.Date(2026, 8, 29, 2, 0, 0, 0, time.UTC) })
+	admissionPreview := preview(t, handler, job, campaign, definition)
+	if response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": admissionPreview}); response.Code != http.StatusOK {
+		t.Fatalf("confirm: %s", response.Body.String())
+	}
+	secondJob, secondCampaign, secondDefinition := job, campaign, definition
+	secondJob.Id, secondJob.Intent.Title = "second-job", "Second Job"
+	secondCampaign.Id, secondCampaign.Intent.Title = "second-job-campaign", "Second Job Campaign"
+	secondCampaign.JobId = secondJob.Id
+	secondDefinition.Id = "second-job-workflow"
+	secondCampaign.WorkflowPlan = []contractsv1.WorkflowRef{"second-job-workflow@1"}
+	secondPreview := preview(t, handler, secondJob, secondCampaign, secondDefinition)
+	if response := post(t, handler, "/v1/workflows/confirm", map[string]any{"actor": "operator", "preview": secondPreview}); response.Code != http.StatusOK {
+		t.Fatalf("confirm second Job: %s", response.Body.String())
+	}
+
+	read := httptest.NewRecorder()
+	handler.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/v1/control-plane", nil))
+	var response struct {
+		OK   bool                             `json:"ok"`
+		Data contractsv1.ControlPlaneSnapshot `json:"data"`
+	}
+	decodeBody(t, read, &response)
+	if read.Code != http.StatusOK || !response.OK || response.Data.SelectedJobId != secondJob.Id || len(response.Data.Portfolios) != 2 || response.Data.Portfolios[0].Job.Id != job.Id || len(response.Data.Providers) != 5 {
+		t.Fatalf("control-plane readback failed: %s", read.Body.String())
+	}
+	for _, provider := range response.Data.Providers {
+		if provider.Descriptor.Id == contractsv1.ProviderIDOpenclaw && slices.Contains(provider.Missing, "config:openclaw-agent-profile") {
+			t.Fatalf("context-free readiness claimed a specific OpenClaw profile is missing: %+v", provider)
+		}
+	}
+	if err := contract.ValidateDefinition("ControlPlaneSnapshot", response.Data); err != nil {
+		t.Fatalf("control-plane response is not canonical: %v", err)
 	}
 }
 
