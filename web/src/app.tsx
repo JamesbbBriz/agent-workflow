@@ -63,8 +63,8 @@ export function App() {
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
 
-  const setSnapshot = (next: CanvasSnapshot) => {
-    void loadControlPlane().then(setControlPlane).catch(() => setControlPlane((current) => current && ({ ...current, selected_job_id: next.definition.job.id, portfolios: mergeCanvasIntoPortfolios(current.portfolios, next) })));
+  const setSnapshot = (_next: CanvasSnapshot) => {
+    void loadControlPlane().then((next) => { setControlPlane(next); setError(undefined); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Canonical control-plane refresh failed."));
   };
 
   useEffect(() => {
@@ -98,7 +98,7 @@ export function App() {
 	},
   })), [graph.nodes]);
 
-  if (error) return <StateScreen title="Control plane unavailable" detail={error} />;
+  if (error) return <StateScreen title="Control plane unavailable" detail={error} action={() => { setError(undefined); void loadControlPlane().then(setControlPlane).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Canonical control-plane refresh failed.")); }} />;
   if (!snapshot || !portfolio || !controlPlane) return <LoadingControlPlane />;
 
   const canCompare = snapshot.executions.length > 1;
@@ -131,25 +131,8 @@ async function loadControlPlane(): Promise<ControlPlaneSnapshot> {
   return body.data;
 }
 
-function mergeCanvasIntoPortfolios(current: ControlPlaneSnapshot["portfolios"], next: CanvasSnapshot): ControlPlaneSnapshot["portfolios"] {
-  const index = current.findIndex((item) => item.job.id === next.definition.job.id);
-  if (index < 0) return [...current, mergeCanvasIntoPortfolio(undefined, next)] as ControlPlaneSnapshot["portfolios"];
-  return current.map((item, itemIndex) => itemIndex === index ? mergeCanvasIntoPortfolio(item, next) : item) as ControlPlaneSnapshot["portfolios"];
-}
-
 function selectCampaign(portfolios: ControlPlaneSnapshot["portfolios"], jobID: string, campaignID: string): ControlPlaneSnapshot["portfolios"] {
   return portfolios.map((item) => item.job.id === jobID ? { ...item, selected_campaign_id: campaignID } : item) as ControlPlaneSnapshot["portfolios"];
-}
-
-function mergeCanvasIntoPortfolio(current: CanvasPortfolioSnapshot | undefined, next: CanvasSnapshot): CanvasPortfolioSnapshot {
-  if (!current || current.job.id !== next.definition.job.id) {
-    return { kind: "canvas_portfolio_snapshot", schema_version: 2, generated_at: next.generated_at, job: next.definition.job, selected_campaign_id: next.definition.campaign.id, campaigns: [{ campaign_id: next.definition.campaign.id, state: next.definition.campaign_state, canvas: next }] };
-  }
-  const campaign = { campaign_id: next.definition.campaign.id, state: next.definition.campaign_state, canvas: next } as CanvasPortfolioSnapshot["campaigns"][number];
-  const campaigns = (current.campaigns.some((item) => item.campaign_id === campaign.campaign_id)
-    ? current.campaigns.map((item) => item.campaign_id === campaign.campaign_id ? campaign : item)
-    : [...current.campaigns, campaign]) as CanvasPortfolioSnapshot["campaigns"];
-  return { ...current, generated_at: next.generated_at > current.generated_at ? next.generated_at : current.generated_at, selected_campaign_id: next.definition.campaign.id, campaigns };
 }
 
 const navigation: { id: Page; label: string; icon: typeof Briefcase }[] = [
@@ -388,8 +371,8 @@ function Fact({ label, value, mono = false }: { label: string; value: string; mo
   return <div><dt>{label}</dt><dd className={mono ? "mono" : ""}>{value}</dd></div>;
 }
 
-function StateScreen({ title, detail, loading = false }: { title: string; detail: string; loading?: boolean }) {
-  return <main className="state-screen" aria-live="polite">{loading ? <GearSix className="loading-icon" size={28} /> : <WarningCircle size={28} />}<h1>{title}</h1><p>{detail}</p></main>;
+function StateScreen({ title, detail, loading = false, action }: { title: string; detail: string; loading?: boolean; action?: () => void }) {
+  return <main className="state-screen" aria-live="polite">{loading ? <GearSix className="loading-icon" size={28} /> : <WarningCircle size={28} />}<h1>{title}</h1><p>{detail}</p>{action && <Button variant="outline" onClick={action}>Retry canonical readback</Button>}</main>;
 }
 
 function entityIcon(kind: CanvasNodeData["entityKind"]) {

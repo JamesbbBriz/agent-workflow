@@ -52,7 +52,12 @@ test("drafts a Job and Workflow, previews, confirms, and renders canonical Canva
   await expect(page.getByText(/Budget: 2 attempts/)).toBeVisible();
   await expect(page.getByText(/Completion:/)).toBeVisible();
   await expect(page.getByText(/No action when:/)).toBeVisible();
+  let failCanonicalRefresh = true;
+  await page.route("**/v1/control-plane", async (route) => failCanonicalRefresh ? route.fulfill({ status: 503, contentType: "application/json", body: '{"ok":false}' }) : route.continue());
   await page.getByRole("button", { name: "Confirm admission" }).click();
+  await expect(page.getByRole("heading", { name: "Control plane unavailable" })).toBeVisible();
+  failCanonicalRefresh = false;
+  await page.getByRole("button", { name: "Retry canonical readback" }).click();
   await expect(page.getByRole("button", { name: /Research and review, Admitted/ })).toContainText("e2e-review@1");
   await expect(page.getByRole("button", { name: /E2E evidence job, Configured/ })).toBeVisible();
   await page.reload();

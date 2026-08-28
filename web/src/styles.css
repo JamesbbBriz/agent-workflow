@@ -268,6 +268,7 @@ select {
 .state-screen { min-height: 100dvh; display: grid; place-content: center; justify-items: center; padding: 24px; text-align: center; color: var(--text); background: var(--surface); }
 .state-screen h1 { margin: 14px 0 4px; font-size: 22px; }
 .state-screen p { margin: 0; color: var(--text-muted); }
+.state-screen button { margin-top: 16px; }
 .loading-icon { color: var(--accent); }
 @media (prefers-reduced-motion: no-preference) { .loading-icon { animation: spin 1.6s linear infinite; } }
 @keyframes spin { to { transform: rotate(360deg); } }
