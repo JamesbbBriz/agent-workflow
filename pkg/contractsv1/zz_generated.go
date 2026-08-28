@@ -1614,14 +1614,17 @@ type ControlPlaneSnapshot struct {
 	// Kind corresponds to the JSON schema field "kind".
 	Kind ControlPlaneSnapshotKind `json:"kind"`
 
-	// Portfolio corresponds to the JSON schema field "portfolio".
-	Portfolio CanvasPortfolioSnapshot `json:"portfolio"`
+	// Portfolios corresponds to the JSON schema field "portfolios".
+	Portfolios []CanvasPortfolioSnapshot `json:"portfolios"`
 
 	// Providers corresponds to the JSON schema field "providers".
 	Providers []ProviderReadiness `json:"providers"`
 
 	// SchemaVersion corresponds to the JSON schema field "schema_version".
 	SchemaVersion ControlPlaneSnapshotSchemaVersion `json:"schema_version"`
+
+	// SelectedJobId corresponds to the JSON schema field "selected_job_id".
+	SelectedJobId Identifier `json:"selected_job_id"`
 }
 
 type ControlPlaneSnapshotKind string
@@ -2370,6 +2373,7 @@ type ProviderReadiness struct {
 
 type ProviderReadinessCode string
 
+const ProviderReadinessCodeProfileRequired ProviderReadinessCode = "profile_required"
 const ProviderReadinessCodeReady ProviderReadinessCode = "ready"
 const ProviderReadinessCodeUnavailable ProviderReadinessCode = "unavailable"
 
@@ -2893,15 +2897,11 @@ type WorkflowAdmissionPreview struct {
 
 type WorkflowAdmissionPreviewKind string
 
-type RedactedReceiptPreviousReceiptHash_0 = SHA256
+const WorkflowAdmissionPreviewKindWorkflowAdmissionPreview WorkflowAdmissionPreviewKind = "workflow_admission_preview"
 
-type ReceiptPreviousReceiptHash_0 = SHA256
-
-type WorkflowDefinitionKind string
+type WorkflowAdmissionPreviewSchemaVersion int
 
 type WorkflowAdmissionSchemaVersion int
-
-const WorkflowDefinitionKindWorkflowDefinition WorkflowDefinitionKind = "workflow_definition"
 
 type WorkflowDefinition struct {
 	// Blockers corresponds to the JSON schema field "blockers".
@@ -2938,16 +2938,11 @@ type WorkflowDefinition struct {
 	Version int `json:"version"`
 }
 
-const WorkflowAdmissionPreviewKindWorkflowAdmissionPreview WorkflowAdmissionPreviewKind = "workflow_admission_preview"
+type WorkflowDefinitionKind string
 
-type WorkflowAdmissionPreviewSchemaVersion int
+const WorkflowDefinitionKindWorkflowDefinition WorkflowDefinitionKind = "workflow_definition"
 
-type WorkflowRef string
-
-type WorkflowLintIssueSeverity string
-
-const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
-const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
+type WorkflowDefinitionSchemaVersion int
 
 type WorkflowLintIssue struct {
 	// Code corresponds to the JSON schema field "code".
@@ -2963,11 +2958,14 @@ type WorkflowLintIssue struct {
 	Severity WorkflowLintIssueSeverity `json:"severity"`
 }
 
-type WorkflowLintReportKind string
+type WorkflowLintIssueSeverity string
 
-const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflow_lint_report"
+const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
+const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
 
-type WorkflowLintReportSchemaVersion int
+type WorkflowRef string
+
+type RedactedReceiptPreviousReceiptHash_0 = SHA256
 
 type WorkflowLintReport struct {
 	// Issues corresponds to the JSON schema field "issues".
@@ -2983,4 +2981,10 @@ type WorkflowLintReport struct {
 	Valid bool `json:"valid"`
 }
 
-type WorkflowDefinitionSchemaVersion int
+type WorkflowLintReportKind string
+
+const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflow_lint_report"
+
+type WorkflowLintReportSchemaVersion int
+
+type ReceiptPreviousReceiptHash_0 = SHA256

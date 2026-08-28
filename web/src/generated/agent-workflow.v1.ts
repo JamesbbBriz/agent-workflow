@@ -810,12 +810,13 @@ export interface ContextTransitionEventPayload {
 }
 
 export interface ControlPlaneSnapshot {
-    change_cases:   ChangeCaseCanvas[];
-    generated_at:   string;
-    kind:           ControlPlaneSnapshotKind;
-    portfolio:      CanvasPortfolioSnapshot;
-    providers:      ProviderReadiness[];
-    schema_version: number;
+    change_cases:    ChangeCaseCanvas[];
+    generated_at:    string;
+    kind:            ControlPlaneSnapshotKind;
+    portfolios:      [CanvasPortfolioSnapshot, ...CanvasPortfolioSnapshot[]];
+    providers:       ProviderReadiness[];
+    schema_version:  number;
+    selected_job_id: string;
 }
 
 export type ControlPlaneSnapshotKind = "control_plane_snapshot";
@@ -827,7 +828,7 @@ export interface ProviderReadiness {
     ready:      boolean;
 }
 
-export type Code = "ready" | "unavailable";
+export type Code = "ready" | "unavailable" | "profile_required";
 
 export interface Descriptor {
     adapter_version:  string;

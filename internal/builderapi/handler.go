@@ -27,7 +27,9 @@ type Handler struct {
 	mu          sync.Mutex
 	canvas      *contractsv1.CanvasSnapshot
 	portfolio   *contractsv1.CanvasPortfolioSnapshot
+	portfolios  []contractsv1.CanvasPortfolioSnapshot
 	changeCases []contractsv1.ChangeCaseCanvas
+	readChanges func(time.Time) ([]contractsv1.ChangeCaseCanvas, error)
 	jobs        map[contractsv1.Identifier]contractsv1.JobDefinition
 	campaigns   map[contractsv1.Identifier]contractsv1.CampaignDefinition
 	webMCP      *webMCPGate
@@ -62,25 +64,53 @@ func NewWithPortfolioHistory(core *workflow.AuthoringCore, now func() time.Time,
 }
 
 func NewWithControlPlane(core *workflow.AuthoringCore, now func() time.Time, portfolio *contractsv1.CanvasPortfolioSnapshot, history DefinitionHistory, changeCases []contractsv1.ChangeCaseCanvas) http.Handler {
+	portfolios := []contractsv1.CanvasPortfolioSnapshot{}
+	selectedJobID := contractsv1.Identifier("")
+	if portfolio != nil {
+		portfolios = append(portfolios, *portfolio)
+		selectedJobID = portfolio.Job.Id
+	}
+	return NewWithControlPlanePortfolios(core, now, portfolios, selectedJobID, history, changeCases)
+}
+
+func NewWithControlPlanePortfolios(core *workflow.AuthoringCore, now func() time.Time, portfolios []contractsv1.CanvasPortfolioSnapshot, selectedJobID contractsv1.Identifier, history DefinitionHistory, changeCases []contractsv1.ChangeCaseCanvas) http.Handler {
+	return newWithControlPlanePortfolios(core, now, portfolios, selectedJobID, history, changeCases, nil)
+}
+
+func NewWithControlPlanePortfoliosReader(core *workflow.AuthoringCore, now func() time.Time, portfolios []contractsv1.CanvasPortfolioSnapshot, selectedJobID contractsv1.Identifier, history DefinitionHistory, readChanges func(time.Time) ([]contractsv1.ChangeCaseCanvas, error)) http.Handler {
+	return newWithControlPlanePortfolios(core, now, portfolios, selectedJobID, history, nil, readChanges)
+}
+
+func newWithControlPlanePortfolios(core *workflow.AuthoringCore, now func() time.Time, portfolios []contractsv1.CanvasPortfolioSnapshot, selectedJobID contractsv1.Identifier, history DefinitionHistory, changeCases []contractsv1.ChangeCaseCanvas, readChanges func(time.Time) ([]contractsv1.ChangeCaseCanvas, error)) http.Handler {
 	if now == nil {
 		now = time.Now
 	}
-	handler := &Handler{core: core, now: now, portfolio: portfolio, changeCases: append([]contractsv1.ChangeCaseCanvas{}, changeCases...), jobs: map[contractsv1.Identifier]contractsv1.JobDefinition{}, campaigns: map[contractsv1.Identifier]contractsv1.CampaignDefinition{}}
+	handler := &Handler{core: core, now: now, portfolios: append([]contractsv1.CanvasPortfolioSnapshot{}, portfolios...), changeCases: append([]contractsv1.ChangeCaseCanvas{}, changeCases...), readChanges: readChanges, jobs: map[contractsv1.Identifier]contractsv1.JobDefinition{}, campaigns: map[contractsv1.Identifier]contractsv1.CampaignDefinition{}}
 	for _, job := range history.Jobs {
 		handler.jobs[job.Id] = job
 	}
 	for _, campaign := range history.Campaigns {
 		handler.campaigns[campaign.Id] = campaign
 	}
-	if portfolio != nil {
+	for index := range handler.portfolios {
+		portfolio := &handler.portfolios[index]
 		handler.jobs[portfolio.Job.Id] = portfolio.Job
-		for index := range portfolio.Campaigns {
-			handler.campaigns[portfolio.Campaigns[index].Canvas.Definition.Campaign.Id] = portfolio.Campaigns[index].Canvas.Definition.Campaign
-			if portfolio.Campaigns[index].CampaignId == portfolio.SelectedCampaignId {
-				handler.canvas = &portfolio.Campaigns[index].Canvas
-				break
+		for campaignIndex := range portfolio.Campaigns {
+			handler.campaigns[portfolio.Campaigns[campaignIndex].Canvas.Definition.Campaign.Id] = portfolio.Campaigns[campaignIndex].Canvas.Definition.Campaign
+		}
+		if portfolio.Job.Id == selectedJobID {
+			handler.portfolio = portfolio
+			for campaignIndex := range portfolio.Campaigns {
+				if portfolio.Campaigns[campaignIndex].CampaignId == portfolio.SelectedCampaignId {
+					handler.canvas = &portfolio.Campaigns[campaignIndex].Canvas
+					break
+				}
 			}
 		}
+	}
+	if handler.portfolio == nil && len(handler.portfolios) > 0 {
+		handler.portfolio = &handler.portfolios[0]
+		handler.canvas = &handler.portfolio.Campaigns[0].Canvas
 	}
 	return handler
 }
@@ -121,11 +151,21 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 			h.write(w, nil, err)
 			return
 		}
-		changeCases := make([]contractsv1.ChangeCaseCanvas, len(h.changeCases))
-		copy(changeCases, h.changeCases)
+		generatedAt := h.now().UTC()
+		changeCases := append([]contractsv1.ChangeCaseCanvas{}, h.changeCases...)
+		if h.readChanges != nil {
+			var err error
+			changeCases, err = h.readChanges(generatedAt)
+			if err != nil {
+				h.write(w, nil, err)
+				return
+			}
+			h.changeCases = append([]contractsv1.ChangeCaseCanvas{}, changeCases...)
+		}
+		portfolios := append([]contractsv1.CanvasPortfolioSnapshot{}, h.portfolios...)
 		result := contractsv1.ControlPlaneSnapshot{
 			Kind: contractsv1.ControlPlaneSnapshotKindControlPlaneSnapshot, SchemaVersion: 1,
-			GeneratedAt: h.now().UTC(), Portfolio: *h.portfolio,
+			GeneratedAt: generatedAt, SelectedJobId: h.portfolio.Job.Id, Portfolios: portfolios,
 			ChangeCases: changeCases, Providers: providers,
 		}
 		if err := contract.ValidateDefinition("ControlPlaneSnapshot", result); err != nil {
@@ -307,6 +347,18 @@ func providerReadiness() ([]contractsv1.ProviderReadiness, error) {
 		if err != nil {
 			return nil, err
 		}
+		if descriptor.Id == contractsv1.ProviderIDOpenclaw {
+			missing := readiness.Missing[:0]
+			for _, item := range readiness.Missing {
+				if item != "config:openclaw-agent-profile" {
+					missing = append(missing, item)
+				}
+			}
+			readiness.Missing = missing
+			if len(missing) == 0 {
+				readiness.Code = contractsv1.ProviderReadinessCodeProfileRequired
+			}
+		}
 		result = append(result, readiness)
 	}
 	return result, nil
@@ -333,8 +385,8 @@ func (h *Handler) writeApproval(w http.ResponseWriter, target contractsv1.Canvas
 }
 
 func (h *Handler) campaignCanvas(campaignID contractsv1.Identifier) (contractsv1.CanvasSnapshot, error) {
-	if h.portfolio != nil {
-		for _, item := range h.portfolio.Campaigns {
+	for _, portfolio := range h.portfolios {
+		for _, item := range portfolio.Campaigns {
 			if item.CampaignId == campaignID {
 				return item.Canvas, nil
 			}
@@ -347,8 +399,8 @@ func (h *Handler) campaignCanvas(campaignID contractsv1.Identifier) (contractsv1
 }
 
 func (h *Handler) mergeCampaignCanvas(next contractsv1.CanvasSnapshot) error {
-	if h.portfolio != nil && reflect.DeepEqual(h.portfolio.Job, next.Definition.Job) {
-		for _, current := range h.portfolio.Campaigns {
+	if portfolio := h.portfolioForJob(next.Definition.Job.Id); portfolio != nil && reflect.DeepEqual(portfolio.Job, next.Definition.Job) {
+		for _, current := range portfolio.Campaigns {
 			if current.CampaignId == next.Definition.Campaign.Id {
 				next = canvas.MergeAdmissionReadback(current.Canvas, next)
 				break
@@ -360,9 +412,10 @@ func (h *Handler) mergeCampaignCanvas(next contractsv1.CanvasSnapshot) error {
 
 func (h *Handler) replaceCampaignCanvas(next contractsv1.CanvasSnapshot) error {
 	campaigns := []contractsv1.CanvasSnapshot{next}
-	if h.portfolio != nil && reflect.DeepEqual(h.portfolio.Job, next.Definition.Job) {
-		campaigns = make([]contractsv1.CanvasSnapshot, 0, len(h.portfolio.Campaigns)+1)
-		for _, item := range h.portfolio.Campaigns {
+	current := h.portfolioForJob(next.Definition.Job.Id)
+	if current != nil && reflect.DeepEqual(current.Job, next.Definition.Job) {
+		campaigns = make([]contractsv1.CanvasSnapshot, 0, len(current.Campaigns)+1)
+		for _, item := range current.Campaigns {
 			campaigns = append(campaigns, item.Canvas)
 		}
 		replaced := false
@@ -381,14 +434,36 @@ func (h *Handler) replaceCampaignCanvas(next contractsv1.CanvasSnapshot) error {
 	if err != nil {
 		return err
 	}
-	h.canvas, h.portfolio = &next, &portfolio
+	replaced := false
+	for index := range h.portfolios {
+		if h.portfolios[index].Job.Id == portfolio.Job.Id {
+			h.portfolios[index] = portfolio
+			h.portfolio = &h.portfolios[index]
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		h.portfolios = append(h.portfolios, portfolio)
+		h.portfolio = &h.portfolios[len(h.portfolios)-1]
+	}
+	h.canvas = &next
+	return nil
+}
+
+func (h *Handler) portfolioForJob(jobID contractsv1.Identifier) *contractsv1.CanvasPortfolioSnapshot {
+	for index := range h.portfolios {
+		if h.portfolios[index].Job.Id == jobID {
+			return &h.portfolios[index]
+		}
+	}
 	return nil
 }
 
 func (h *Handler) admissionDefinitions(preview contractsv1.WorkflowAdmissionPreview) ([]contractsv1.WorkflowDefinition, error) {
 	definitions := []contractsv1.WorkflowDefinition{preview.Workflow}
-	if h.canvas != nil && h.canvas.Definition.Job.Id == preview.Job.Id && h.canvas.Definition.Campaign.Id == preview.Campaign.Id {
-		definitions = append([]contractsv1.WorkflowDefinition(nil), h.canvas.Definition.Workflows...)
+	if current, err := h.campaignCanvas(preview.Campaign.Id); err == nil && current.Definition.Job.Id == preview.Job.Id {
+		definitions = append([]contractsv1.WorkflowDefinition(nil), current.Definition.Workflows...)
 		replaced := false
 		for index := range definitions {
 			if definitions[index].Id == preview.Workflow.Id {

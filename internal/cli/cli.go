@@ -152,23 +152,29 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeError(stdout, stderr, true, "builder_unavailable", err)
 	}
-	var portfolio *contractsv1.CanvasPortfolioSnapshot
+	var portfolios []contractsv1.CanvasPortfolioSnapshot
+	var selectedJobID contractsv1.Identifier
 	var history builderapi.DefinitionHistory
 	if sourceCanvas != nil {
-		portfolio, history, err = restoreCanvasPortfolio(sourceCanvas, ledger)
+		portfolios, selectedJobID, history, err = restoreCanvasPortfolios(sourceCanvas, ledger)
 		if err != nil {
 			return writeError(stdout, stderr, true, "canvas_unavailable", err)
 		}
-		portfolio, err = restorePortfolioApprovals(portfolio, ledger)
-		if err != nil {
-			return writeError(stdout, stderr, true, "canvas_unavailable", err)
+		for index := range portfolios {
+			portfolio, approvalErr := restorePortfolioApprovals(&portfolios[index], ledger)
+			if approvalErr != nil {
+				return writeError(stdout, stderr, true, "canvas_unavailable", approvalErr)
+			}
+			portfolios[index] = *portfolio
 		}
 	}
-	changeCases, err := restoreChangeCases(ledger, time.Now().UTC())
-	if err != nil {
+	readChangeCases := func(generatedAt time.Time) ([]contractsv1.ChangeCaseCanvas, error) {
+		return restoreChangeCases(ledger, generatedAt)
+	}
+	if _, err := readChangeCases(time.Now().UTC()); err != nil {
 		return writeError(stdout, stderr, true, "change_cases_unavailable", err)
 	}
-	var handler http.Handler = builderapi.NewWithControlPlane(core, time.Now, portfolio, history, changeCases)
+	var handler http.Handler = builderapi.NewWithControlPlanePortfoliosReader(core, time.Now, portfolios, selectedJobID, history, readChangeCases)
 	var auditFile *os.File
 	if *webOrigin != "" {
 		auditFile, err = os.OpenFile(*webMCPAuditPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -191,7 +197,7 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 			return writeError(stdout, stderr, true, "audit_unavailable", errors.New("WebMCP audit log is unavailable"))
 		}
 		defer auditFile.Close()
-		handler, err = builderapi.NewWithWebMCPControlPlane(core, time.Now, portfolio, history, changeCases, builderapi.WebMCPConfig{PageOrigin: *webOrigin, Audit: auditFile})
+		handler, err = builderapi.NewWithWebMCPControlPlanePortfoliosReader(core, time.Now, portfolios, selectedJobID, history, readChangeCases, builderapi.WebMCPConfig{PageOrigin: *webOrigin, Audit: auditFile})
 		if err != nil {
 			return writeError(stdout, stderr, true, "webmcp_unavailable", err)
 		}
@@ -271,9 +277,22 @@ func restoreCanvasAdmissions(snapshot *contractsv1.CanvasSnapshot, ledger *workf
 }
 
 func restoreCanvasPortfolio(snapshot *contractsv1.CanvasSnapshot, ledger *workflow.FileLedger) (*contractsv1.CanvasPortfolioSnapshot, builderapi.DefinitionHistory, error) {
-	replays, err := ledger.ReplaysByReceiptType(contractsv1.ReceiptReceiptTypeAdmission)
+	portfolios, selectedJobID, history, err := restoreCanvasPortfolios(snapshot, ledger)
 	if err != nil {
 		return nil, builderapi.DefinitionHistory{}, err
+	}
+	for index := range portfolios {
+		if portfolios[index].Job.Id == selectedJobID {
+			return &portfolios[index], history, nil
+		}
+	}
+	return nil, builderapi.DefinitionHistory{}, errors.New("selected Job is unavailable")
+}
+
+func restoreCanvasPortfolios(snapshot *contractsv1.CanvasSnapshot, ledger *workflow.FileLedger) ([]contractsv1.CanvasPortfolioSnapshot, contractsv1.Identifier, builderapi.DefinitionHistory, error) {
+	replays, err := ledger.ReplaysByReceiptType(contractsv1.ReceiptReceiptTypeAdmission)
+	if err != nil {
+		return nil, "", builderapi.DefinitionHistory{}, err
 	}
 	type event struct {
 		admission contractsv1.WorkflowAdmission
@@ -286,7 +305,7 @@ func restoreCanvasPortfolio(snapshot *contractsv1.CanvasSnapshot, ledger *workfl
 		for version, receipt := range replay.Receipts {
 			admission, err := workflow.MaterializeAdmission(replay, version+1)
 			if err != nil {
-				return nil, builderapi.DefinitionHistory{}, err
+				return nil, "", builderapi.DefinitionHistory{}, err
 			}
 			events = append(events, event{admission: admission, replay: replay, at: receipt.OccurredAt, hash: receipt.ReceiptHash})
 		}
@@ -297,37 +316,41 @@ func restoreCanvasPortfolio(snapshot *contractsv1.CanvasSnapshot, ledger *workfl
 		}
 		return events[i].at.Before(events[j].at)
 	})
-	job := snapshot.Definition.Job
-	jobs := map[contractsv1.Identifier]contractsv1.JobDefinition{job.Id: job}
+	type portfolioState struct {
+		job         contractsv1.JobDefinition
+		campaigns   []contractsv1.CanvasSnapshot
+		selected    contractsv1.Identifier
+		definitions map[contractsv1.Identifier]map[contractsv1.WorkflowRef]contractsv1.WorkflowDefinition
+	}
+	jobs := map[contractsv1.Identifier]contractsv1.JobDefinition{snapshot.Definition.Job.Id: snapshot.Definition.Job}
 	campaignDefinitions := map[contractsv1.Identifier]contractsv1.CampaignDefinition{
 		snapshot.Definition.Campaign.Id: snapshot.Definition.Campaign,
 	}
-	campaigns := []contractsv1.CanvasSnapshot{*snapshot}
-	selected := snapshot.Definition.Campaign.Id
-	definitionsByCampaign := map[contractsv1.Identifier]map[contractsv1.WorkflowRef]contractsv1.WorkflowDefinition{}
+	states := map[contractsv1.Identifier]*portfolioState{}
 	definitionsByRef := map[contractsv1.WorkflowRef]contractsv1.WorkflowDefinition{}
 	for _, definition := range snapshot.Definition.Workflows {
 		definitionsByRef[contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", definition.Id, definition.Version))] = definition
 	}
-	definitionsByCampaign[selected] = definitionsByRef
+	states[snapshot.Definition.Job.Id] = &portfolioState{job: snapshot.Definition.Job, campaigns: []contractsv1.CanvasSnapshot{*snapshot}, selected: snapshot.Definition.Campaign.Id, definitions: map[contractsv1.Identifier]map[contractsv1.WorkflowRef]contractsv1.WorkflowDefinition{snapshot.Definition.Campaign.Id: definitionsByRef}}
+	selectedJobID := snapshot.Definition.Job.Id
 	for _, item := range events {
 		if existing, ok := jobs[item.admission.Job.Id]; ok && !reflect.DeepEqual(existing, item.admission.Job) {
-			return nil, builderapi.DefinitionHistory{}, errors.New("canonical admissions contain conflicting definitions for one Job")
+			return nil, "", builderapi.DefinitionHistory{}, errors.New("canonical admissions contain conflicting definitions for one Job")
 		}
 		jobs[item.admission.Job.Id] = item.admission.Job
 		if existing, ok := campaignDefinitions[item.admission.Campaign.Id]; ok && !reflect.DeepEqual(existing, item.admission.Campaign) {
-			return nil, builderapi.DefinitionHistory{}, errors.New("canonical admissions contain conflicting definitions for one Campaign")
+			return nil, "", builderapi.DefinitionHistory{}, errors.New("canonical admissions contain conflicting definitions for one Campaign")
 		}
 		campaignDefinitions[item.admission.Campaign.Id] = item.admission.Campaign
-		if item.admission.Job.Id != job.Id {
-			job = item.admission.Job
-			campaigns = nil
-			definitionsByCampaign = map[contractsv1.Identifier]map[contractsv1.WorkflowRef]contractsv1.WorkflowDefinition{}
+		state := states[item.admission.Job.Id]
+		if state == nil {
+			state = &portfolioState{job: item.admission.Job, definitions: map[contractsv1.Identifier]map[contractsv1.WorkflowRef]contractsv1.WorkflowDefinition{}}
+			states[item.admission.Job.Id] = state
 		}
-		definitionsByRef = definitionsByCampaign[item.admission.Campaign.Id]
+		definitionsByRef = state.definitions[item.admission.Campaign.Id]
 		if definitionsByRef == nil {
 			definitionsByRef = map[contractsv1.WorkflowRef]contractsv1.WorkflowDefinition{}
-			definitionsByCampaign[item.admission.Campaign.Id] = definitionsByRef
+			state.definitions[item.admission.Campaign.Id] = definitionsByRef
 		}
 		ref := contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", item.admission.Workflow.Id, item.admission.Workflow.Version))
 		definitionsByRef[ref] = item.admission.Workflow
@@ -339,22 +362,36 @@ func restoreCanvasPortfolio(snapshot *contractsv1.CanvasSnapshot, ledger *workfl
 		}
 		next, err := canvas.ProjectWithAdmissions(item.admission.Job, item.admission.Campaign, definitions, []contractsv1.ReplayBundle{item.replay})
 		if err != nil {
-			return nil, builderapi.DefinitionHistory{}, err
+			return nil, "", builderapi.DefinitionHistory{}, err
 		}
 		replaced := false
-		for index := range campaigns {
-			if campaigns[index].Definition.Campaign.Id == next.Definition.Campaign.Id {
-				campaigns[index] = canvas.MergeAdmissionReadback(campaigns[index], next)
+		for index := range state.campaigns {
+			if state.campaigns[index].Definition.Campaign.Id == next.Definition.Campaign.Id {
+				state.campaigns[index] = canvas.MergeAdmissionReadback(state.campaigns[index], next)
 				replaced = true
 				break
 			}
 		}
 		if !replaced {
-			campaigns = append(campaigns, next)
+			state.campaigns = append(state.campaigns, next)
 		}
-		selected = next.Definition.Campaign.Id
+		state.selected = next.Definition.Campaign.Id
+		selectedJobID = item.admission.Job.Id
 	}
-	portfolio, err := canvas.ProjectPortfolio(job, campaigns, selected)
+	jobIDs := make([]contractsv1.Identifier, 0, len(states))
+	for jobID := range states {
+		jobIDs = append(jobIDs, jobID)
+	}
+	sort.Slice(jobIDs, func(i, j int) bool { return jobIDs[i] < jobIDs[j] })
+	portfolios := make([]contractsv1.CanvasPortfolioSnapshot, 0, len(jobIDs))
+	for _, jobID := range jobIDs {
+		state := states[jobID]
+		portfolio, err := canvas.ProjectPortfolio(state.job, state.campaigns, state.selected)
+		if err != nil {
+			return nil, "", builderapi.DefinitionHistory{}, err
+		}
+		portfolios = append(portfolios, portfolio)
+	}
 	history := builderapi.DefinitionHistory{}
 	for _, item := range jobs {
 		history.Jobs = append(history.Jobs, item)
@@ -364,7 +401,7 @@ func restoreCanvasPortfolio(snapshot *contractsv1.CanvasSnapshot, ledger *workfl
 	}
 	sort.Slice(history.Jobs, func(i, j int) bool { return history.Jobs[i].Id < history.Jobs[j].Id })
 	sort.Slice(history.Campaigns, func(i, j int) bool { return history.Campaigns[i].Id < history.Campaigns[j].Id })
-	return &portfolio, history, err
+	return portfolios, selectedJobID, history, nil
 }
 
 func restoreCanvasApprovals(snapshot *contractsv1.CanvasSnapshot, ledger *workflow.FileLedger) (*contractsv1.CanvasSnapshot, error) {

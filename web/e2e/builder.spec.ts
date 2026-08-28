@@ -56,6 +56,11 @@ test("drafts a Job and Workflow, previews, confirms, and renders canonical Canva
   await expect(page.getByRole("button", { name: /Research and review, Admitted/ })).toContainText("e2e-review@1");
   await expect(page.getByRole("button", { name: /E2E evidence job, Configured/ })).toBeVisible();
   await page.reload();
+  const jobSelector = page.getByRole("combobox", { name: "Select Job" });
+  await expect(jobSelector.locator("option")).toHaveCount(2);
+  await jobSelector.selectOption("example-job");
+  await expect(page.getByRole("button", { name: /Example research job, Configured/ })).toBeVisible();
+  await jobSelector.selectOption("e2e-job");
   await page.getByRole("button", { name: "Definition" }).click();
   await expect(page.getByRole("button", { name: /E2E evidence job, Configured/ })).toBeVisible();
 });

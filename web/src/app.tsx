@@ -41,11 +41,6 @@ import "./styles.css";
 
 type Selection = { kind: "node"; data: CanvasNodeData } | { kind: "port"; port: ContextPortElement };
 
-interface CanvasResponse {
-  ok: boolean;
-  data: CanvasSnapshot;
-}
-
 interface ControlPlaneResponse {
   ok: boolean;
   data: ControlPlaneSnapshot;
@@ -62,14 +57,14 @@ export function App() {
   const [comparing, setComparing] = useState(false);
   const [building, setBuilding] = useState(false);
   const [approving, setApproving] = useState<CanvasNodeData>();
-  const portfolio = controlPlane?.portfolio;
+  const portfolio = controlPlane?.portfolios.find((item) => item.job.id === controlPlane.selected_job_id);
   const selectedCampaign = portfolio?.campaigns.find((item) => item.campaign_id === portfolio.selected_campaign_id);
   const snapshot = selectedCampaign?.canvas;
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
 
   const setSnapshot = (next: CanvasSnapshot) => {
-    void loadControlPlane().then(setControlPlane).catch(() => setControlPlane((current) => current && ({ ...current, portfolio: mergeCanvasIntoPortfolio(current.portfolio, next) })));
+    void loadControlPlane().then(setControlPlane).catch(() => setControlPlane((current) => current && ({ ...current, selected_job_id: next.definition.job.id, portfolios: mergeCanvasIntoPortfolios(current.portfolios, next) })));
   };
 
   useEffect(() => {
@@ -111,10 +106,10 @@ export function App() {
     <main className="control-plane-shell">
       <AppSidebar page={page} onPage={setPage} />
       <section className="control-plane-main">
-        <ControlPlaneHeader snapshot={snapshot} portfolio={portfolio} onCampaign={(campaignID) => setControlPlane({ ...controlPlane, portfolio: { ...portfolio, selected_campaign_id: campaignID } })} onBuild={() => setBuilding(true)} />
+        <ControlPlaneHeader snapshot={snapshot} portfolio={portfolio} portfolios={controlPlane.portfolios} onJob={(jobID) => setControlPlane({ ...controlPlane, selected_job_id: jobID })} onCampaign={(campaignID) => setControlPlane({ ...controlPlane, portfolios: selectCampaign(controlPlane.portfolios, portfolio.job.id, campaignID) })} onBuild={() => setBuilding(true)} />
         {page === "jobs" && <JobsPage snapshot={snapshot} campaignState={selectedCampaign?.state} mode={mode} onMode={setMode} nodes={nodes} edges={graph.edges} canCompare={canCompare} onCompare={() => setComparing(true)} />}
-        {page === "runs" && <RunsPage portfolio={portfolio} onSelect={(execution) => setSelection({ kind: "node", data: executionNodeData(snapshot, execution) })} />}
-        {page === "approvals" && <ApprovalsPage portfolio={portfolio} onReview={(canvas, execution) => { const output = execution.outputs.find((item) => item.approval_state === "pending"); if (output) { setControlPlane({ ...controlPlane, portfolio: { ...portfolio, selected_campaign_id: canvas.definition.campaign.id } }); setApproving({ ...executionNodeData(canvas, execution), artifact: output }); } }} />}
+        {page === "runs" && <RunsPage portfolio={portfolio} onSelect={(canvas, execution) => { setControlPlane({ ...controlPlane, portfolios: selectCampaign(controlPlane.portfolios, portfolio.job.id, canvas.definition.campaign.id) }); setSelection({ kind: "node", data: executionNodeData(canvas, execution) }); }} />}
+        {page === "approvals" && <ApprovalsPage portfolio={portfolio} onReview={(canvas, execution) => { const output = execution.outputs.find((item) => item.approval_state === "pending"); if (output) { setControlPlane({ ...controlPlane, portfolios: selectCampaign(controlPlane.portfolios, portfolio.job.id, canvas.definition.campaign.id) }); setApproving({ ...executionNodeData(canvas, execution), artifact: output }); } }} />}
         {page === "changes" && <ChangeCasesPage cases={controlPlane.change_cases} />}
         {page === "providers" && <ProvidersPage providers={controlPlane.providers} />}
         {page === "audit" && <AuditPage portfolio={portfolio} cases={controlPlane.change_cases} />}
@@ -130,17 +125,20 @@ export function App() {
 
 async function loadControlPlane(): Promise<ControlPlaneSnapshot> {
   const response = await fetch("/v1/control-plane");
-  if (response.ok) {
-    const body = await response.json() as ControlPlaneResponse;
-    if (!body.ok) throw new Error("Canvas data was rejected by the Core.");
-    return body.data;
-  }
-  let fallback = await fetch("/v1/canvas");
-  if (!fallback.ok) fallback = await fetch("/canvas.response.json");
-  if (!fallback.ok) throw new Error("Canvas data is unavailable.");
-  const body = await fallback.json() as CanvasResponse;
-  if (!body.ok) throw new Error("Canvas data was rejected by the Core.");
-  return { kind: "control_plane_snapshot", schema_version: 1, generated_at: body.data.generated_at, portfolio: mergeCanvasIntoPortfolio(undefined, body.data), change_cases: [], providers: [] };
+  if (!response.ok) throw new Error("The canonical control-plane API is unavailable.");
+  const body = await response.json() as ControlPlaneResponse;
+  if (!body.ok) throw new Error("Control-plane data was rejected by the Core.");
+  return body.data;
+}
+
+function mergeCanvasIntoPortfolios(current: ControlPlaneSnapshot["portfolios"], next: CanvasSnapshot): ControlPlaneSnapshot["portfolios"] {
+  const index = current.findIndex((item) => item.job.id === next.definition.job.id);
+  if (index < 0) return [...current, mergeCanvasIntoPortfolio(undefined, next)] as ControlPlaneSnapshot["portfolios"];
+  return current.map((item, itemIndex) => itemIndex === index ? mergeCanvasIntoPortfolio(item, next) : item) as ControlPlaneSnapshot["portfolios"];
+}
+
+function selectCampaign(portfolios: ControlPlaneSnapshot["portfolios"], jobID: string, campaignID: string): ControlPlaneSnapshot["portfolios"] {
+  return portfolios.map((item) => item.job.id === jobID ? { ...item, selected_campaign_id: campaignID } : item) as ControlPlaneSnapshot["portfolios"];
 }
 
 function mergeCanvasIntoPortfolio(current: CanvasPortfolioSnapshot | undefined, next: CanvasSnapshot): CanvasPortfolioSnapshot {
@@ -173,10 +171,11 @@ function AppSidebar({ page, onPage }: { page: Page; onPage: (page: Page) => void
   </aside>;
 }
 
-function ControlPlaneHeader({ snapshot, portfolio, onCampaign, onBuild }: { snapshot: CanvasSnapshot; portfolio: CanvasPortfolioSnapshot; onCampaign: (id: string) => void; onBuild: () => void }) {
+function ControlPlaneHeader({ snapshot, portfolio, portfolios, onJob, onCampaign, onBuild }: { snapshot: CanvasSnapshot; portfolio: CanvasPortfolioSnapshot; portfolios: ControlPlaneSnapshot["portfolios"]; onJob: (id: string) => void; onCampaign: (id: string) => void; onBuild: () => void }) {
   return <header className="cp-header">
     <div><p className="cp-kicker">{snapshot.definition.job.id}</p><h1>{snapshot.definition.job.intent.title}</h1></div>
     <div className="cp-header-actions">
+      <label className="cp-campaign-select"><span>Job</span><select aria-label="Select Job" value={portfolio.job.id} onChange={(event) => onJob(event.target.value)}>{portfolios.map((item) => <option key={item.job.id} value={item.job.id}>{item.job.intent.title}</option>)}</select></label>
       <label className="cp-campaign-select"><span>Campaign</span><select aria-label="Select Campaign" value={snapshot.definition.campaign.id} onChange={(event) => onCampaign(event.target.value)}>{portfolio.campaigns.map((item) => <option key={item.campaign_id} value={item.campaign_id}>{item.canvas.definition.campaign.intent.title}</option>)}</select></label>
       <Button variant="outline" aria-label="Build Workflow" onClick={onBuild}><Wrench size={17} />Workflow Studio</Button>
     </div>
@@ -203,10 +202,10 @@ function SummaryCard({ label, value, detail, icon: Icon }: { label: string; valu
   return <Card><CardContent className="cp-summary-card"><span className="cp-summary-icon"><Icon size={18} /></span><div><p>{label}</p><strong>{value}</strong><small>{detail}</small></div></CardContent></Card>;
 }
 
-function RunsPage({ portfolio, onSelect }: { portfolio: CanvasPortfolioSnapshot; onSelect: (execution: ExecutionElement) => void }) {
+function RunsPage({ portfolio, onSelect }: { portfolio: CanvasPortfolioSnapshot; onSelect: (snapshot: CanvasSnapshot, execution: ExecutionElement) => void }) {
   const runs = portfolio.campaigns.flatMap((campaign) => campaign.canvas.executions.map((execution) => ({ campaign, execution })));
   return <ListPage title="Runs" description="Every admitted execution, its Context Bundle, deadline and canonical receipt frontier." empty="No executions have been recorded yet.">
-    {runs.map(({ campaign, execution }) => <button className="cp-list-row" key={execution.aggregate_id} onClick={() => onSelect(execution)}><span className="cp-list-icon"><PlayCircle size={18} /></span><div className="cp-list-main"><strong>{humanize(execution.node_id)}</strong><span>{campaign.canvas.definition.campaign.intent.title} · {execution.bundle.workflow_ref}</span></div><div className="cp-list-meta"><Badge variant={statusVariant(execution.status)}>{humanize(execution.status)}</Badge><time>{formatTime(execution.deadline)}</time></div></button>)}
+    {runs.map(({ campaign, execution }) => <button className="cp-list-row" key={execution.aggregate_id} onClick={() => onSelect(campaign.canvas, execution)}><span className="cp-list-icon"><PlayCircle size={18} /></span><div className="cp-list-main"><strong>{humanize(execution.node_id)}</strong><span>{campaign.canvas.definition.campaign.intent.title} · {execution.bundle.workflow_ref}</span></div><div className="cp-list-meta"><Badge variant={statusVariant(execution.status)}>{humanize(execution.status)}</Badge><time>{formatTime(execution.deadline)}</time></div></button>)}
   </ListPage>;
 }
 
@@ -225,7 +224,7 @@ function ChangeCasesPage({ cases }: { cases: ChangeCaseCanvas[] }) {
 
 function ProvidersPage({ providers }: { providers: ProviderReadiness[] }) {
   return <ListPage title="Providers" description="Bundled runner adapters and the exact local prerequisites required to execute them." empty="Provider readiness is unavailable in the static demo.">
-    {providers.length > 0 ? <div className="cp-provider-grid">{providers.map((provider) => <Card key={provider.descriptor.id}><CardHeader><div className="cp-card-title-row"><span className="cp-provider-icon"><Robot size={18} /></span><Badge variant={provider.ready ? "default" : "secondary"}>{provider.ready ? "Ready" : "Unavailable"}</Badge></div><CardTitle>{provider.descriptor.display_name}</CardTitle><CardDescription>{provider.descriptor.id} · protocol v{provider.descriptor.protocol_version}</CardDescription></CardHeader><CardContent><div className="cp-tags">{provider.descriptor.capabilities.map((item) => <Badge key={item} variant="outline">{humanize(item)}</Badge>)}</div>{provider.missing.length > 0 ? <div className="cp-provider-missing"><strong>Missing</strong>{provider.missing.map((item) => <code key={item}>{item}</code>)}</div> : <p className="cp-provider-ready"><CheckCircle size={16} weight="fill" />All declared requirements are available.</p>}</CardContent></Card>)}</div> : []}
+    {providers.length > 0 ? <div className="cp-provider-grid">{providers.map((provider) => <Card key={provider.descriptor.id}><CardHeader><div className="cp-card-title-row"><span className="cp-provider-icon"><Robot size={18} /></span><Badge variant={provider.ready ? "default" : "secondary"}>{provider.code === "profile_required" ? "Profile required" : provider.ready ? "Ready" : "Unavailable"}</Badge></div><CardTitle>{provider.descriptor.display_name}</CardTitle><CardDescription>{provider.descriptor.id} · protocol v{provider.descriptor.protocol_version}</CardDescription></CardHeader><CardContent><div className="cp-tags">{provider.descriptor.capabilities.map((item) => <Badge key={item} variant="outline">{humanize(item)}</Badge>)}</div>{provider.missing.length > 0 ? <div className="cp-provider-missing"><strong>Missing</strong>{provider.missing.map((item) => <code key={item}>{item}</code>)}</div> : provider.code === "profile_required" ? <p className="cp-provider-ready"><ShieldCheck size={16} />Select an admitted Executor Profile to assess readiness.</p> : <p className="cp-provider-ready"><CheckCircle size={16} weight="fill" />All declared requirements are available.</p>}</CardContent></Card>)}</div> : []}
   </ListPage>;
 }
 
