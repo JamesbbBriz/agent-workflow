@@ -125,6 +125,10 @@ type AgentWorkflowContractCatalog struct {
 	// "change_case_event_payload".
 	ChangeCaseEventPayload *ChangeCaseEventPayload `json:"change_case_event_payload,omitempty,omitzero"`
 
+	// ChangeCaseReceiptLink corresponds to the JSON schema field
+	// "change_case_receipt_link".
+	ChangeCaseReceiptLink *ChangeCaseReceiptLink `json:"change_case_receipt_link,omitempty,omitzero"`
+
 	// ChangeCaseState corresponds to the JSON schema field "change_case_state".
 	ChangeCaseState *ChangeCaseState `json:"change_case_state,omitempty,omitzero"`
 
@@ -905,24 +909,15 @@ const CanvasReceiptLinkReceiptTypeApprovalRequested CanvasReceiptLinkReceiptType
 const CanvasReceiptLinkReceiptTypeAttemptReserved CanvasReceiptLinkReceiptType = "attempt_reserved"
 const CanvasReceiptLinkReceiptTypeBudgetExhausted CanvasReceiptLinkReceiptType = "budget_exhausted"
 const CanvasReceiptLinkReceiptTypeCampaignAdmission CanvasReceiptLinkReceiptType = "campaign_admission"
-const CanvasReceiptLinkReceiptTypeChangeMerged CanvasReceiptLinkReceiptType = "change_merged"
-const CanvasReceiptLinkReceiptTypeChangeProposed CanvasReceiptLinkReceiptType = "change_proposed"
 const CanvasReceiptLinkReceiptTypeCompile CanvasReceiptLinkReceiptType = "compile"
-const CanvasReceiptLinkReceiptTypeConflictDetected CanvasReceiptLinkReceiptType = "conflict_detected"
 const CanvasReceiptLinkReceiptTypeContextAvailable CanvasReceiptLinkReceiptType = "context_available"
 const CanvasReceiptLinkReceiptTypeContextBound CanvasReceiptLinkReceiptType = "context_bound"
 const CanvasReceiptLinkReceiptTypeCoreCompleted CanvasReceiptLinkReceiptType = "core_completed"
 const CanvasReceiptLinkReceiptTypeInvocation CanvasReceiptLinkReceiptType = "invocation"
-const CanvasReceiptLinkReceiptTypeMutationApplied CanvasReceiptLinkReceiptType = "mutation_applied"
-const CanvasReceiptLinkReceiptTypeMutationLeaseAcquired CanvasReceiptLinkReceiptType = "mutation_lease_acquired"
-const CanvasReceiptLinkReceiptTypeMutationReadback CanvasReceiptLinkReceiptType = "mutation_readback"
 const CanvasReceiptLinkReceiptTypeNeedsContext CanvasReceiptLinkReceiptType = "needs_context"
 const CanvasReceiptLinkReceiptTypeNodeCompleted CanvasReceiptLinkReceiptType = "node_completed"
 const CanvasReceiptLinkReceiptTypePackEdition CanvasReceiptLinkReceiptType = "pack_edition"
 const CanvasReceiptLinkReceiptTypeProviderExecution CanvasReceiptLinkReceiptType = "provider_execution"
-const CanvasReceiptLinkReceiptTypeResolutionApproved CanvasReceiptLinkReceiptType = "resolution_approved"
-const CanvasReceiptLinkReceiptTypeResolutionProposed CanvasReceiptLinkReceiptType = "resolution_proposed"
-const CanvasReceiptLinkReceiptTypeResourceGenerationAdvanced CanvasReceiptLinkReceiptType = "resource_generation_advanced"
 const CanvasReceiptLinkReceiptTypeResult CanvasReceiptLinkReceiptType = "result"
 const CanvasReceiptLinkReceiptTypeTerminal CanvasReceiptLinkReceiptType = "terminal"
 const CanvasReceiptLinkReceiptTypeWaitResumed CanvasReceiptLinkReceiptType = "wait_resumed"
@@ -1053,7 +1048,7 @@ type ChangeCaseCanvas struct {
 	Kind ChangeCaseCanvasKind `json:"kind"`
 
 	// Receipts corresponds to the JSON schema field "receipts".
-	Receipts []CanvasReceiptLink `json:"receipts"`
+	Receipts []ChangeCaseReceiptLink `json:"receipts"`
 
 	// SchemaVersion corresponds to the JSON schema field "schema_version".
 	SchemaVersion ChangeCaseCanvasSchemaVersion `json:"schema_version"`
@@ -1072,6 +1067,32 @@ type ChangeCaseEventPayload struct {
 	// State corresponds to the JSON schema field "state".
 	State ChangeCaseState `json:"state"`
 }
+
+type ChangeCaseReceiptLink struct {
+	// Id corresponds to the JSON schema field "id".
+	Id string `json:"id"`
+
+	// OccurredAt corresponds to the JSON schema field "occurred_at".
+	OccurredAt time.Time `json:"occurred_at"`
+
+	// ReceiptHash corresponds to the JSON schema field "receipt_hash".
+	ReceiptHash SHA256 `json:"receipt_hash"`
+
+	// ReceiptType corresponds to the JSON schema field "receipt_type".
+	ReceiptType ChangeCaseReceiptLinkReceiptType `json:"receipt_type"`
+}
+
+type ChangeCaseReceiptLinkReceiptType string
+
+const ChangeCaseReceiptLinkReceiptTypeChangeMerged ChangeCaseReceiptLinkReceiptType = "change_merged"
+const ChangeCaseReceiptLinkReceiptTypeChangeProposed ChangeCaseReceiptLinkReceiptType = "change_proposed"
+const ChangeCaseReceiptLinkReceiptTypeConflictDetected ChangeCaseReceiptLinkReceiptType = "conflict_detected"
+const ChangeCaseReceiptLinkReceiptTypeMutationApplied ChangeCaseReceiptLinkReceiptType = "mutation_applied"
+const ChangeCaseReceiptLinkReceiptTypeMutationLeaseAcquired ChangeCaseReceiptLinkReceiptType = "mutation_lease_acquired"
+const ChangeCaseReceiptLinkReceiptTypeMutationReadback ChangeCaseReceiptLinkReceiptType = "mutation_readback"
+const ChangeCaseReceiptLinkReceiptTypeResolutionApproved ChangeCaseReceiptLinkReceiptType = "resolution_approved"
+const ChangeCaseReceiptLinkReceiptTypeResolutionProposed ChangeCaseReceiptLinkReceiptType = "resolution_proposed"
+const ChangeCaseReceiptLinkReceiptTypeResourceGenerationAdvanced ChangeCaseReceiptLinkReceiptType = "resource_generation_advanced"
 
 type ChangeCaseState struct {
 	// ApplyEvidence corresponds to the JSON schema field "apply_evidence".
@@ -1930,24 +1951,15 @@ const RedactedReceiptReceiptTypeApprovalRequested RedactedReceiptReceiptType = "
 const RedactedReceiptReceiptTypeAttemptReserved RedactedReceiptReceiptType = "attempt_reserved"
 const RedactedReceiptReceiptTypeBudgetExhausted RedactedReceiptReceiptType = "budget_exhausted"
 const RedactedReceiptReceiptTypeCampaignAdmission RedactedReceiptReceiptType = "campaign_admission"
-const RedactedReceiptReceiptTypeChangeMerged RedactedReceiptReceiptType = "change_merged"
-const RedactedReceiptReceiptTypeChangeProposed RedactedReceiptReceiptType = "change_proposed"
 const RedactedReceiptReceiptTypeCompile RedactedReceiptReceiptType = "compile"
-const RedactedReceiptReceiptTypeConflictDetected RedactedReceiptReceiptType = "conflict_detected"
 const RedactedReceiptReceiptTypeContextAvailable RedactedReceiptReceiptType = "context_available"
 const RedactedReceiptReceiptTypeContextBound RedactedReceiptReceiptType = "context_bound"
 const RedactedReceiptReceiptTypeCoreCompleted RedactedReceiptReceiptType = "core_completed"
 const RedactedReceiptReceiptTypeInvocation RedactedReceiptReceiptType = "invocation"
-const RedactedReceiptReceiptTypeMutationApplied RedactedReceiptReceiptType = "mutation_applied"
-const RedactedReceiptReceiptTypeMutationLeaseAcquired RedactedReceiptReceiptType = "mutation_lease_acquired"
-const RedactedReceiptReceiptTypeMutationReadback RedactedReceiptReceiptType = "mutation_readback"
 const RedactedReceiptReceiptTypeNeedsContext RedactedReceiptReceiptType = "needs_context"
 const RedactedReceiptReceiptTypeNodeCompleted RedactedReceiptReceiptType = "node_completed"
 const RedactedReceiptReceiptTypePackEdition RedactedReceiptReceiptType = "pack_edition"
 const RedactedReceiptReceiptTypeProviderExecution RedactedReceiptReceiptType = "provider_execution"
-const RedactedReceiptReceiptTypeResolutionApproved RedactedReceiptReceiptType = "resolution_approved"
-const RedactedReceiptReceiptTypeResolutionProposed RedactedReceiptReceiptType = "resolution_proposed"
-const RedactedReceiptReceiptTypeResourceGenerationAdvanced RedactedReceiptReceiptType = "resource_generation_advanced"
 const RedactedReceiptReceiptTypeResult RedactedReceiptReceiptType = "result"
 const RedactedReceiptReceiptTypeTerminal RedactedReceiptReceiptType = "terminal"
 const RedactedReceiptReceiptTypeWaitResumed RedactedReceiptReceiptType = "wait_resumed"
@@ -2061,6 +2073,10 @@ type ResolutionArtifact struct {
 
 	// ResolutionHash corresponds to the JSON schema field "resolution_hash".
 	ResolutionHash SHA256 `json:"resolution_hash"`
+
+	// ResolutionProposalId corresponds to the JSON schema field
+	// "resolution_proposal_id".
+	ResolutionProposalId Identifier `json:"resolution_proposal_id"`
 
 	// ResolvedChange corresponds to the JSON schema field "resolved_change".
 	ResolvedChange interface{} `json:"resolved_change"`
@@ -2352,14 +2368,14 @@ type WorkflowLintIssue struct {
 	Severity WorkflowLintIssueSeverity `json:"severity"`
 }
 
-type RedactedReceiptPreviousReceiptHash_0 = SHA256
-
 type WorkflowLintIssueSeverity string
 
 const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
 const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
 
-type ReceiptPreviousReceiptHash_0 = SHA256
+type WorkflowRef string
+
+type RedactedReceiptPreviousReceiptHash_0 = SHA256
 
 type WorkflowLintReport struct {
 	// Issues corresponds to the JSON schema field "issues".
@@ -2381,4 +2397,4 @@ const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflo
 
 type WorkflowLintReportSchemaVersion int
 
-type WorkflowRef string
+type ReceiptPreviousReceiptHash_0 = SHA256

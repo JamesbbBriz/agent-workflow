@@ -37,6 +37,7 @@ type ChangeCaseCatalog struct {
 	Resources      map[contractsv1.Identifier]ResourceAuthority
 	Mutations      map[contractsv1.Identifier]MutationAdapter
 	ApprovalActors map[contractsv1.Identifier][]string
+	Clock          func() time.Time
 }
 
 type ChangeCaseCore struct {
@@ -47,6 +48,7 @@ type ChangeCaseCore struct {
 	resources      map[contractsv1.Identifier]ResourceAuthority
 	mutations      map[contractsv1.Identifier]MutationAdapter
 	approvalActors map[contractsv1.Identifier]map[string]bool
+	now            func() time.Time
 }
 
 var ErrResourceGenerationAdvanced = errors.New("resource_generation_advanced")
@@ -59,12 +61,13 @@ type ChangeProposalSource struct {
 }
 
 type ResolutionApprovalPreview struct {
-	CaseID      string             `json:"case_id"`
-	Actor       string             `json:"actor"`
-	ChangeHash  contractsv1.SHA256 `json:"change_hash"`
-	ExpiresAt   time.Time          `json:"expires_at"`
-	PreviewHash contractsv1.SHA256 `json:"preview_hash"`
-	CommitToken contractsv1.SHA256 `json:"commit_token"`
+	CaseID         string             `json:"case_id"`
+	CaseReplayHash contractsv1.SHA256 `json:"case_replay_hash"`
+	Actor          string             `json:"actor"`
+	ChangeHash     contractsv1.SHA256 `json:"change_hash"`
+	ExpiresAt      time.Time          `json:"expires_at"`
+	PreviewHash    contractsv1.SHA256 `json:"preview_hash"`
+	CommitToken    contractsv1.SHA256 `json:"commit_token"`
 }
 
 func NewChangeCaseCore(ledger, sources Ledger, outputs OutputCatalog, catalog ChangeCaseCatalog) *ChangeCaseCore {
@@ -72,6 +75,10 @@ func NewChangeCaseCore(ledger, sources Ledger, outputs OutputCatalog, catalog Ch
 		ledger: ledger, sources: sources, outputs: outputs,
 		mergers: catalog.Mergers, resources: catalog.Resources, mutations: catalog.Mutations,
 		approvalActors: make(map[contractsv1.Identifier]map[string]bool, len(catalog.ApprovalActors)),
+		now:            catalog.Clock,
+	}
+	if core.now == nil {
+		core.now = time.Now
 	}
 	for resourceType, actors := range catalog.ApprovalActors {
 		core.approvalActors[resourceType] = map[string]bool{}
@@ -160,7 +167,7 @@ func (c *ChangeCaseCore) Reconcile(ctx context.Context, caseID string, occurredA
 	if merger == nil {
 		return contractsv1.ChangeCaseState{}, errors.New("resource type has no merge adapter")
 	}
-	proposals := activeProposals(state.Proposals)
+	proposals := append([]contractsv1.ChangeProposal(nil), state.Proposals...)
 	sort.Slice(proposals, func(i, j int) bool { return proposals[i].ProposalHash < proposals[j].ProposalHash })
 	firstInput, err := cloneProposals(proposals)
 	if err != nil {
@@ -205,22 +212,26 @@ func (c *ChangeCaseCore) Reconcile(ctx context.Context, caseID string, occurredA
 	return state, err
 }
 
-func (c *ChangeCaseCore) ProposeResolution(caseID string, resolvedChange any, occurredAt time.Time) (contractsv1.ChangeCaseState, error) {
+func (c *ChangeCaseCore) ProposeResolution(caseID string, source ChangeProposalSource, occurredAt time.Time) (contractsv1.ChangeCaseState, error) {
 	state, replay, err := c.load(caseID)
 	if err != nil {
 		return contractsv1.ChangeCaseState{}, err
 	}
-	if state.Status != contractsv1.ChangeCaseStateStatusConflicted || state.Conflicts == nil {
-		return contractsv1.ChangeCaseState{}, errors.New("change case has no unresolved conflict")
+	if source.Replacement == nil || (source.Replacement.Reason != contractsv1.ProposalReplacementReasonResolver && source.Replacement.Reason != contractsv1.ProposalReplacementReasonHumanImplementation) || !conflictContainsProposal(state.Conflicts, source.Replacement.ProposalId) {
+		return contractsv1.ChangeCaseState{}, errors.New("resolution source has no typed canonical conflict lineage")
 	}
-	if err := validateBoundedJSON("resolution", resolvedChange); err != nil {
-		return contractsv1.ChangeCaseState{}, err
-	}
-	changeHash, err := Digest(resolvedChange)
+	proposal, err := c.materializeProposal(state.Resource, caseID, source)
 	if err != nil {
 		return contractsv1.ChangeCaseState{}, err
 	}
-	resolution := contractsv1.ResolutionArtifact{Kind: "resolution_artifact", SchemaVersion: 2, CaseId: caseID, ConflictHash: state.Conflicts.ConflictHash, ResolvedChange: resolvedChange, ResolvedChangeHash: contractsv1.SHA256(changeHash), SourceProposalIds: proposalIDs(state.Proposals)}
+	if state.Resolution != nil && state.Resolution.ResolutionProposalId == proposal.Id {
+		return state, nil
+	}
+	if state.Status != contractsv1.ChangeCaseStateStatusConflicted || state.Conflicts == nil {
+		return contractsv1.ChangeCaseState{}, errors.New("change case has no unresolved conflict")
+	}
+	state.Proposals = append(state.Proposals, proposal)
+	resolution := contractsv1.ResolutionArtifact{Kind: "resolution_artifact", SchemaVersion: 2, CaseId: caseID, ConflictHash: state.Conflicts.ConflictHash, ResolvedChange: proposal.Change, ResolvedChangeHash: proposal.ChangeHash, SourceProposalIds: proposalIDs(state.Proposals), ResolutionProposalId: proposal.Id}
 	hash, err := Digest(resolution)
 	if err != nil {
 		return contractsv1.ChangeCaseState{}, err
@@ -229,14 +240,14 @@ func (c *ChangeCaseCore) ProposeResolution(caseID string, resolvedChange any, oc
 	if err := contract.ValidateDefinition("ResolutionArtifact", resolution); err != nil {
 		return contractsv1.ChangeCaseState{}, err
 	}
-	state.Status, state.Resolution, state.MergedChange = contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval, &resolution, resolvedChange
+	state.Status, state.Resolution, state.MergedChange = contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval, &resolution, proposal.Change
 	state.MergedChangeHash, state.UpdatedAt = &resolution.ResolvedChangeHash, occurredAt.UTC()
-	_, err = c.appendState(replay, contractsv1.ReceiptReceiptTypeResolutionProposed, state, occurredAt, []contractsv1.SHA256{state.Conflicts.ConflictHash}, []contractsv1.SHA256{resolution.ResolutionHash}, "")
+	_, err = c.appendState(replay, contractsv1.ReceiptReceiptTypeResolutionProposed, state, occurredAt, []contractsv1.SHA256{state.Conflicts.ConflictHash, proposal.ProposalHash}, []contractsv1.SHA256{resolution.ResolutionHash}, "")
 	return state, err
 }
 
 func (c *ChangeCaseCore) PreviewApproval(caseID, actor string, expiresAt time.Time) (ResolutionApprovalPreview, error) {
-	state, _, err := c.load(caseID)
+	state, replay, err := c.load(caseID)
 	if err != nil {
 		return ResolutionApprovalPreview{}, err
 	}
@@ -247,7 +258,10 @@ func (c *ChangeCaseCore) PreviewApproval(caseID, actor string, expiresAt time.Ti
 	if !c.approvalActors[state.Resource.ResourceType][actor] {
 		return ResolutionApprovalPreview{}, errors.New("actor is not authorized for this resource type")
 	}
-	preview := ResolutionApprovalPreview{CaseID: caseID, Actor: actor, ChangeHash: *state.MergedChangeHash, ExpiresAt: expiresAt.UTC()}
+	if !expiresAt.After(c.now().UTC()) {
+		return ResolutionApprovalPreview{}, errors.New("approval preview expiry must be in the future")
+	}
+	preview := ResolutionApprovalPreview{CaseID: caseID, CaseReplayHash: replay.BundleHash, Actor: actor, ChangeHash: *state.MergedChangeHash, ExpiresAt: expiresAt.UTC()}
 	hash, err := Digest(preview)
 	if err != nil {
 		return ResolutionApprovalPreview{}, err
@@ -265,26 +279,54 @@ func (c *ChangeCaseCore) PreviewApproval(caseID, actor string, expiresAt time.Ti
 }
 
 func (c *ChangeCaseCore) ConfirmApproval(preview ResolutionApprovalPreview, occurredAt time.Time) (contractsv1.ChangeCaseState, error) {
-	if occurredAt.After(preview.ExpiresAt) {
+	state, replay, err := c.load(preview.CaseID)
+	if err != nil {
+		return contractsv1.ChangeCaseState{}, err
+	}
+	if state.ResolutionApprovalHash != nil && exactApprovalReceipt(*replay, preview) {
+		return state, nil
+	}
+	if c.now().UTC().After(preview.ExpiresAt) {
 		return contractsv1.ChangeCaseState{}, errors.New("approval preview has expired")
 	}
 	expected, err := c.PreviewApproval(preview.CaseID, preview.Actor, preview.ExpiresAt)
 	if err != nil || !reflect.DeepEqual(expected, preview) {
 		return contractsv1.ChangeCaseState{}, errors.New("approval preview is stale or altered")
 	}
-	state, replay, err := c.load(preview.CaseID)
-	if err != nil {
-		return contractsv1.ChangeCaseState{}, err
-	}
 	state.UpdatedAt = occurredAt.UTC()
 	if _, err = c.appendState(replay, contractsv1.ReceiptReceiptTypeResolutionApproved, state, occurredAt, []contractsv1.SHA256{preview.ChangeHash, preview.PreviewHash}, []contractsv1.SHA256{preview.CommitToken}, preview.Actor); err != nil {
+		if latest, latestReplay, loadErr := c.load(preview.CaseID); loadErr == nil && exactApprovalReceipt(*latestReplay, preview) {
+			return latest, nil
+		}
 		return contractsv1.ChangeCaseState{}, err
 	}
 	state, _, err = c.load(preview.CaseID)
 	return state, err
 }
 
+func exactApprovalReceipt(replay contractsv1.ReplayBundle, preview ResolutionApprovalPreview) bool {
+	for _, receipt := range replay.Receipts {
+		if receipt.ReceiptType != contractsv1.ReceiptReceiptTypeResolutionApproved || receipt.Actor == nil || *receipt.Actor != preview.Actor {
+			continue
+		}
+		if hashesContain(receipt.InputHashes, preview.ChangeHash) && hashesContain(receipt.InputHashes, preview.PreviewHash) && hashesContain(receipt.OutputHashes, preview.CommitToken) {
+			return true
+		}
+	}
+	return false
+}
+
+func hashesContain(values []contractsv1.SHA256, target contractsv1.SHA256) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *ChangeCaseCore) AcquireLease(ctx context.Context, caseID string, ttl time.Duration, occurredAt time.Time) (contractsv1.ChangeCaseState, error) {
+	now := c.now().UTC()
 	state, replay, err := c.load(caseID)
 	if err != nil {
 		return contractsv1.ChangeCaseState{}, err
@@ -292,10 +334,13 @@ func (c *ChangeCaseCore) AcquireLease(ctx context.Context, caseID string, ttl ti
 	if state.ResolutionApprovalHash == nil || state.MergedChangeHash == nil {
 		return contractsv1.ChangeCaseState{}, errors.New("exact change approval is required")
 	}
+	if state.Status != contractsv1.ChangeCaseStateStatusReady && state.Status != contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval && state.Status != contractsv1.ChangeCaseStateStatusLeased {
+		return contractsv1.ChangeCaseState{}, errors.New("change case cannot acquire another mutation lease")
+	}
 	if !c.approvalAllowed(state, *replay) {
 		return contractsv1.ChangeCaseState{}, errors.New("change approval actor is not authorized")
 	}
-	if state.Lease != nil && occurredAt.Before(state.Lease.ExpiresAt) {
+	if state.Lease != nil && now.Before(state.Lease.ExpiresAt) {
 		return contractsv1.ChangeCaseState{}, errors.New("an active mutation lease already exists")
 	}
 	if ttl <= 0 || ttl > time.Hour {
@@ -304,12 +349,12 @@ func (c *ChangeCaseCore) AcquireLease(ctx context.Context, caseID string, ttl ti
 	if err := c.checkCurrent(ctx, state.Resource); err != nil {
 		return contractsv1.ChangeCaseState{}, err
 	}
-	for _, proposal := range activeProposals(state.Proposals) {
+	for _, proposal := range state.Proposals {
 		if err := c.verifyProposal(proposal); err != nil {
 			return contractsv1.ChangeCaseState{}, fmt.Errorf("proposal %s is not canonical: %w", proposal.Id, err)
 		}
 	}
-	lease := contractsv1.MutationLease{Kind: "mutation_lease", SchemaVersion: 2, CaseId: caseID, Resource: state.Resource, ChangeHash: *state.MergedChangeHash, ApprovalReceiptHash: *state.ResolutionApprovalHash, AcquiredAt: occurredAt.UTC(), ExpiresAt: occurredAt.Add(ttl).UTC()}
+	lease := contractsv1.MutationLease{Kind: "mutation_lease", SchemaVersion: 2, CaseId: caseID, Resource: state.Resource, ChangeHash: *state.MergedChangeHash, ApprovalReceiptHash: *state.ResolutionApprovalHash, AcquiredAt: now, ExpiresAt: now.Add(ttl)}
 	hash, err := Digest(lease)
 	if err != nil {
 		return contractsv1.ChangeCaseState{}, err
@@ -324,6 +369,7 @@ func (c *ChangeCaseCore) AcquireLease(ctx context.Context, caseID string, ttl ti
 }
 
 func (c *ChangeCaseCore) Apply(ctx context.Context, caseID string, occurredAt time.Time) (contractsv1.ChangeCaseState, error) {
+	now := c.now().UTC()
 	state, replay, err := c.load(caseID)
 	if err != nil {
 		return contractsv1.ChangeCaseState{}, err
@@ -339,13 +385,13 @@ func (c *ChangeCaseCore) Apply(ctx context.Context, caseID string, occurredAt ti
 		return contractsv1.ChangeCaseState{}, errors.New("resource type has no mutation adapter")
 	}
 	if state.Status == contractsv1.ChangeCaseStateStatusLeased {
-		if occurredAt.After(state.Lease.ExpiresAt) {
+		if now.After(state.Lease.ExpiresAt) {
 			return contractsv1.ChangeCaseState{}, errors.New("an active exact mutation lease is required")
 		}
 		if err := c.checkCurrent(ctx, state.Resource); err != nil {
 			return contractsv1.ChangeCaseState{}, err
 		}
-		for _, proposal := range activeProposals(state.Proposals) {
+		for _, proposal := range state.Proposals {
 			if err := c.verifyProposal(proposal); err != nil {
 				return contractsv1.ChangeCaseState{}, fmt.Errorf("proposal %s is not canonical: %w", proposal.Id, err)
 			}
@@ -425,6 +471,13 @@ func (c *ChangeCaseCore) appendState(replay *contractsv1.ReplayBundle, receiptTy
 		if err := contract.ValidateDefinition("Receipt", receipt); err != nil {
 			return replay, err
 		}
+	}
+	receipts := []contractsv1.Receipt{receipt}
+	if replay != nil {
+		receipts = append(append([]contractsv1.Receipt(nil), replay.Receipts...), receipt)
+	}
+	if _, err := replayBundle(state.Id, receipts); err != nil {
+		return replay, fmt.Errorf("change case event exceeds the replay contract: %w", err)
 	}
 	if err := c.ledger.Append(receipt); err != nil {
 		return replay, err
@@ -599,7 +652,7 @@ func validateChangeCaseState(state contractsv1.ChangeCaseState) error {
 		unsigned, id, expectedHash := *state.Resolution, state.Resolution.Id, state.Resolution.ResolutionHash
 		unsigned.Id, unsigned.ResolutionHash = "", ""
 		hash, err := Digest(unsigned)
-		if err != nil || contractsv1.SHA256(hash) != expectedHash || contractsv1.Identifier(shortID("resolution-", hash)) != id || state.Conflicts == nil || state.Resolution.ConflictHash != state.Conflicts.ConflictHash || !reflect.DeepEqual(state.Resolution.SourceProposalIds, proposalIDs(state.Proposals)) {
+		if err != nil || contractsv1.SHA256(hash) != expectedHash || contractsv1.Identifier(shortID("resolution-", hash)) != id || state.Conflicts == nil || state.Resolution.ConflictHash != state.Conflicts.ConflictHash || !reflect.DeepEqual(state.Resolution.SourceProposalIds, proposalIDs(state.Proposals)) || !resolutionProposalValid(state) {
 			return errors.New("Resolution Artifact identity or conflict binding is invalid")
 		}
 	}
@@ -636,11 +689,11 @@ func validateChangeCaseTransition(previous, next contractsv1.ChangeCaseState, re
 	case contractsv1.ReceiptReceiptTypeConflictDetected:
 		valid = sameProposalCount && previous.Status == contractsv1.ChangeCaseStateStatusProposed && next.Status == contractsv1.ChangeCaseStateStatusConflicted && next.Conflicts != nil
 	case contractsv1.ReceiptReceiptTypeResolutionProposed:
-		valid = sameProposalCount && previous.Status == contractsv1.ChangeCaseStateStatusConflicted && next.Status == contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval && next.Resolution != nil && next.MergedChangeHash != nil
+		valid = len(next.Proposals) == len(previous.Proposals)+1 && previous.Status == contractsv1.ChangeCaseStateStatusConflicted && next.Status == contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval && next.Resolution != nil && next.MergedChangeHash != nil
 	case contractsv1.ReceiptReceiptTypeResolutionApproved:
 		valid = sameProposalCount && (previous.Status == contractsv1.ChangeCaseStateStatusReady || previous.Status == contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval) && next.Status == previous.Status && receipt.Actor != nil
 	case contractsv1.ReceiptReceiptTypeMutationLeaseAcquired:
-		valid = sameProposalCount && previous.ResolutionApprovalHash != nil && next.Status == contractsv1.ChangeCaseStateStatusLeased && next.Lease != nil && next.Lease.ApprovalReceiptHash == *previous.ResolutionApprovalHash
+		valid = sameProposalCount && previous.ResolutionApprovalHash != nil && (previous.Status == contractsv1.ChangeCaseStateStatusReady || previous.Status == contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval || previous.Status == contractsv1.ChangeCaseStateStatusLeased) && next.Status == contractsv1.ChangeCaseStateStatusLeased && next.Lease != nil && next.Lease.ApprovalReceiptHash == *previous.ResolutionApprovalHash
 	case contractsv1.ReceiptReceiptTypeMutationApplied:
 		valid = sameProposalCount && previous.Status == contractsv1.ChangeCaseStateStatusLeased && next.Status == contractsv1.ChangeCaseStateStatusApplied && next.ApplyEvidence != nil
 	case contractsv1.ReceiptReceiptTypeMutationReadback:
@@ -652,6 +705,16 @@ func validateChangeCaseTransition(previous, next contractsv1.ChangeCaseState, re
 		return fmt.Errorf("invalid %s Change Case transition", receipt.ReceiptType)
 	}
 	return nil
+}
+
+func resolutionProposalValid(state contractsv1.ChangeCaseState) bool {
+	for _, proposal := range state.Proposals {
+		if proposal.Id != state.Resolution.ResolutionProposalId {
+			continue
+		}
+		return proposal.Replacement != nil && (proposal.Replacement.Reason == contractsv1.ProposalReplacementReasonResolver || proposal.Replacement.Reason == contractsv1.ProposalReplacementReasonHumanImplementation) && proposal.ChangeHash == state.Resolution.ResolvedChangeHash && reflect.DeepEqual(proposal.Change, state.Resolution.ResolvedChange)
+	}
+	return false
 }
 
 func proposalCampaignPrefix(campaign contractsv1.ReplayBundle, resultHash contractsv1.SHA256) (contractsv1.ReplayBundle, contractsv1.NodeCompletedEventPayload, error) {
@@ -751,20 +814,19 @@ func proposalIDPresent(values []contractsv1.ChangeProposal, id contractsv1.Ident
 	}
 	return false
 }
-func activeProposals(values []contractsv1.ChangeProposal) []contractsv1.ChangeProposal {
-	replaced := map[contractsv1.Identifier]bool{}
-	for _, value := range values {
-		if value.Replacement != nil {
-			replaced[value.Replacement.ProposalId] = true
+
+func conflictContainsProposal(conflicts *contractsv1.ConflictSet, id contractsv1.Identifier) bool {
+	if conflicts == nil {
+		return false
+	}
+	for _, item := range conflicts.Items {
+		for _, proposalID := range item.ProposalIds {
+			if proposalID == id {
+				return true
+			}
 		}
 	}
-	active := make([]contractsv1.ChangeProposal, 0, len(values))
-	for _, value := range values {
-		if !replaced[value.Id] {
-			active = append(active, value)
-		}
-	}
-	return active
+	return false
 }
 func cloneProposals(values []contractsv1.ChangeProposal) ([]contractsv1.ChangeProposal, error) {
 	var clone []contractsv1.ChangeProposal

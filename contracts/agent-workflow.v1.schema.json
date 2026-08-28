@@ -375,7 +375,7 @@
     "ResolutionArtifact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "schema_version", "id", "case_id", "conflict_hash", "resolved_change", "resolved_change_hash", "source_proposal_ids", "resolution_hash"],
+      "required": ["kind", "schema_version", "id", "case_id", "conflict_hash", "resolved_change", "resolved_change_hash", "source_proposal_ids", "resolution_proposal_id", "resolution_hash"],
       "properties": {
         "kind": { "type": "string", "enum": ["resolution_artifact"] },
         "schema_version": { "type": "integer", "enum": [2] },
@@ -385,6 +385,7 @@
         "resolved_change": { "type": ["object", "array"] },
         "resolved_change_hash": { "$ref": "#/$defs/SHA256" },
         "source_proposal_ids": { "type": "array", "minItems": 2, "uniqueItems": true, "items": { "$ref": "#/$defs/Identifier" } },
+        "resolution_proposal_id": { "$ref": "#/$defs/Identifier" },
         "resolution_hash": { "$ref": "#/$defs/SHA256" }
       }
     },
@@ -458,7 +459,7 @@
         "schema_version": { "type": "integer", "enum": [2] },
         "generated_at": { "type": "string", "format": "date-time" },
         "state": { "$ref": "#/$defs/ChangeCaseState" },
-        "receipts": { "type": "array", "items": { "$ref": "#/$defs/CanvasReceiptLink" } }
+        "receipts": { "type": "array", "items": { "$ref": "#/$defs/ChangeCaseReceiptLink" } }
       }
     },
     "CampaignAdmissionEventPayload": {
@@ -625,6 +626,14 @@
       },
       "allOf": [
         {
+          "if": { "properties": { "schema_version": { "const": 1 } }, "required": ["schema_version"] },
+          "then": {
+            "properties": {
+              "receipt_type": { "enum": ["compile", "admission", "pack_edition", "invocation", "provider_execution", "result", "approval", "terminal"] }
+            }
+          }
+        },
+        {
           "if": { "properties": { "schema_version": { "const": 2 } }, "required": ["schema_version"] },
           "then": {
             "oneOf": [
@@ -714,7 +723,7 @@
       "required": ["id", "receipt_type", "aggregate_version", "occurred_at", "input_hashes", "output_hashes", "previous_receipt_hash", "receipt_hash"],
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal", "change_proposed", "change_merged", "conflict_detected", "resolution_proposed", "resolution_approved", "mutation_lease_acquired", "mutation_applied", "mutation_readback", "resource_generation_advanced"] },
+        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal"] },
         "aggregate_version": { "type": "integer", "minimum": 1 },
         "occurred_at": { "type": "string", "format": "date-time" },
         "input_hashes": { "type": "array", "items": { "$ref": "#/$defs/SHA256" }, "uniqueItems": true },
@@ -1020,7 +1029,18 @@
       "required": ["id", "receipt_type", "receipt_hash", "occurred_at"],
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal", "change_proposed", "change_merged", "conflict_detected", "resolution_proposed", "resolution_approved", "mutation_lease_acquired", "mutation_applied", "mutation_readback", "resource_generation_advanced"] },
+        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal"] },
+        "receipt_hash": { "$ref": "#/$defs/SHA256" },
+        "occurred_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ChangeCaseReceiptLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "receipt_type", "receipt_hash", "occurred_at"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "receipt_type": { "enum": ["change_proposed", "change_merged", "conflict_detected", "resolution_proposed", "resolution_approved", "mutation_lease_acquired", "mutation_applied", "mutation_readback", "resource_generation_advanced"] },
         "receipt_hash": { "$ref": "#/$defs/SHA256" },
         "occurred_at": { "type": "string", "format": "date-time" }
       }

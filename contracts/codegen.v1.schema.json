@@ -22,6 +22,7 @@
     "change_case_state": { "$ref": "agent-workflow.v1.schema.json#/$defs/ChangeCaseState" },
     "change_case_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/ChangeCaseEventPayload" },
     "change_case_canvas": { "$ref": "agent-workflow.v1.schema.json#/$defs/ChangeCaseCanvas" },
+    "change_case_receipt_link": { "$ref": "agent-workflow.v1.schema.json#/$defs/ChangeCaseReceiptLink" },
     "receipt": { "$ref": "agent-workflow.v1.schema.json#/$defs/Receipt" },
     "replay_bundle": { "$ref": "agent-workflow.v1.schema.json#/$defs/ReplayBundle" },
     "redacted_replay": { "$ref": "agent-workflow.v1.schema.json#/$defs/RedactedReplay" },

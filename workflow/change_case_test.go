@@ -3,7 +3,9 @@ package workflow_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ func TestChangeCaseCoordinatesTwoCampaignsThroughConflictApprovalAndReadback(t *
 	sources := workflow.NewMemoryLedger()
 	first := completedChangeSource(t, sources, "campaign-a", map[string]any{"recommendation": "A"})
 	second := completedChangeSource(t, sources, "campaign-b", map[string]any{"recommendation": "B"})
+	resolutionSource := completedChangeSource(t, sources, "campaign-resolver", map[string]any{"recommendation": "resolved"})
 	resource := resourceFixture(t, 1, map[string]any{"title": "baseline"})
 	authority := &testResourceAuthority{current: resource}
 	mutation := &testMutationAdapter{}
@@ -42,9 +45,14 @@ func TestChangeCaseCoordinatesTwoCampaignsThroughConflictApprovalAndReadback(t *
 	if _, err := core.AcquireLease(ctx, conflicted.Id, time.Minute, at.Add(2*time.Second)); err == nil {
 		t.Fatal("conflicted case acquired a lease without an exact resolution approval")
 	}
-	resolved, err := core.ProposeResolution(conflicted.Id, map[string]any{"recommendation": "resolved"}, at.Add(3*time.Second))
+	resolutionSource.Replacement = &contractsv1.ProposalReplacement{ProposalId: conflicted.Proposals[0].Id, Reason: contractsv1.ProposalReplacementReasonResolver}
+	resolved, err := core.ProposeResolution(conflicted.Id, resolutionSource, at.Add(3*time.Second))
 	if err != nil || resolved.Status != contractsv1.ChangeCaseStateStatusAwaitingResolutionApproval {
 		t.Fatalf("resolution was not reviewable: state=%+v err=%v", resolved, err)
+	}
+	redelivered, err := core.ProposeResolution(conflicted.Id, resolutionSource, at.Add(4*time.Second))
+	if err != nil || redelivered.Resolution == nil || redelivered.Resolution.ResolutionHash != resolved.Resolution.ResolutionHash || len(redelivered.Proposals) != len(resolved.Proposals) {
+		t.Fatalf("resolution source redelivery did not converge: state=%+v err=%v", redelivered, err)
 	}
 	preview, err := core.PreviewApproval(resolved.Id, "reviewer@example.com", at.Add(time.Minute))
 	if err != nil {
@@ -117,13 +125,15 @@ func TestChangeCaseResumesReadbackWithoutRepeatingAppliedEffect(t *testing.T) {
 	resource := resourceFixture(t, 1, map[string]any{"title": "baseline"})
 	ledger := &failNthAppendLedger{Ledger: workflow.NewMemoryLedger(), failAt: 6}
 	mutation := &testMutationAdapter{}
+	at := time.Now().UTC()
+	now := at
 	core := workflow.NewChangeCaseCore(ledger, sources, outputCatalog(), workflow.ChangeCaseCatalog{
 		Mergers:        map[contractsv1.Identifier]workflow.ChangeMergeAdapter{"document": conflictMerge{}},
 		Resources:      map[contractsv1.Identifier]workflow.ResourceAuthority{"document": &testResourceAuthority{current: resource}},
 		Mutations:      map[contractsv1.Identifier]workflow.MutationAdapter{"document": mutation},
 		ApprovalActors: map[contractsv1.Identifier][]string{"document": {"reviewer@example.com"}},
+		Clock:          func() time.Time { return now },
 	})
-	at := time.Now().UTC()
 	ready, err := core.SubmitProposal(context.Background(), resource, source, at)
 	if err != nil {
 		t.Fatal(err)
@@ -136,15 +146,155 @@ func TestChangeCaseResumesReadbackWithoutRepeatingAppliedEffect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = core.AcquireLease(context.Background(), approved.Id, time.Minute, at.Add(2*time.Second)); err != nil {
+	leased, err := core.AcquireLease(context.Background(), approved.Id, time.Minute, at.Add(2*time.Second))
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = core.Apply(context.Background(), approved.Id, at.Add(3*time.Second)); err == nil {
 		t.Fatal("injected readback receipt failure was not observed")
 	}
+	now = leased.Lease.ExpiresAt.Add(time.Second)
+	if _, err = core.AcquireLease(context.Background(), approved.Id, time.Minute, now); err == nil {
+		t.Fatal("an applied change case acquired another mutation lease")
+	}
 	completed, err := core.Apply(context.Background(), approved.Id, at.Add(4*time.Second))
 	if err != nil || completed.Status != contractsv1.ChangeCaseStateStatusCompleted || mutation.applies != 1 || mutation.readbacks != 2 {
 		t.Fatalf("readback recovery repeated apply or failed: state=%+v adapter=%+v err=%v", completed, mutation, err)
+	}
+}
+
+func TestChangeCaseRejectsOversizedReplayBeforeCorruptingLedger(t *testing.T) {
+	sources := workflow.NewMemoryLedger()
+	resource := resourceFixture(t, 1, map[string]any{"title": "baseline"})
+	ledger, err := workflow.OpenFileLedger(t.TempDir() + "/changes.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := workflow.NewChangeCaseCore(ledger, sources, outputCatalog(), workflow.ChangeCaseCatalog{
+		Mergers:   map[contractsv1.Identifier]workflow.ChangeMergeAdapter{"document": equalMerge{}},
+		Resources: map[contractsv1.Identifier]workflow.ResourceAuthority{"document": &testResourceAuthority{current: resource}},
+	})
+	at := time.Now().UTC()
+	var caseID string
+	rejected := false
+	for index := 0; index < 8; index++ {
+		source := completedChangeSource(t, sources, fmt.Sprintf("campaign-large-%d", index), map[string]any{"recommendation": strings.Repeat(string(rune('a'+index)), 100<<10)})
+		state, appendErr := core.SubmitProposal(context.Background(), resource, source, at.Add(time.Duration(index)*time.Second))
+		if state.Id != "" {
+			caseID = state.Id
+		}
+		if appendErr != nil {
+			rejected = true
+			break
+		}
+	}
+	if !rejected {
+		t.Fatal("oversized Change Case replay was not rejected")
+	}
+	replay, err := core.Replay(caseID)
+	if err != nil {
+		t.Fatalf("bounded rejection corrupted the canonical ledger: %v", err)
+	}
+	if _, err := workflow.MaterializeChangeCase(replay); err != nil {
+		t.Fatalf("bounded rejection left an unreplayable Change Case: %v", err)
+	}
+}
+
+func TestChangeCaseApprovalBindsExactProposalFrontier(t *testing.T) {
+	sources := workflow.NewMemoryLedger()
+	first := completedChangeSource(t, sources, "campaign-a", map[string]any{"recommendation": "same"})
+	second := completedChangeSource(t, sources, "campaign-b", map[string]any{"recommendation": "same"})
+	resource := resourceFixture(t, 1, map[string]any{"title": "baseline"})
+	core := workflow.NewChangeCaseCore(workflow.NewMemoryLedger(), sources, outputCatalog(), workflow.ChangeCaseCatalog{
+		Mergers:        map[contractsv1.Identifier]workflow.ChangeMergeAdapter{"document": equalMerge{}},
+		Resources:      map[contractsv1.Identifier]workflow.ResourceAuthority{"document": &testResourceAuthority{current: resource}},
+		ApprovalActors: map[contractsv1.Identifier][]string{"document": {"reviewer@example.com"}},
+	})
+	at := time.Now().UTC()
+	ready, err := core.SubmitProposal(context.Background(), resource, first, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := core.PreviewApproval(ready.Id, "reviewer@example.com", at.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err = core.SubmitProposal(context.Background(), resource, second, at.Add(time.Second))
+	if err != nil || ready.Status != contractsv1.ChangeCaseStateStatusReady || ready.MergedChangeHash == nil || *ready.MergedChangeHash != preview.ChangeHash {
+		t.Fatalf("fixture did not preserve the same merged change: state=%+v err=%v", ready, err)
+	}
+	if _, err := core.ConfirmApproval(preview, at.Add(2*time.Second)); err == nil {
+		t.Fatal("approval preview survived an unseen canonical proposal frontier")
+	}
+}
+
+func TestChangeCaseReplacementLineageCannotSuppressAnotherCampaign(t *testing.T) {
+	sources := workflow.NewMemoryLedger()
+	first := completedChangeSource(t, sources, "campaign-a", map[string]any{"recommendation": "A"})
+	second := completedChangeSource(t, sources, "campaign-b", map[string]any{"recommendation": "B"})
+	third := completedChangeSource(t, sources, "campaign-c", map[string]any{"recommendation": "B"})
+	resource := resourceFixture(t, 1, map[string]any{"title": "baseline"})
+	core := workflow.NewChangeCaseCore(workflow.NewMemoryLedger(), sources, outputCatalog(), workflow.ChangeCaseCatalog{
+		Mergers:   map[contractsv1.Identifier]workflow.ChangeMergeAdapter{"document": equalMerge{}},
+		Resources: map[contractsv1.Identifier]workflow.ResourceAuthority{"document": &testResourceAuthority{current: resource}},
+	})
+	at := time.Now().UTC()
+	state, err := core.SubmitProposal(context.Background(), resource, first, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = core.SubmitProposal(context.Background(), resource, second, at.Add(time.Second))
+	if err != nil || state.Status != contractsv1.ChangeCaseStateStatusConflicted {
+		t.Fatalf("fixture did not conflict: %+v %v", state, err)
+	}
+	third.Replacement = &contractsv1.ProposalReplacement{ProposalId: state.Proposals[0].Id, Reason: contractsv1.ProposalReplacementReasonResolver}
+	state, err = core.SubmitProposal(context.Background(), resource, third, at.Add(2*time.Second))
+	if err != nil || state.Status != contractsv1.ChangeCaseStateStatusConflicted {
+		t.Fatalf("caller-controlled replacement bypassed conflict resolution: state=%+v err=%v", state, err)
+	}
+}
+
+func TestChangeCaseUsesTrustedClockForApprovalAndLeaseExpiry(t *testing.T) {
+	sources := workflow.NewMemoryLedger()
+	source := completedChangeSource(t, sources, "campaign-a", map[string]any{"recommendation": "A"})
+	resource := resourceFixture(t, 1, map[string]any{"title": "baseline"})
+	now := time.Now().UTC()
+	mutation := &testMutationAdapter{}
+	core := workflow.NewChangeCaseCore(workflow.NewMemoryLedger(), sources, outputCatalog(), workflow.ChangeCaseCatalog{
+		Mergers:        map[contractsv1.Identifier]workflow.ChangeMergeAdapter{"document": conflictMerge{}},
+		Resources:      map[contractsv1.Identifier]workflow.ResourceAuthority{"document": &testResourceAuthority{current: resource}},
+		Mutations:      map[contractsv1.Identifier]workflow.MutationAdapter{"document": mutation},
+		ApprovalActors: map[contractsv1.Identifier][]string{"document": {"reviewer@example.com"}},
+		Clock:          func() time.Time { return now },
+	})
+	ready, err := core.SubmitProposal(context.Background(), resource, source, now.Add(-2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := core.PreviewApproval(ready.Id, "reviewer@example.com", now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Minute)
+	if _, err := core.ConfirmApproval(preview, preview.ExpiresAt.Add(-time.Second)); err == nil {
+		t.Fatal("caller-supplied timestamp revived an expired approval")
+	}
+
+	now = preview.ExpiresAt.Add(-time.Second)
+	approved, err := core.ConfirmApproval(preview, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	leased, err := core.AcquireLease(context.Background(), approved.Id, time.Minute, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = leased.Lease.ExpiresAt.Add(time.Second)
+	if _, err := core.Apply(context.Background(), approved.Id, leased.Lease.AcquiredAt); err == nil {
+		t.Fatal("caller-supplied timestamp revived an expired mutation lease")
+	}
+	if mutation.applies != 0 {
+		t.Fatal("expired mutation lease reached the mutation adapter")
 	}
 }
 
@@ -188,6 +338,17 @@ func (conflictMerge) Merge(_ context.Context, _ contractsv1.ResourceRef, proposa
 		return workflow.MergeDecision{Change: proposals[0].Change}, nil
 	}
 	return workflow.MergeDecision{Conflicts: []contractsv1.ConflictItem{{Path: "/recommendation", ProposalIds: []contractsv1.Identifier{proposals[0].Id, proposals[1].Id}, Reason: "proposals differ"}}}, nil
+}
+
+type equalMerge struct{}
+
+func (equalMerge) Merge(_ context.Context, _ contractsv1.ResourceRef, proposals []contractsv1.ChangeProposal) (workflow.MergeDecision, error) {
+	for index := 1; index < len(proposals); index++ {
+		if !reflect.DeepEqual(proposals[0].Change, proposals[index].Change) {
+			return workflow.MergeDecision{Conflicts: []contractsv1.ConflictItem{{Path: "/recommendation", ProposalIds: []contractsv1.Identifier{proposals[0].Id, proposals[index].Id}, Reason: "proposals differ"}}}, nil
+		}
+	}
+	return workflow.MergeDecision{Change: proposals[0].Change}, nil
 }
 
 type testResourceAuthority struct{ current contractsv1.ResourceRef }

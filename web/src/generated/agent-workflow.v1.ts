@@ -18,6 +18,7 @@ export interface AgentWorkflowV1 {
     capability_manifest?:              CapabilityManifest;
     change_case_canvas?:               ChangeCaseCanvas;
     change_case_event_payload?:        ChangeCaseEventPayload;
+    change_case_receipt_link?:         ChangeCaseReceiptLinkElement;
     change_case_state?:                ChangeCaseStateClass;
     change_proposal?:                  ChangeProposalElement;
     conflict_set?:                     Conflicts;
@@ -345,13 +346,13 @@ export interface ReplayBundleReceipt {
     payload?:              { [key: string]: unknown };
     previous_receipt_hash: null | string;
     receipt_hash:          string;
-    receipt_type:          ReceiptType;
+    receipt_type:          PurpleReceiptType;
     schema_version:        number;
 }
 
 export type ReceiptKind = "receipt";
 
-export type ReceiptType = "compile" | "admission" | "campaign_admission" | "context_bound" | "needs_context" | "context_available" | "attempt_reserved" | "pack_edition" | "invocation" | "provider_execution" | "result" | "node_completed" | "budget_exhausted" | "approval_requested" | "approval_decided" | "wait_started" | "wait_resumed" | "core_completed" | "approval" | "terminal" | "change_proposed" | "change_merged" | "conflict_detected" | "resolution_proposed" | "resolution_approved" | "mutation_lease_acquired" | "mutation_applied" | "mutation_readback" | "resource_generation_advanced";
+export type PurpleReceiptType = "compile" | "admission" | "campaign_admission" | "context_bound" | "needs_context" | "context_available" | "attempt_reserved" | "pack_edition" | "invocation" | "provider_execution" | "result" | "node_completed" | "budget_exhausted" | "approval_requested" | "approval_decided" | "wait_started" | "wait_resumed" | "core_completed" | "approval" | "terminal" | "change_proposed" | "change_merged" | "conflict_detected" | "resolution_proposed" | "resolution_approved" | "mutation_lease_acquired" | "mutation_applied" | "mutation_readback" | "resource_generation_advanced";
 
 export type CampaignDriveReceiptKind = "campaign_drive_receipt";
 
@@ -559,8 +560,10 @@ export interface ExecutionReceipt {
     id:           string;
     occurred_at:  string;
     receipt_hash: string;
-    receipt_type: ReceiptType;
+    receipt_type: FluffyReceiptType;
 }
+
+export type FluffyReceiptType = "compile" | "admission" | "campaign_admission" | "context_bound" | "needs_context" | "context_available" | "attempt_reserved" | "pack_edition" | "invocation" | "provider_execution" | "result" | "node_completed" | "budget_exhausted" | "approval_requested" | "approval_decided" | "wait_started" | "wait_resumed" | "core_completed" | "approval" | "terminal";
 
 export type CanvasSnapshotKind = "canvas_snapshot";
 
@@ -593,12 +596,21 @@ export type CapabilityManifestKind = "capability_manifest";
 export interface ChangeCaseCanvas {
     generated_at:   string;
     kind:           ChangeCaseCanvasKind;
-    receipts:       ExecutionReceipt[];
+    receipts:       ChangeCaseReceiptLinkElement[];
     schema_version: number;
     state:          ChangeCaseStateClass;
 }
 
 export type ChangeCaseCanvasKind = "change_case_canvas";
+
+export interface ChangeCaseReceiptLinkElement {
+    id:           string;
+    occurred_at:  string;
+    receipt_hash: string;
+    receipt_type: ChangeCaseReceiptLinkReceiptType;
+}
+
+export type ChangeCaseReceiptLinkReceiptType = "change_proposed" | "change_merged" | "conflict_detected" | "resolution_proposed" | "resolution_approved" | "mutation_lease_acquired" | "mutation_applied" | "mutation_readback" | "resource_generation_advanced";
 
 export interface ChangeCaseStateClass {
     apply_evidence?:           ApplyEvidence;
@@ -713,15 +725,16 @@ export interface Replacement {
 export type ProposalReplacementReason = "rebase" | "resolver" | "human_implementation";
 
 export interface Resolution {
-    case_id:              string;
-    conflict_hash:        string;
-    id:                   string;
-    kind:                 ResolutionArtifactKind;
-    resolution_hash:      string;
-    resolved_change:      unknown[] | { [key: string]: unknown };
-    resolved_change_hash: string;
-    schema_version:       number;
-    source_proposal_ids:  [string, string, ...string[]];
+    case_id:                string;
+    conflict_hash:          string;
+    id:                     string;
+    kind:                   ResolutionArtifactKind;
+    resolution_hash:        string;
+    resolution_proposal_id: string;
+    resolved_change:        unknown[] | { [key: string]: unknown };
+    resolved_change_hash:   string;
+    schema_version:         number;
+    source_proposal_ids:    [string, string, ...string[]];
 }
 
 export type ResolutionArtifactKind = "resolution_artifact";
@@ -811,7 +824,7 @@ export interface RedactedReplayReceipt {
     output_hashes:         string[];
     previous_receipt_hash: null | string;
     receipt_hash:          string;
-    receipt_type:          ReceiptType;
+    receipt_type:          FluffyReceiptType;
 }
 
 export interface WaitResumedEventPayload {

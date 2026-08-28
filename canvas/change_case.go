@@ -13,9 +13,9 @@ func ProjectChangeCase(replay contractsv1.ReplayBundle, generatedAt time.Time) (
 	if err != nil {
 		return contractsv1.ChangeCaseCanvas{}, err
 	}
-	receipts := make([]contractsv1.CanvasReceiptLink, len(replay.Receipts))
+	receipts := make([]contractsv1.ChangeCaseReceiptLink, len(replay.Receipts))
 	for index, receipt := range replay.Receipts {
-		receipts[index] = contractsv1.CanvasReceiptLink{Id: receipt.Id, ReceiptType: contractsv1.CanvasReceiptLinkReceiptType(receipt.ReceiptType), ReceiptHash: receipt.ReceiptHash, OccurredAt: receipt.OccurredAt}
+		receipts[index] = contractsv1.ChangeCaseReceiptLink{Id: receipt.Id, ReceiptType: contractsv1.ChangeCaseReceiptLinkReceiptType(receipt.ReceiptType), ReceiptHash: receipt.ReceiptHash, OccurredAt: receipt.OccurredAt}
 	}
 	result := contractsv1.ChangeCaseCanvas{Kind: "change_case_canvas", SchemaVersion: 2, GeneratedAt: generatedAt.UTC(), State: state, Receipts: receipts}
 	if err := contract.ValidateDefinition("ChangeCaseCanvas", result); err != nil {

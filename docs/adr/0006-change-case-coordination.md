@@ -21,7 +21,8 @@ capability hashes. A registered pure merge adapter receives the accepted
 proposals in hash order and returns either merged content or a typed Conflict
 Set; it has no mutation authority.
 
-Conflicts require a Resolution Artifact and an exact preview/confirm approval.
+Conflicts require a Resolution Artifact materialized from another completed
+canonical Campaign Node proposal and an exact preview/confirm approval.
 All accepted changes, including non-conflicting merges, require approval and one
 time-bounded Mutation Lease before apply. A separate mutation adapter receives
 that lease as its idempotency authority and must return an observed hash; Core
@@ -29,8 +30,9 @@ records apply and matching readback evidence. An advanced generation or changed
 baseline fails closed.
 
 Proposal replacement is explicit and reason typed (`rebase`, `resolver`, or
-`human_implementation`). Historical proposals remain in Replay while merge
-consumes only the active replacement frontier.
+`human_implementation`). It is audit lineage only: it never suppresses another
+Campaign's proposal or inherits authority. Conflicts still require a Resolution
+Artifact and exact approval.
 
 Change Case receipts use schema version 4 so historical Campaign and Workflow
 receipts retain their existing semantics. Canvas is a read-only projection of
