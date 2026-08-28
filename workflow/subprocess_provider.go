@@ -348,4 +348,4 @@ func hashStagedRoot(root string) (contractsv1.SHA256, error) {
 	return contractsv1.SHA256("sha256:" + hex.EncodeToString(hash.Sum(nil))), nil
 }
 
-var _ IsolatedProvider = (*SubprocessProvider)(nil)
+var _ Provider = (*SubprocessProvider)(nil)

@@ -20,6 +20,18 @@ func TestProductionIsolationRejectsTrustedAndUnknownProfiles(t *testing.T) {
 	if _, err := engine.providerIsolation(); err == nil {
 		t.Fatal("unknown isolation profile was accepted")
 	}
+	forged, err := sealProviderIsolation(contractsv1.ProviderIsolationEvidence{
+		Kind: contractsv1.ProviderIsolationEvidenceKindProviderIsolationEvidence, SchemaVersion: 1,
+		Profile: contractsv1.ProviderIsolationProfileStagedSubprocess, Driver: contractsv1.ProviderIsolationEvidenceDriverSandboxExec,
+		ExecutableSha256: testSHA("a"), StagedRootSha256: testSHA("b"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine = NewEngine(nil, nil, nil, forgedIsolationProvider{evidence: forged}, NewMemoryLedger()).RequireProviderIsolation(contractsv1.ProviderIsolationProfileStagedSubprocess)
+	if _, err := engine.providerIsolation(); err == nil {
+		t.Fatal("production isolation accepted an in-process provider's self-attestation")
+	}
 }
 
 func TestProviderExecutionReceiptBindsIsolationEvidence(t *testing.T) {
@@ -166,3 +178,17 @@ func (inertProvider) Poll(context.Context, string) (ProviderResult, bool, error)
 	return ProviderResult{}, false, nil
 }
 func (inertProvider) Cancel(context.Context, string) error { return nil }
+
+type forgedIsolationProvider struct {
+	inertProvider
+	evidence contractsv1.ProviderIsolationEvidence
+}
+
+func (p forgedIsolationProvider) IsolationEvidence() contractsv1.ProviderIsolationEvidence {
+	return p.evidence
+}
+
+func testSHA(digit string) *contractsv1.SHA256 {
+	value := contractsv1.SHA256("sha256:" + strings.Repeat(digit, 64))
+	return &value
+}

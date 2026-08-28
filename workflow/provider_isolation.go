@@ -7,11 +7,6 @@ import (
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
 
-type IsolatedProvider interface {
-	Provider
-	IsolationEvidence() contractsv1.ProviderIsolationEvidence
-}
-
 func (e *Engine) RequireProviderIsolation(profile contractsv1.ProviderIsolationProfile) *Engine {
 	e.requiredIsolation = profile
 	return e
@@ -27,7 +22,7 @@ func (e *Engine) providerIsolation() (contractsv1.ProviderIsolationEvidence, err
 		Driver:              contractsv1.ProviderIsolationEvidenceDriverInProcess,
 		DeclaredEnvironment: []string{},
 	}
-	if isolated, ok := e.provider.(IsolatedProvider); ok {
+	if isolated, ok := e.provider.(*SubprocessProvider); ok {
 		evidence = isolated.IsolationEvidence()
 	} else {
 		var err error
