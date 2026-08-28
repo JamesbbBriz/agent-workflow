@@ -31,7 +31,8 @@ func TestApplyApprovalProjectsOnlyCanonicalExactDecision(t *testing.T) {
 			result = receipt
 		}
 	}
-	brief := contractsv1.ApprovalBrief{Kind: contractsv1.ApprovalBriefKindApprovalBrief, SchemaVersion: 1, Title: "Approve exact action?", Evidence: []contractsv1.ArtifactRef{{Id: result.Id, Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "result", SchemaVersion: 1, Sha256: result.ReceiptHash, MediaType: "application/json"}}, Options: []contractsv1.ApprovalOption{{Id: "approve", Label: "Approve", Decision: contractsv1.ApprovalOptionDecisionApprove, Tradeoffs: []string{"Changes the target"}}, {Id: "reject", Label: "Reject", Decision: contractsv1.ApprovalOptionDecisionReject, Tradeoffs: []string{"No change"}}}, RecommendedOptionId: "approve", Recommendation: "Approve the reviewed action.", Risks: []string{"Public impact"}, Action: action}
+	policy := contractsv1.Identifier("human-confirm")
+	brief := contractsv1.ApprovalBrief{Kind: contractsv1.ApprovalBriefKindApprovalBrief, SchemaVersion: 1, Title: "Approve exact action?", Evidence: []contractsv1.ArtifactRef{{Id: result.Id, Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "result", SchemaVersion: 1, Sha256: result.ReceiptHash, MediaType: "application/json"}}, Options: []contractsv1.ApprovalOption{{Id: "approve", Label: "Approve", Decision: contractsv1.ApprovalOptionDecisionApprove, Tradeoffs: []string{"Changes the target"}}, {Id: "reject", Label: "Reject", Decision: contractsv1.ApprovalOptionDecisionReject, Tradeoffs: []string{"No change"}}}, RecommendedOptionId: "approve", Recommendation: "Approve the reviewed action.", Risks: []string{"Public impact"}, Action: action, ApprovalPolicy: &policy}
 	registry, _ := workflow.NewRegistry(workflow.NewIntentProducer())
 	ledger := workflow.NewMemoryLedger()
 	for _, receipt := range source.Receipts {
@@ -39,7 +40,8 @@ func TestApplyApprovalProjectsOnlyCanonicalExactDecision(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	core := workflow.NewAuthoringCore(registry, workflow.ExecutorCatalog{}, workflow.CapabilityCatalog{}, workflow.OutputCatalog{"recommendation@1": func(any) error { return nil }}, nil, nil, ledger)
+	core := workflow.NewAuthoringCore(registry, workflow.ExecutorCatalog{}, workflow.CapabilityCatalog{}, workflow.OutputCatalog{"recommendation@1": func(any) error { return nil }}, nil, []string{"human-confirm"}, ledger).
+		WithApprovalAuthorities(workflow.ApprovalAuthorityCatalog{"human-confirm": []string{"reviewer@example.com"}})
 	preview, err := core.PreviewApproval(brief, "reviewer@example.com", source.AggregateId)
 	if err != nil {
 		t.Fatal(err)

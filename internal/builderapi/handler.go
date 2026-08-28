@@ -17,6 +17,7 @@ import (
 )
 
 const maxRequestBytes = 2 << 20
+const localApprovalActor = "local-operator"
 
 type Handler struct {
 	core   *workflow.AuthoringCore
@@ -150,7 +151,6 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals/preview":
 		var request struct {
-			Actor             string                    `json:"actor"`
 			Brief             contractsv1.ApprovalBrief `json:"brief"`
 			SourceAggregateID string                    `json:"source_aggregate_id"`
 		}
@@ -158,12 +158,11 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, err)
 			return
 		}
-		preview, err := h.core.PreviewApproval(request.Brief, request.Actor, request.SourceAggregateID)
+		preview, err := h.core.PreviewApproval(request.Brief, localApprovalActor, request.SourceAggregateID)
 		h.write(w, preview, err)
 		return
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals/confirm":
 		var request struct {
-			Actor    string                      `json:"actor"`
 			OptionID string                      `json:"option_id"`
 			Preview  contractsv1.ApprovalPreview `json:"preview"`
 		}
@@ -178,7 +177,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if replay, err := h.core.ApprovalReplay(string(request.Preview.Brief.Id)); err == nil {
-			receipt, err := h.core.ConfirmApproval(request.Preview, request.Actor, request.OptionID, h.now().UTC())
+			receipt, err := h.core.ConfirmApproval(request.Preview, localApprovalActor, request.OptionID, h.now().UTC())
 			if err != nil {
 				h.write(w, nil, err)
 				return
@@ -190,7 +189,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 			h.write(w, nil, err)
 			return
 		}
-		receipt, err := h.core.ConfirmApproval(request.Preview, request.Actor, request.OptionID, h.now().UTC())
+		receipt, err := h.core.ConfirmApproval(request.Preview, localApprovalActor, request.OptionID, h.now().UTC())
 		if err != nil {
 			h.write(w, nil, err)
 			return

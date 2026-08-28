@@ -113,6 +113,13 @@ func recoverTornTail(path string) error {
 }
 
 func (l *FileLedger) Append(receipt contractsv1.Receipt) error {
+	return l.AppendBatch([]contractsv1.Receipt{receipt})
+}
+
+func (l *FileLedger) AppendBatch(receipts []contractsv1.Receipt) error {
+	if len(receipts) == 0 {
+		return nil
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	lock, err := lockLedger(l.path, true)
@@ -124,37 +131,74 @@ func (l *FileLedger) Append(receipt contractsv1.Receipt) error {
 	if err != nil {
 		return err
 	}
-	if receipt.AggregateVersion < 1 {
-		return errors.New("receipt aggregate version must be positive")
-	}
-	current := all[receipt.AggregateId]
-	index := receipt.AggregateVersion - 1
-	if index < len(current) {
-		if current[index].ReceiptHash != receipt.ReceiptHash {
-			return fmt.Errorf("receipt version %d conflicts with canonical history", receipt.AggregateVersion)
+	missing := make([]contractsv1.Receipt, 0, len(receipts))
+	for _, receipt := range receipts {
+		if receipt.AggregateVersion < 1 {
+			return errors.New("receipt aggregate version must be positive")
 		}
+		current := all[receipt.AggregateId]
+		index := receipt.AggregateVersion - 1
+		if index < len(current) {
+			if current[index].ReceiptHash != receipt.ReceiptHash {
+				return fmt.Errorf("receipt version %d conflicts with canonical history", receipt.AggregateVersion)
+			}
+			continue
+		}
+		if err := validateNextReceipt(current, receipt); err != nil {
+			return err
+		}
+		all[receipt.AggregateId] = append(current, receipt)
+		missing = append(missing, receipt)
+	}
+	if len(missing) == 0 {
 		return nil
 	}
-	if err := validateNextReceipt(current, receipt); err != nil {
-		return err
-	}
-	body, err := json.Marshal(receipt)
+	body, err := os.ReadFile(l.path)
 	if err != nil {
-		return fmt.Errorf("encode receipt: %w", err)
+		return fmt.Errorf("read ledger for atomic append: %w", err)
 	}
-	file, err := os.OpenFile(l.path, os.O_APPEND|os.O_WRONLY, 0o600)
+	for _, receipt := range missing {
+		record, err := json.Marshal(receipt)
+		if err != nil {
+			return fmt.Errorf("encode receipt: %w", err)
+		}
+		body = append(body, record...)
+		body = append(body, '\n')
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(l.path), ".ledger-*.tmp")
 	if err != nil {
-		return fmt.Errorf("append receipt: %w", err)
+		return fmt.Errorf("create atomic ledger: %w", err)
 	}
-	defer file.Close()
-	record := append(body, '\n')
-	if written, err := file.Write(record); err != nil {
-		return fmt.Errorf("write receipt: %w", err)
-	} else if written != len(record) {
-		return errors.New("write receipt: short write")
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return fmt.Errorf("secure atomic ledger: %w", err)
 	}
-	if err := file.Sync(); err != nil {
-		return fmt.Errorf("sync receipt: %w", err)
+	if written, err := temporary.Write(body); err != nil || written != len(body) {
+		temporary.Close()
+		if err == nil {
+			err = errors.New("short write")
+		}
+		return fmt.Errorf("write atomic ledger: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return fmt.Errorf("sync atomic ledger: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close atomic ledger: %w", err)
+	}
+	if err := os.Rename(temporaryPath, l.path); err != nil {
+		return fmt.Errorf("commit atomic ledger: %w", err)
+	}
+	directory, err := os.Open(filepath.Dir(l.path))
+	if err != nil {
+		return fmt.Errorf("open ledger directory: %w", err)
+	}
+	defer directory.Close()
+	if err := directory.Sync(); err != nil {
+		return fmt.Errorf("sync ledger directory: %w", err)
 	}
 	return nil
 }

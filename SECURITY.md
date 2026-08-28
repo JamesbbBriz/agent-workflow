@@ -20,4 +20,6 @@ Report vulnerabilities privately through GitHub Security Advisories for this rep
 
 Experimental WebMCP is disabled by default. When enabled for the loopback Builder, it accepts one exact page origin, a random process-lifetime bearer session, actor-bound request hashes, and a bounded per-subject request rate. Its mode-0600 audit log records identities and hashes, never request bodies or credentials. This loopback session is not a substitute for hosted user authentication.
 
+The reference Builder trusts processes running as the same OS user: such a process can already replace the binary or canonical ledger. Loopback approval is therefore a single-user development boundary, not protection from same-user malware. Deployments with untrusted local processes or remote users must put an authenticated identity adapter in front of the Core and bind its verified subject to approval policy.
+
 The public schema describes authority classes, but a label is not enforcement. Implementations must classify capabilities from actual side effects and verify that the execution adapter provides no broader authority.

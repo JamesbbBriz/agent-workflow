@@ -63,8 +63,16 @@ type AgentWorkflowContractCatalog struct {
 	// ApprovalBrief corresponds to the JSON schema field "approval_brief".
 	ApprovalBrief *ApprovalBrief `json:"approval_brief,omitempty,omitzero"`
 
+	// ApprovalDecidedEventPayload corresponds to the JSON schema field
+	// "approval_decided_event_payload".
+	ApprovalDecidedEventPayload *ApprovalDecidedEventPayload `json:"approval_decided_event_payload,omitempty,omitzero"`
+
 	// ApprovalPreview corresponds to the JSON schema field "approval_preview".
 	ApprovalPreview *ApprovalPreview `json:"approval_preview,omitempty,omitzero"`
+
+	// ApprovalRequestedEventPayload corresponds to the JSON schema field
+	// "approval_requested_event_payload".
+	ApprovalRequestedEventPayload *ApprovalRequestedEventPayload `json:"approval_requested_event_payload,omitempty,omitzero"`
 
 	// AttemptReservedEventPayload corresponds to the JSON schema field
 	// "attempt_reserved_event_payload".
@@ -112,8 +120,20 @@ type AgentWorkflowContractCatalog struct {
 	// ContextPackEdition corresponds to the JSON schema field "context_pack_edition".
 	ContextPackEdition *ContextPackEdition `json:"context_pack_edition,omitempty,omitzero"`
 
+	// ContextTransitionEventPayload corresponds to the JSON schema field
+	// "context_transition_event_payload".
+	ContextTransitionEventPayload *ContextTransitionEventPayload `json:"context_transition_event_payload,omitempty,omitzero"`
+
+	// CoreCompletedEventPayload corresponds to the JSON schema field
+	// "core_completed_event_payload".
+	CoreCompletedEventPayload *CoreCompletedEventPayload `json:"core_completed_event_payload,omitempty,omitzero"`
+
 	// JobDefinition corresponds to the JSON schema field "job_definition".
 	JobDefinition *JobDefinition `json:"job_definition,omitempty,omitzero"`
+
+	// NeedsContextEventPayload corresponds to the JSON schema field
+	// "needs_context_event_payload".
+	NeedsContextEventPayload *NeedsContextEventPayload `json:"needs_context_event_payload,omitempty,omitzero"`
 
 	// NodeCompletedEventPayload corresponds to the JSON schema field
 	// "node_completed_event_payload".
@@ -124,6 +144,14 @@ type AgentWorkflowContractCatalog struct {
 
 	// ReplayBundle corresponds to the JSON schema field "replay_bundle".
 	ReplayBundle *ReplayBundle `json:"replay_bundle,omitempty,omitzero"`
+
+	// WaitResumedEventPayload corresponds to the JSON schema field
+	// "wait_resumed_event_payload".
+	WaitResumedEventPayload *WaitResumedEventPayload `json:"wait_resumed_event_payload,omitempty,omitzero"`
+
+	// WaitStartedEventPayload corresponds to the JSON schema field
+	// "wait_started_event_payload".
+	WaitStartedEventPayload *WaitStartedEventPayload `json:"wait_started_event_payload,omitempty,omitzero"`
 
 	// WorkflowAdmission corresponds to the JSON schema field "workflow_admission".
 	WorkflowAdmission *WorkflowAdmission `json:"workflow_admission,omitempty,omitzero"`
@@ -142,6 +170,9 @@ type AgentWorkflowContractCatalog struct {
 type ApprovalBrief struct {
 	// Action corresponds to the JSON schema field "action".
 	Action ActionArtifact `json:"action"`
+
+	// ApprovalPolicy corresponds to the JSON schema field "approval_policy".
+	ApprovalPolicy *Identifier `json:"approval_policy,omitempty,omitzero"`
 
 	// Evidence corresponds to the JSON schema field "evidence".
 	Evidence []ArtifactRef `json:"evidence"`
@@ -178,6 +209,33 @@ const ApprovalBriefKindApprovalBrief ApprovalBriefKind = "approval_brief"
 
 type ApprovalBriefSchemaVersion int
 
+type ApprovalDecidedEventPayload struct {
+	// ApprovalId corresponds to the JSON schema field "approval_id".
+	ApprovalId Identifier `json:"approval_id"`
+
+	// ApprovalReceiptHash corresponds to the JSON schema field
+	// "approval_receipt_hash".
+	ApprovalReceiptHash SHA256 `json:"approval_receipt_hash"`
+
+	// Artifact corresponds to the JSON schema field "artifact".
+	Artifact ActionArtifact `json:"artifact"`
+
+	// Decision corresponds to the JSON schema field "decision".
+	Decision ApprovalDecidedEventPayloadDecision `json:"decision"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
+}
+
+type ApprovalDecidedEventPayloadDecision string
+
+const ApprovalDecidedEventPayloadDecisionApprove ApprovalDecidedEventPayloadDecision = "approve"
+const ApprovalDecidedEventPayloadDecisionReject ApprovalDecidedEventPayloadDecision = "reject"
+const ApprovalDecidedEventPayloadDecisionRevise ApprovalDecidedEventPayloadDecision = "revise"
+
 type ApprovalOption struct {
 	// Decision corresponds to the JSON schema field "decision".
 	Decision ApprovalOptionDecision `json:"decision"`
@@ -196,6 +254,7 @@ type ApprovalOptionDecision string
 
 const ApprovalOptionDecisionApprove ApprovalOptionDecision = "approve"
 const ApprovalOptionDecisionReject ApprovalOptionDecision = "reject"
+const ApprovalOptionDecisionRevise ApprovalOptionDecision = "revise"
 
 type ApprovalPreview struct {
 	// Actor corresponds to the JSON schema field "actor".
@@ -212,6 +271,9 @@ type ApprovalPreview struct {
 
 	// CommitToken corresponds to the JSON schema field "commit_token".
 	CommitToken SHA256 `json:"commit_token"`
+
+	// ExpiresAt corresponds to the JSON schema field "expires_at".
+	ExpiresAt *time.Time `json:"expires_at,omitempty,omitzero"`
 
 	// Kind corresponds to the JSON schema field "kind".
 	Kind ApprovalPreviewKind `json:"kind"`
@@ -231,6 +293,26 @@ type ApprovalPreviewKind string
 const ApprovalPreviewKindApprovalPreview ApprovalPreviewKind = "approval_preview"
 
 type ApprovalPreviewSchemaVersion int
+
+type ApprovalRequestedEventPayload struct {
+	// ActionHash corresponds to the JSON schema field "action_hash".
+	ActionHash SHA256 `json:"action_hash"`
+
+	// ApprovalId corresponds to the JSON schema field "approval_id".
+	ApprovalId Identifier `json:"approval_id"`
+
+	// ApprovalPolicy corresponds to the JSON schema field "approval_policy".
+	ApprovalPolicy *Identifier `json:"approval_policy,omitempty,omitzero"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// SourceReplayHash corresponds to the JSON schema field "source_replay_hash".
+	SourceReplayHash SHA256 `json:"source_replay_hash"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
+}
 
 type ArtifactRef struct {
 	// ArtifactType corresponds to the JSON schema field "artifact_type".
@@ -512,17 +594,29 @@ type CampaignExecutionUsage struct {
 }
 
 type CampaignNodeExecution struct {
+	// ApprovalId corresponds to the JSON schema field "approval_id".
+	ApprovalId *Identifier `json:"approval_id,omitempty,omitzero"`
+
 	// BlockerCode corresponds to the JSON schema field "blocker_code".
 	BlockerCode *Identifier `json:"blocker_code,omitempty,omitzero"`
 
+	// BlockerFingerprint corresponds to the JSON schema field "blocker_fingerprint".
+	BlockerFingerprint *SHA256 `json:"blocker_fingerprint,omitempty,omitzero"`
+
 	// CompletedAt corresponds to the JSON schema field "completed_at".
 	CompletedAt *time.Time `json:"completed_at,omitempty,omitzero"`
+
+	// ContextBundleHash corresponds to the JSON schema field "context_bundle_hash".
+	ContextBundleHash *SHA256 `json:"context_bundle_hash,omitempty,omitzero"`
 
 	// NodeId corresponds to the JSON schema field "node_id".
 	NodeId Identifier `json:"node_id"`
 
 	// ResultReplayHash corresponds to the JSON schema field "result_replay_hash".
 	ResultReplayHash *SHA256 `json:"result_replay_hash,omitempty,omitzero"`
+
+	// Signal corresponds to the JSON schema field "signal".
+	Signal *Identifier `json:"signal,omitempty,omitzero"`
 
 	// StartedAt corresponds to the JSON schema field "started_at".
 	StartedAt *time.Time `json:"started_at,omitempty,omitzero"`
@@ -533,18 +627,24 @@ type CampaignNodeExecution struct {
 	// Usage corresponds to the JSON schema field "usage".
 	Usage CampaignExecutionUsage `json:"usage"`
 
+	// WakeAt corresponds to the JSON schema field "wake_at".
+	WakeAt *time.Time `json:"wake_at,omitempty,omitzero"`
+
 	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
 	WorkflowRef WorkflowRef `json:"workflow_ref"`
 }
 
 type CampaignNodeExecutionStatus string
 
+const CampaignNodeExecutionStatusAwaitingApproval CampaignNodeExecutionStatus = "awaiting_approval"
 const CampaignNodeExecutionStatusBlocked CampaignNodeExecutionStatus = "blocked"
 const CampaignNodeExecutionStatusBudgetExhausted CampaignNodeExecutionStatus = "budget_exhausted"
 const CampaignNodeExecutionStatusCompleted CampaignNodeExecutionStatus = "completed"
 const CampaignNodeExecutionStatusCompletedNoAction CampaignNodeExecutionStatus = "completed_no_action"
+const CampaignNodeExecutionStatusNeedsContext CampaignNodeExecutionStatus = "needs_context"
 const CampaignNodeExecutionStatusPending CampaignNodeExecutionStatus = "pending"
 const CampaignNodeExecutionStatusRunning CampaignNodeExecutionStatus = "running"
+const CampaignNodeExecutionStatusWaiting CampaignNodeExecutionStatus = "waiting"
 
 type CampaignTerminalEventPayload struct {
 	// State corresponds to the JSON schema field "state".
@@ -713,16 +813,24 @@ type CanvasReceiptLinkReceiptType string
 
 const CanvasReceiptLinkReceiptTypeAdmission CanvasReceiptLinkReceiptType = "admission"
 const CanvasReceiptLinkReceiptTypeApproval CanvasReceiptLinkReceiptType = "approval"
+const CanvasReceiptLinkReceiptTypeApprovalDecided CanvasReceiptLinkReceiptType = "approval_decided"
+const CanvasReceiptLinkReceiptTypeApprovalRequested CanvasReceiptLinkReceiptType = "approval_requested"
 const CanvasReceiptLinkReceiptTypeAttemptReserved CanvasReceiptLinkReceiptType = "attempt_reserved"
 const CanvasReceiptLinkReceiptTypeBudgetExhausted CanvasReceiptLinkReceiptType = "budget_exhausted"
 const CanvasReceiptLinkReceiptTypeCampaignAdmission CanvasReceiptLinkReceiptType = "campaign_admission"
 const CanvasReceiptLinkReceiptTypeCompile CanvasReceiptLinkReceiptType = "compile"
+const CanvasReceiptLinkReceiptTypeContextAvailable CanvasReceiptLinkReceiptType = "context_available"
+const CanvasReceiptLinkReceiptTypeContextBound CanvasReceiptLinkReceiptType = "context_bound"
+const CanvasReceiptLinkReceiptTypeCoreCompleted CanvasReceiptLinkReceiptType = "core_completed"
 const CanvasReceiptLinkReceiptTypeInvocation CanvasReceiptLinkReceiptType = "invocation"
+const CanvasReceiptLinkReceiptTypeNeedsContext CanvasReceiptLinkReceiptType = "needs_context"
 const CanvasReceiptLinkReceiptTypeNodeCompleted CanvasReceiptLinkReceiptType = "node_completed"
 const CanvasReceiptLinkReceiptTypePackEdition CanvasReceiptLinkReceiptType = "pack_edition"
 const CanvasReceiptLinkReceiptTypeProviderExecution CanvasReceiptLinkReceiptType = "provider_execution"
 const CanvasReceiptLinkReceiptTypeResult CanvasReceiptLinkReceiptType = "result"
 const CanvasReceiptLinkReceiptTypeTerminal CanvasReceiptLinkReceiptType = "terminal"
+const CanvasReceiptLinkReceiptTypeWaitResumed CanvasReceiptLinkReceiptType = "wait_resumed"
+const CanvasReceiptLinkReceiptTypeWaitStarted CanvasReceiptLinkReceiptType = "wait_started"
 
 type CanvasSnapshot struct {
 	// AdmissionReplays corresponds to the JSON schema field "admission_replays".
@@ -1003,6 +1111,43 @@ type ContextRequirement struct {
 	SubjectKey *string `json:"subject_key,omitempty,omitzero"`
 }
 
+type ContextTransitionEventPayload struct {
+	// Bundle corresponds to the JSON schema field "bundle".
+	Bundle ContextBundle `json:"bundle"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// Packs corresponds to the JSON schema field "packs".
+	Packs []ContextPackEdition `json:"packs"`
+
+	// PreviousBlockerFingerprint corresponds to the JSON schema field
+	// "previous_blocker_fingerprint".
+	PreviousBlockerFingerprint *SHA256 `json:"previous_blocker_fingerprint,omitempty,omitzero"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
+}
+
+type CoreCompletedEventPayload struct {
+	// CompletedAt corresponds to the JSON schema field "completed_at".
+	CompletedAt time.Time `json:"completed_at"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// Status corresponds to the JSON schema field "status".
+	Status CoreCompletedEventPayloadStatus `json:"status"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
+}
+
+type CoreCompletedEventPayloadStatus string
+
+const CoreCompletedEventPayloadStatusCompleted CoreCompletedEventPayloadStatus = "completed"
+const CoreCompletedEventPayloadStatusCompletedNoAction CoreCompletedEventPayloadStatus = "completed_no_action"
+
 type EvidenceFrontier struct {
 	// Cutoff corresponds to the JSON schema field "cutoff".
 	Cutoff time.Time `json:"cutoff"`
@@ -1105,6 +1250,30 @@ const JobDefinitionKindJobDefinition JobDefinitionKind = "job_definition"
 
 type JobDefinitionSchemaVersion int
 
+type NeedsContextEventPayload struct {
+	// BlockerFingerprint corresponds to the JSON schema field "blocker_fingerprint".
+	BlockerFingerprint SHA256 `json:"blocker_fingerprint"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// Reasons corresponds to the JSON schema field "reasons".
+	Reasons NeedsContextEventPayloadReasons `json:"reasons"`
+
+	// Requirements corresponds to the JSON schema field "requirements".
+	Requirements NonEmptyStrings `json:"requirements"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
+}
+
+type NeedsContextEventPayloadReasons map[string]NeedsContextEventPayloadReasonsValue
+
+type NeedsContextEventPayloadReasonsValue string
+
+const NeedsContextEventPayloadReasonsValueUnavailable NeedsContextEventPayloadReasonsValue = "unavailable"
+const NeedsContextEventPayloadReasonsValueUnusable NeedsContextEventPayloadReasonsValue = "unusable"
+
 type NodeCompletedEventPayload struct {
 	// CompletedAt corresponds to the JSON schema field "completed_at".
 	CompletedAt time.Time `json:"completed_at"`
@@ -1166,6 +1335,15 @@ type NodeDefinition struct {
 
 	// OutputSlots corresponds to the JSON schema field "output_slots".
 	OutputSlots []Slot `json:"output_slots"`
+
+	// WaitDelaySeconds corresponds to the JSON schema field "wait_delay_seconds".
+	WaitDelaySeconds *int `json:"wait_delay_seconds,omitempty,omitzero"`
+
+	// WaitMode corresponds to the JSON schema field "wait_mode".
+	WaitMode *NodeDefinitionWaitMode `json:"wait_mode,omitempty,omitzero"`
+
+	// WaitSignal corresponds to the JSON schema field "wait_signal".
+	WaitSignal *Identifier `json:"wait_signal,omitempty,omitzero"`
 }
 
 type NodeDefinitionKind string
@@ -1175,6 +1353,11 @@ const NodeDefinitionKindApproval NodeDefinitionKind = "approval"
 const NodeDefinitionKindDeterministic NodeDefinitionKind = "deterministic"
 const NodeDefinitionKindTerminal NodeDefinitionKind = "terminal"
 const NodeDefinitionKindWait NodeDefinitionKind = "wait"
+
+type NodeDefinitionWaitMode string
+
+const NodeDefinitionWaitModeSignal NodeDefinitionWaitMode = "signal"
+const NodeDefinitionWaitModeTime NodeDefinitionWaitMode = "time"
 
 type NonEmptyStrings []string
 
@@ -1230,16 +1413,24 @@ type ReceiptReceiptType string
 
 const ReceiptReceiptTypeAdmission ReceiptReceiptType = "admission"
 const ReceiptReceiptTypeApproval ReceiptReceiptType = "approval"
+const ReceiptReceiptTypeApprovalDecided ReceiptReceiptType = "approval_decided"
+const ReceiptReceiptTypeApprovalRequested ReceiptReceiptType = "approval_requested"
 const ReceiptReceiptTypeAttemptReserved ReceiptReceiptType = "attempt_reserved"
 const ReceiptReceiptTypeBudgetExhausted ReceiptReceiptType = "budget_exhausted"
 const ReceiptReceiptTypeCampaignAdmission ReceiptReceiptType = "campaign_admission"
 const ReceiptReceiptTypeCompile ReceiptReceiptType = "compile"
+const ReceiptReceiptTypeContextAvailable ReceiptReceiptType = "context_available"
+const ReceiptReceiptTypeContextBound ReceiptReceiptType = "context_bound"
+const ReceiptReceiptTypeCoreCompleted ReceiptReceiptType = "core_completed"
 const ReceiptReceiptTypeInvocation ReceiptReceiptType = "invocation"
+const ReceiptReceiptTypeNeedsContext ReceiptReceiptType = "needs_context"
 const ReceiptReceiptTypeNodeCompleted ReceiptReceiptType = "node_completed"
 const ReceiptReceiptTypePackEdition ReceiptReceiptType = "pack_edition"
 const ReceiptReceiptTypeProviderExecution ReceiptReceiptType = "provider_execution"
 const ReceiptReceiptTypeResult ReceiptReceiptType = "result"
 const ReceiptReceiptTypeTerminal ReceiptReceiptType = "terminal"
+const ReceiptReceiptTypeWaitResumed ReceiptReceiptType = "wait_resumed"
+const ReceiptReceiptTypeWaitStarted ReceiptReceiptType = "wait_started"
 
 type ReceiptSchemaVersion int
 
@@ -1316,6 +1507,48 @@ const SlotArtifactKindActionArtifact SlotArtifactKind = "action_artifact"
 const SlotArtifactKindContextPack SlotArtifactKind = "context_pack"
 
 type Strings []string
+
+type WaitResumedEventPayload struct {
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// ResumedAt corresponds to the JSON schema field "resumed_at".
+	ResumedAt time.Time `json:"resumed_at"`
+
+	// Signal corresponds to the JSON schema field "signal".
+	Signal *Identifier `json:"signal,omitempty,omitzero"`
+
+	// SignalHash corresponds to the JSON schema field "signal_hash".
+	SignalHash *SHA256 `json:"signal_hash,omitempty,omitzero"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
+}
+
+type WaitStartedEventPayload struct {
+	// Mode corresponds to the JSON schema field "mode".
+	Mode WaitStartedEventPayloadMode `json:"mode"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// Signal corresponds to the JSON schema field "signal".
+	Signal *Identifier `json:"signal,omitempty,omitzero"`
+
+	// StartedAt corresponds to the JSON schema field "started_at".
+	StartedAt time.Time `json:"started_at"`
+
+	// WakeAt corresponds to the JSON schema field "wake_at".
+	WakeAt *time.Time `json:"wake_at,omitempty,omitzero"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
+}
+
+type WaitStartedEventPayloadMode string
+
+const WaitStartedEventPayloadModeSignal WaitStartedEventPayloadMode = "signal"
+const WaitStartedEventPayloadModeTime WaitStartedEventPayloadMode = "time"
 
 type WorkflowAdmission struct {
 	// Campaign corresponds to the JSON schema field "campaign".

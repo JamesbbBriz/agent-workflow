@@ -293,6 +293,9 @@ func validateWorkflowSemantics(workflow contractsv1.WorkflowDefinition) error {
 			return fmt.Errorf("node id %q is duplicated", id)
 		}
 		nodes[id] = node
+		if err := validateNodeKind(node); err != nil {
+			return fmt.Errorf("node %q: %w", id, err)
+		}
 		if err := uniqueRequirementIDs("node "+id+" context", node.Context); err != nil {
 			return err
 		}
@@ -318,6 +321,36 @@ func validateWorkflowSemantics(workflow contractsv1.WorkflowDefinition) error {
 		}
 	}
 	return validateAcyclic(nodes)
+}
+
+func validateNodeKind(node contractsv1.NodeDefinition) error {
+	if node.Kind == contractsv1.NodeDefinitionKindWait {
+		if node.WaitMode == nil {
+			return errors.New("wait node requires wait_mode")
+		}
+		switch *node.WaitMode {
+		case contractsv1.NodeDefinitionWaitModeTime:
+			if node.WaitDelaySeconds == nil || node.WaitSignal != nil {
+				return errors.New("time wait requires only wait_delay_seconds")
+			}
+		case contractsv1.NodeDefinitionWaitModeSignal:
+			if node.WaitSignal == nil || node.WaitDelaySeconds != nil {
+				return errors.New("signal wait requires only wait_signal")
+			}
+		}
+	} else if node.WaitMode != nil || node.WaitDelaySeconds != nil || node.WaitSignal != nil {
+		return errors.New("wait fields are only valid on wait nodes")
+	}
+	if node.Kind == contractsv1.NodeDefinitionKindApproval && node.ApprovalPolicy == nil {
+		return errors.New("approval node requires approval_policy")
+	}
+	if node.Kind != contractsv1.NodeDefinitionKindApproval && node.ApprovalPolicy != nil {
+		return errors.New("approval_policy is only valid on approval nodes")
+	}
+	if (node.Kind == contractsv1.NodeDefinitionKindDeterministic || node.Kind == contractsv1.NodeDefinitionKindTerminal) && len(node.OutputSlots) != 0 {
+		return errors.New("built-in deterministic and terminal nodes cannot declare outputs")
+	}
+	return nil
 }
 
 func uniqueRequirementIDs(label string, requirements []contractsv1.ContextRequirement) error {

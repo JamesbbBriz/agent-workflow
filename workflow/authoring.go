@@ -15,6 +15,7 @@ import (
 )
 
 type ExecutorCatalog map[string]contractsv1.NodeDefinitionKind
+type ApprovalAuthorityCatalog map[string][]string
 
 type AuthoringCore struct {
 	registry         *Registry
@@ -23,6 +24,7 @@ type AuthoringCore struct {
 	outputs          OutputCatalog
 	blockers         map[string]bool
 	approvalPolicies map[string]bool
+	approvalActors   map[string]map[string]bool
 	ledger           Ledger
 	sources          Ledger
 }
@@ -32,7 +34,7 @@ func NewAuthoringCore(registry *Registry, executors ExecutorCatalog, capabilitie
 }
 
 func NewAuthoringCoreWithSources(registry *Registry, executors ExecutorCatalog, capabilities CapabilityCatalog, outputs OutputCatalog, blockers, approvalPolicies []string, ledger, sources Ledger) *AuthoringCore {
-	core := &AuthoringCore{registry: registry, executors: ExecutorCatalog{}, capabilities: CapabilityCatalog{}, outputs: OutputCatalog{}, blockers: map[string]bool{}, approvalPolicies: map[string]bool{}, ledger: ledger, sources: sources}
+	core := &AuthoringCore{registry: registry, executors: ExecutorCatalog{}, capabilities: CapabilityCatalog{}, outputs: OutputCatalog{}, blockers: map[string]bool{}, approvalPolicies: map[string]bool{}, approvalActors: map[string]map[string]bool{}, ledger: ledger, sources: sources}
 	for ref, kind := range executors {
 		core.executors[ref] = kind
 	}
@@ -49,6 +51,24 @@ func NewAuthoringCoreWithSources(registry *Registry, executors ExecutorCatalog, 
 		core.approvalPolicies[policy] = true
 	}
 	return core
+}
+
+func (c *AuthoringCore) WithApprovalAuthorities(authorities ApprovalAuthorityCatalog) *AuthoringCore {
+	for policy, actors := range authorities {
+		if c.approvalActors[policy] == nil {
+			c.approvalActors[policy] = map[string]bool{}
+		}
+		for _, actor := range actors {
+			if actor = strings.TrimSpace(actor); actor != "" {
+				c.approvalActors[policy][actor] = true
+			}
+		}
+	}
+	return c
+}
+
+func approvalActorAllowed(authorities map[string]map[string]bool, policy *contractsv1.Identifier, actor string) bool {
+	return policy != nil && authorities[string(*policy)][strings.TrimSpace(actor)]
 }
 
 func (c *AuthoringCore) Catalog() (contractsv1.AuthoringCatalog, error) {
@@ -360,11 +380,17 @@ func (c *AuthoringCore) PreviewApproval(brief contractsv1.ApprovalBrief, actor, 
 		return contractsv1.ApprovalPreview{}, errors.New("approval id does not match the exact action")
 	}
 	brief.Id = canonicalID
+	if brief.ApprovalPolicy == nil || !c.approvalPolicies[string(*brief.ApprovalPolicy)] || !approvalActorAllowed(c.approvalActors, brief.ApprovalPolicy, actor) {
+		return contractsv1.ApprovalPreview{}, errors.New("approval policy is not registered")
+	}
 	if err := contract.ValidateDefinition("ApprovalBrief", brief); err != nil {
 		return contractsv1.ApprovalPreview{}, err
 	}
 	if brief.Action.ApprovalState != contractsv1.ActionArtifactApprovalStatePending {
 		return contractsv1.ApprovalPreview{}, errors.New("approval action must be pending")
+	}
+	if !nodeCompletedReplay(source) {
+		return contractsv1.ApprovalPreview{}, errors.New("approval source has not reached canonical node_completed terminal state")
 	}
 	material, err := MaterializeReplay(source, c.outputs)
 	if err != nil {
@@ -404,7 +430,9 @@ func (c *AuthoringCore) PreviewApproval(brief contractsv1.ApprovalBrief, actor, 
 	if err != nil {
 		return contractsv1.ApprovalPreview{}, err
 	}
-	preview := contractsv1.ApprovalPreview{Kind: contractsv1.ApprovalPreviewKindApprovalPreview, SchemaVersion: 1, Actor: actor, BaseRevision: base, SourceAggregateId: sourceAggregateID, Brief: brief, BriefHash: contractsv1.SHA256(briefHash)}
+	terminal, _ := receiptByType(source, contractsv1.ReceiptReceiptTypeTerminal)
+	expiresAt := terminal.OccurredAt.Add(30 * 24 * time.Hour).UTC()
+	preview := contractsv1.ApprovalPreview{Kind: contractsv1.ApprovalPreviewKindApprovalPreview, SchemaVersion: 1, Actor: actor, BaseRevision: base, SourceAggregateId: sourceAggregateID, Brief: brief, BriefHash: contractsv1.SHA256(briefHash), ExpiresAt: &expiresAt}
 	previewHash, err := Digest(preview)
 	if err != nil {
 		return contractsv1.ApprovalPreview{}, err
@@ -435,6 +463,17 @@ func (c *AuthoringCore) ConfirmApproval(preview contractsv1.ApprovalPreview, act
 			}
 		}
 	}
+	if preview.ExpiresAt != nil && occurredAt.After(*preview.ExpiresAt) {
+		return contractsv1.Receipt{}, errors.New("approval preview has expired")
+	}
+	source, err := c.sources.Replay(preview.SourceAggregateId)
+	if err != nil || !nodeCompletedReplay(source) {
+		return contractsv1.Receipt{}, errors.New("approval source is not canonical")
+	}
+	terminal, _ := receiptByType(source, contractsv1.ReceiptReceiptTypeTerminal)
+	if occurredAt.Before(terminal.OccurredAt) {
+		return contractsv1.Receipt{}, errors.New("approval predates its canonical source")
+	}
 	expected, err := c.PreviewApproval(preview.Brief, actor, preview.SourceAggregateId)
 	if err != nil || !reflect.DeepEqual(expected, preview) {
 		return contractsv1.Receipt{}, errors.New("approval preview is stale or altered")
@@ -462,7 +501,7 @@ func (c *AuthoringCore) ConfirmApproval(preview contractsv1.ApprovalPreview, act
 	if !selected {
 		return contractsv1.Receipt{}, errors.New("approval option is invalid")
 	}
-	receipt, err := sealActorReceipt(approvalAggregate(string(preview.Brief.Id)), 1, contractsv1.ReceiptReceiptTypeApproval, actor, occurredAt, nil, []contractsv1.SHA256{preview.BriefHash, preview.Brief.Action.ContentSha256}, []contractsv1.SHA256{preview.PreviewHash}, map[string]any{"brief": preview.Brief, "preview_hash": preview.PreviewHash, "selected_option_id": optionID})
+	receipt, err := sealActorReceipt(approvalAggregate(string(preview.Brief.Id)), 1, contractsv1.ReceiptReceiptTypeApproval, actor, occurredAt, nil, []contractsv1.SHA256{preview.BriefHash, preview.Brief.Action.ContentSha256}, []contractsv1.SHA256{preview.PreviewHash}, map[string]any{"brief": preview.Brief, "preview": preview, "preview_hash": preview.PreviewHash, "selected_option_id": optionID})
 	if err != nil {
 		return contractsv1.Receipt{}, err
 	}

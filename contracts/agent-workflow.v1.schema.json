@@ -118,6 +118,9 @@
         "output_slots": { "type": "array", "items": { "$ref": "#/$defs/Slot" } },
         "budget": { "$ref": "#/$defs/Budget" },
         "deadline_seconds": { "type": "integer", "minimum": 1, "maximum": 2592000 },
+        "wait_mode": { "enum": ["time", "signal"] },
+        "wait_delay_seconds": { "type": "integer", "minimum": 1, "maximum": 2592000 },
+        "wait_signal": { "$ref": "#/$defs/Identifier" },
         "approval_policy": { "$ref": "#/$defs/Identifier" },
         "blocker_codes": { "$ref": "#/$defs/Strings" }
       }
@@ -336,6 +339,92 @@
         "result_replay_hash": { "$ref": "#/$defs/SHA256" }
       }
     },
+    "ContextTransitionEventPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow_ref", "node_id", "bundle", "packs"],
+      "properties": {
+        "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "bundle": { "$ref": "#/$defs/ContextBundle" },
+        "packs": { "type": "array", "items": { "$ref": "#/$defs/ContextPackEdition" } },
+        "previous_blocker_fingerprint": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "NeedsContextEventPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow_ref", "node_id", "requirements", "reasons", "blocker_fingerprint"],
+      "properties": {
+        "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "requirements": { "$ref": "#/$defs/NonEmptyStrings" },
+        "reasons": { "type": "object", "minProperties": 1, "additionalProperties": { "enum": ["unavailable", "unusable"] } },
+        "blocker_fingerprint": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "ApprovalRequestedEventPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow_ref", "node_id", "approval_id", "source_replay_hash", "action_hash"],
+      "properties": {
+        "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "approval_id": { "$ref": "#/$defs/Identifier" },
+        "approval_policy": { "$ref": "#/$defs/Identifier" },
+        "source_replay_hash": { "$ref": "#/$defs/SHA256" },
+        "action_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "ApprovalDecidedEventPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow_ref", "node_id", "approval_id", "approval_receipt_hash", "decision", "artifact"],
+      "properties": {
+        "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "approval_id": { "$ref": "#/$defs/Identifier" },
+        "approval_receipt_hash": { "$ref": "#/$defs/SHA256" },
+        "decision": { "enum": ["approve", "reject", "revise"] },
+        "artifact": { "$ref": "#/$defs/ActionArtifact" }
+      }
+    },
+    "WaitStartedEventPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow_ref", "node_id", "mode", "started_at"],
+      "properties": {
+        "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "mode": { "enum": ["time", "signal"] },
+        "started_at": { "type": "string", "format": "date-time" },
+        "wake_at": { "type": "string", "format": "date-time" },
+        "signal": { "$ref": "#/$defs/Identifier" }
+      }
+    },
+    "WaitResumedEventPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow_ref", "node_id", "resumed_at"],
+      "properties": {
+        "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "resumed_at": { "type": "string", "format": "date-time" },
+        "signal": { "$ref": "#/$defs/Identifier" },
+        "signal_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "CoreCompletedEventPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow_ref", "node_id", "status", "completed_at"],
+      "properties": {
+        "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "status": { "enum": ["completed", "completed_no_action"] },
+        "completed_at": { "type": "string", "format": "date-time" }
+      }
+    },
     "CampaignTerminalEventPayload": {
       "type": "object",
       "additionalProperties": false,
@@ -350,7 +439,7 @@
         "kind": { "type": "string", "enum": ["receipt"] },
         "schema_version": { "type": "integer", "enum": [1, 2] },
         "id": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval", "terminal"] },
+        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal"] },
         "aggregate_id": { "type": "string", "minLength": 1, "maxLength": 160 },
         "aggregate_version": { "type": "integer", "minimum": 1 },
         "occurred_at": { "type": "string", "format": "date-time" },
@@ -367,9 +456,17 @@
           "then": {
             "oneOf": [
               { "properties": { "receipt_type": { "const": "campaign_admission" }, "payload": { "$ref": "#/$defs/CampaignAdmissionEventPayload" } }, "required": ["payload"] },
+              { "properties": { "receipt_type": { "const": "context_bound" }, "payload": { "$ref": "#/$defs/ContextTransitionEventPayload" } }, "required": ["payload"] },
+              { "properties": { "receipt_type": { "const": "needs_context" }, "payload": { "$ref": "#/$defs/NeedsContextEventPayload" } }, "required": ["payload"] },
+              { "properties": { "receipt_type": { "const": "context_available" }, "payload": { "$ref": "#/$defs/ContextTransitionEventPayload" } }, "required": ["payload"] },
               { "properties": { "receipt_type": { "const": "attempt_reserved" }, "payload": { "$ref": "#/$defs/AttemptReservedEventPayload" } }, "required": ["payload"] },
               { "properties": { "receipt_type": { "const": "node_completed" }, "payload": { "$ref": "#/$defs/NodeCompletedEventPayload" } }, "required": ["payload"] },
               { "properties": { "receipt_type": { "const": "budget_exhausted" }, "payload": { "$ref": "#/$defs/BudgetExhaustedEventPayload" } }, "required": ["payload"] },
+              { "properties": { "receipt_type": { "const": "approval_requested" }, "payload": { "$ref": "#/$defs/ApprovalRequestedEventPayload" } }, "required": ["payload"] },
+              { "properties": { "receipt_type": { "const": "approval_decided" }, "payload": { "$ref": "#/$defs/ApprovalDecidedEventPayload" } }, "required": ["payload"] },
+              { "properties": { "receipt_type": { "const": "wait_started" }, "payload": { "$ref": "#/$defs/WaitStartedEventPayload" } }, "required": ["payload"] },
+              { "properties": { "receipt_type": { "const": "wait_resumed" }, "payload": { "$ref": "#/$defs/WaitResumedEventPayload" } }, "required": ["payload"] },
+              { "properties": { "receipt_type": { "const": "core_completed" }, "payload": { "$ref": "#/$defs/CoreCompletedEventPayload" } }, "required": ["payload"] },
               { "properties": { "receipt_type": { "const": "terminal" }, "payload": { "$ref": "#/$defs/CampaignTerminalEventPayload" } }, "required": ["payload"] }
             ]
           }
@@ -407,12 +504,17 @@
       "properties": {
         "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
         "node_id": { "$ref": "#/$defs/Identifier" },
-        "status": { "enum": ["pending", "running", "completed", "completed_no_action", "blocked", "budget_exhausted"] },
+        "status": { "enum": ["pending", "needs_context", "running", "awaiting_approval", "waiting", "completed", "completed_no_action", "blocked", "budget_exhausted"] },
         "usage": { "$ref": "#/$defs/CampaignExecutionUsage" },
         "started_at": { "type": "string", "format": "date-time" },
         "completed_at": { "type": "string", "format": "date-time" },
         "result_replay_hash": { "$ref": "#/$defs/SHA256" },
-        "blocker_code": { "$ref": "#/$defs/Identifier" }
+        "blocker_code": { "$ref": "#/$defs/Identifier" },
+        "blocker_fingerprint": { "$ref": "#/$defs/SHA256" },
+        "context_bundle_hash": { "$ref": "#/$defs/SHA256" },
+        "approval_id": { "$ref": "#/$defs/Identifier" },
+        "wake_at": { "type": "string", "format": "date-time" },
+        "signal": { "$ref": "#/$defs/Identifier" }
       }
     },
     "CampaignExecutionState": {
@@ -590,7 +692,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/Identifier" },
         "label": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "decision": { "enum": ["approve", "reject"] },
+        "decision": { "enum": ["approve", "reject", "revise"] },
         "tradeoffs": { "$ref": "#/$defs/NonEmptyStrings" }
       }
     },
@@ -608,7 +710,8 @@
         "recommended_option_id": { "$ref": "#/$defs/Identifier" },
         "recommendation": { "type": "string", "minLength": 1, "maxLength": 1000 },
         "risks": { "$ref": "#/$defs/NonEmptyStrings" },
-        "action": { "$ref": "#/$defs/ActionArtifact" }
+        "action": { "$ref": "#/$defs/ActionArtifact" },
+        "approval_policy": { "$ref": "#/$defs/Identifier" }
       }
     },
     "ApprovalPreview": {
@@ -623,6 +726,7 @@
         "source_aggregate_id": { "type": "string", "minLength": 1, "maxLength": 200 },
         "brief": { "$ref": "#/$defs/ApprovalBrief" },
         "brief_hash": { "$ref": "#/$defs/SHA256" },
+        "expires_at": { "type": "string", "format": "date-time" },
         "preview_hash": { "$ref": "#/$defs/SHA256" },
         "commit_token": { "$ref": "#/$defs/SHA256" }
       }
@@ -639,7 +743,7 @@
       "required": ["id", "receipt_type", "receipt_hash", "occurred_at"],
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval", "terminal"] },
+        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal"] },
         "receipt_hash": { "$ref": "#/$defs/SHA256" },
         "occurred_at": { "type": "string", "format": "date-time" }
       }

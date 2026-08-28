@@ -28,6 +28,13 @@
     ,"attempt_reserved_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/AttemptReservedEventPayload" }
     ,"node_completed_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/NodeCompletedEventPayload" }
     ,"budget_exhausted_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/BudgetExhaustedEventPayload" }
+    ,"context_transition_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/ContextTransitionEventPayload" }
+    ,"needs_context_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/NeedsContextEventPayload" }
+    ,"approval_requested_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/ApprovalRequestedEventPayload" }
+    ,"approval_decided_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/ApprovalDecidedEventPayload" }
+    ,"wait_started_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/WaitStartedEventPayload" }
+    ,"wait_resumed_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/WaitResumedEventPayload" }
+    ,"core_completed_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/CoreCompletedEventPayload" }
     ,"campaign_terminal_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignTerminalEventPayload" }
   }
 }
