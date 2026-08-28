@@ -12,13 +12,7 @@ go run github.com/atombender/go-jsonschema@v0.24.1 \
   --output "$tmp_dir/contracts.go" \
   contracts/codegen.v1.schema.json
 
-./node_modules/.bin/quicktype \
-  --lang typescript \
-  --just-types \
-  --no-date-times \
-  --src contracts/codegen.v1.schema.json \
-  --src-lang schema \
-  --out "$tmp_dir/agent-workflow.v1.ts"
+sh scripts/generate-types.sh "$tmp_dir/agent-workflow.v1.ts"
 
 cmp "$tmp_dir/contracts.go" pkg/contractsv1/zz_generated.go
 cmp "$tmp_dir/agent-workflow.v1.ts" web/src/generated/agent-workflow.v1.ts

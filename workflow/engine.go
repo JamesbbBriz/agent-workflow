@@ -260,6 +260,12 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 			if terminalState(replay) == "budget_exhausted" {
 				return RunResult{}, err
 			}
+			if terminalState(replay) == "" {
+				if appendErr := e.finishRejectedInvocation(aggregateID, occurredAt, invocation, storedResult, replay); appendErr != nil {
+					return RunResult{}, appendErr
+				}
+				return RunResult{}, err
+			}
 			return RunResult{}, errors.New("accepted provider result exceeds its recorded budget")
 		}
 		if err := e.finishInvocation(aggregateID, occurredAt, invocation, storedResult, replay); err != nil {

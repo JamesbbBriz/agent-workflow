@@ -5,7 +5,7 @@
   "scripts": {
     "generate": "npm run generate:go && npm run generate:ts",
     "generate:go": "mkdir -p pkg/contractsv1 && go run github.com/atombender/go-jsonschema@v0.24.1 --package contractsv1 --struct-name-from-title --only-models --tags json --output pkg/contractsv1/zz_generated.go contracts/codegen.v1.schema.json",
-    "generate:ts": "mkdir -p web/src/generated && quicktype --lang typescript --just-types --no-date-times --src contracts/codegen.v1.schema.json --src-lang schema --out web/src/generated/agent-workflow.v1.ts",
+    "generate:ts": "mkdir -p web/src/generated && sh scripts/generate-types.sh web/src/generated/agent-workflow.v1.ts",
     "fixture:canvas": "sh scripts/generate-canvas-fixture.sh",
     "check:generated": "sh scripts/check-generated.sh",
     "check:types": "tsc --noEmit -p web/tsconfig.json",

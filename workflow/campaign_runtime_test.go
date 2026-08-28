@@ -137,12 +137,17 @@ func TestCampaignRuntimeRecordsOutputBudgetExhaustionBeforeAcceptance(t *testing
 	job := jobFixture(scope)
 	campaign := campaignFixture(scope, cutoff)
 	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@1"}
-	ledger := workflow.NewMemoryLedger()
-	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
+	canonical := workflow.NewMemoryLedger()
+	admit(t, canonical, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
+	ledger := &failOnceLedger{Ledger: canonical, failType: contractsv1.ReceiptReceiptTypeTerminal}
 	provider := &dagProvider{results: map[string]workflow.ProviderResult{}, artifactsPerNode: 2}
 	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger)
 
-	receipt, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}})
+	request := workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}}
+	if _, err := engine.Drive(context.Background(), request); err == nil {
+		t.Fatal("injected rejected-result terminal failure was ignored")
+	}
+	receipt, err := engine.Drive(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
