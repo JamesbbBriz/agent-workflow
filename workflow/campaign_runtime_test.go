@@ -29,7 +29,8 @@ func TestCampaignRuntimeDerivesDependenciesAndCompletesTheDAG(t *testing.T) {
 	ledger := workflow.NewMemoryLedger()
 	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
 	provider := &dagProvider{results: map[string]workflow.ProviderResult{}}
-	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger)
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger).
+		WithApprovalAuthorities(workflow.ApprovalAuthorityCatalog{"human-confirm": []string{"human@example.com"}})
 
 	preview, err := engine.Preview(context.Background(), workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition})
 	if err != nil {
@@ -64,8 +65,10 @@ func TestCampaignRuntimeDerivesDependenciesAndCompletesTheDAG(t *testing.T) {
 			result = receipt
 		}
 	}
-	brief := contractsv1.ApprovalBrief{Kind: contractsv1.ApprovalBriefKindApprovalBrief, SchemaVersion: 1, Title: "Accept the reviewed result?", Evidence: []contractsv1.ArtifactRef{{Id: result.Id, Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "result", SchemaVersion: 1, Sha256: result.ReceiptHash, MediaType: "application/json"}}, Options: []contractsv1.ApprovalOption{{Id: "approve", Label: "Approve", Decision: contractsv1.ApprovalOptionDecisionApprove, Tradeoffs: []string{"Accepts the exact reviewed result"}}, {Id: "reject", Label: "Reject", Decision: contractsv1.ApprovalOptionDecisionReject, Tradeoffs: []string{"Leaves the result unapproved"}}}, RecommendedOptionId: "approve", Recommendation: "Approve the exact result.", Risks: []string{"Changes are separately capability-gated."}, Action: material.Artifacts[0]}
-	core := workflow.NewAuthoringCore(registry, workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent}, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), []string{"provider-timeout"}, []string{"human-confirm"}, ledger)
+	policy := contractsv1.Identifier("human-confirm")
+	brief := contractsv1.ApprovalBrief{Kind: contractsv1.ApprovalBriefKindApprovalBrief, SchemaVersion: 1, Title: "Accept the reviewed result?", Evidence: []contractsv1.ArtifactRef{{Id: result.Id, Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "result", SchemaVersion: 1, Sha256: result.ReceiptHash, MediaType: "application/json"}}, Options: []contractsv1.ApprovalOption{{Id: "approve", Label: "Approve", Decision: contractsv1.ApprovalOptionDecisionApprove, Tradeoffs: []string{"Accepts the exact reviewed result"}}, {Id: "reject", Label: "Reject", Decision: contractsv1.ApprovalOptionDecisionReject, Tradeoffs: []string{"Leaves the result unapproved"}}}, RecommendedOptionId: "approve", Recommendation: "Approve the exact result.", Risks: []string{"Changes are separately capability-gated."}, Action: material.Artifacts[0], ApprovalPolicy: &policy}
+	core := workflow.NewAuthoringCore(registry, workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent}, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), []string{"provider-timeout"}, []string{"human-confirm"}, ledger).
+		WithApprovalAuthorities(workflow.ApprovalAuthorityCatalog{"human-confirm": []string{"human@example.com"}})
 	approval, err := core.PreviewApproval(brief, "human@example.com", driven.NodeReplay.AggregateId)
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +101,8 @@ func TestCampaignRuntimeWaitsForExactHumanApprovalAndResumes(t *testing.T) {
 	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
 	provider := &dagProvider{results: map[string]workflow.ProviderResult{}}
 	outputs := dagOutputCatalog()
-	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputs, provider, ledger)
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputs, provider, ledger).
+		WithApprovalAuthorities(workflow.ApprovalAuthorityCatalog{"human-confirm": []string{"human@example.com"}})
 
 	waiting, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}, MaxTransitions: 10})
 	if err != nil {
@@ -119,7 +123,8 @@ func TestCampaignRuntimeWaitsForExactHumanApprovalAndResumes(t *testing.T) {
 	}
 	policy := contractsv1.Identifier("human-confirm")
 	brief := contractsv1.ApprovalBrief{Kind: contractsv1.ApprovalBriefKindApprovalBrief, SchemaVersion: 1, Title: "Accept the recommendation?", Evidence: []contractsv1.ArtifactRef{{Id: result.Id, Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "result", SchemaVersion: 1, Sha256: result.ReceiptHash, MediaType: "application/json"}}, Options: []contractsv1.ApprovalOption{{Id: "approve", Label: "Approve", Decision: contractsv1.ApprovalOptionDecisionApprove, Tradeoffs: []string{"Accept exact result"}}, {Id: "reject", Label: "Reject", Decision: contractsv1.ApprovalOptionDecisionReject, Tradeoffs: []string{"Do not proceed"}}, {Id: "revise", Label: "Revise", Decision: contractsv1.ApprovalOptionDecisionRevise, Tradeoffs: []string{"Request another revision"}}}, RecommendedOptionId: "approve", Recommendation: "Approve the exact result.", Risks: []string{"Human remains authoritative."}, Action: material.Artifacts[0], ApprovalPolicy: &policy}
-	core := workflow.NewAuthoringCore(registry, workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval}, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputs, []string{"provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger)
+	core := workflow.NewAuthoringCore(registry, workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval}, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputs, []string{"provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger).
+		WithApprovalAuthorities(workflow.ApprovalAuthorityCatalog{"human-confirm": []string{"human@example.com"}})
 	preview, err := core.PreviewApproval(brief, "human@example.com", waiting.NodeReplay.AggregateId)
 	if err != nil {
 		t.Fatal(err)

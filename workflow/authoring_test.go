@@ -139,7 +139,7 @@ func TestApprovalBindsBriefActorOptionAndStaleToken(t *testing.T) {
 		Evidence:            []contractsv1.ArtifactRef{{Id: resultReceipt.Id, Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "result", SchemaVersion: 1, Sha256: resultReceipt.ReceiptHash, MediaType: "application/json"}},
 		Options:             []contractsv1.ApprovalOption{{Id: "approve", Label: "Approve", Decision: contractsv1.ApprovalOptionDecisionApprove, Tradeoffs: []string{"Publishes the exact reviewed artifact"}}, {Id: "reject", Label: "Reject", Decision: contractsv1.ApprovalOptionDecisionReject, Tradeoffs: []string{"Leaves production unchanged"}}},
 		RecommendedOptionId: "approve", Recommendation: "Approve because the independent review passed.", Risks: []string{"The public page changes immediately"},
-		Action: action,
+		Action: action, ApprovalPolicy: identifierPointer("human-confirm"),
 	}
 	partialLedger := workflow.NewMemoryLedger()
 	for _, receipt := range source.Replay.Receipts[:len(source.Replay.Receipts)-1] {
@@ -149,6 +149,14 @@ func TestApprovalBindsBriefActorOptionAndStaleToken(t *testing.T) {
 	}
 	if _, err := authoringCoreWithLedger(t, partialLedger).PreviewApproval(brief, "human@example.com", source.Replay.AggregateId); err == nil || !strings.Contains(err.Error(), "node_completed") {
 		t.Fatalf("result-only partial Replay became approvable: %v", err)
+	}
+	withoutPolicy := brief
+	withoutPolicy.ApprovalPolicy = nil
+	if _, err := core.PreviewApproval(withoutPolicy, "human@example.com", source.Replay.AggregateId); err == nil {
+		t.Fatal("approval without a registered policy was accepted")
+	}
+	if _, err := core.PreviewApproval(brief, "other@example.com", source.Replay.AggregateId); err == nil {
+		t.Fatal("unauthorized actor received an approval token")
 	}
 	preview, err := core.PreviewApproval(brief, "human@example.com", source.Replay.AggregateId)
 	if err != nil {
@@ -175,6 +183,8 @@ func TestApprovalBindsBriefActorOptionAndStaleToken(t *testing.T) {
 		t.Fatal("untrusted approval source was accepted")
 	}
 }
+
+func identifierPointer(value contractsv1.Identifier) *contractsv1.Identifier { return &value }
 
 type approvalProvider struct {
 	invocation workflow.Invocation
@@ -254,7 +264,8 @@ func authoringCoreWithLedger(t *testing.T, ledger workflow.Ledger) *workflow.Aut
 		workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval},
 		workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead},
 		workflow.OutputCatalog{"recommendation@1": func(any) error { return nil }, "review-decision@1": func(any) error { return nil }},
-		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger)
+		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger).
+		WithApprovalAuthorities(workflow.ApprovalAuthorityCatalog{"human-confirm": []string{"human@example.com"}})
 }
 
 func authoringDefinition(t *testing.T) contractsv1.WorkflowDefinition {

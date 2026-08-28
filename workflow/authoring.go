@@ -15,6 +15,7 @@ import (
 )
 
 type ExecutorCatalog map[string]contractsv1.NodeDefinitionKind
+type ApprovalAuthorityCatalog map[string][]string
 
 type AuthoringCore struct {
 	registry         *Registry
@@ -23,6 +24,7 @@ type AuthoringCore struct {
 	outputs          OutputCatalog
 	blockers         map[string]bool
 	approvalPolicies map[string]bool
+	approvalActors   map[string]map[string]bool
 	ledger           Ledger
 	sources          Ledger
 }
@@ -32,7 +34,7 @@ func NewAuthoringCore(registry *Registry, executors ExecutorCatalog, capabilitie
 }
 
 func NewAuthoringCoreWithSources(registry *Registry, executors ExecutorCatalog, capabilities CapabilityCatalog, outputs OutputCatalog, blockers, approvalPolicies []string, ledger, sources Ledger) *AuthoringCore {
-	core := &AuthoringCore{registry: registry, executors: ExecutorCatalog{}, capabilities: CapabilityCatalog{}, outputs: OutputCatalog{}, blockers: map[string]bool{}, approvalPolicies: map[string]bool{}, ledger: ledger, sources: sources}
+	core := &AuthoringCore{registry: registry, executors: ExecutorCatalog{}, capabilities: CapabilityCatalog{}, outputs: OutputCatalog{}, blockers: map[string]bool{}, approvalPolicies: map[string]bool{}, approvalActors: map[string]map[string]bool{}, ledger: ledger, sources: sources}
 	for ref, kind := range executors {
 		core.executors[ref] = kind
 	}
@@ -49,6 +51,24 @@ func NewAuthoringCoreWithSources(registry *Registry, executors ExecutorCatalog, 
 		core.approvalPolicies[policy] = true
 	}
 	return core
+}
+
+func (c *AuthoringCore) WithApprovalAuthorities(authorities ApprovalAuthorityCatalog) *AuthoringCore {
+	for policy, actors := range authorities {
+		if c.approvalActors[policy] == nil {
+			c.approvalActors[policy] = map[string]bool{}
+		}
+		for _, actor := range actors {
+			if actor = strings.TrimSpace(actor); actor != "" {
+				c.approvalActors[policy][actor] = true
+			}
+		}
+	}
+	return c
+}
+
+func approvalActorAllowed(authorities map[string]map[string]bool, policy *contractsv1.Identifier, actor string) bool {
+	return policy != nil && authorities[string(*policy)][strings.TrimSpace(actor)]
 }
 
 func (c *AuthoringCore) Catalog() (contractsv1.AuthoringCatalog, error) {
@@ -360,6 +380,9 @@ func (c *AuthoringCore) PreviewApproval(brief contractsv1.ApprovalBrief, actor, 
 		return contractsv1.ApprovalPreview{}, errors.New("approval id does not match the exact action")
 	}
 	brief.Id = canonicalID
+	if brief.ApprovalPolicy == nil || !c.approvalPolicies[string(*brief.ApprovalPolicy)] || !approvalActorAllowed(c.approvalActors, brief.ApprovalPolicy, actor) {
+		return contractsv1.ApprovalPreview{}, errors.New("approval policy is not registered")
+	}
 	if err := contract.ValidateDefinition("ApprovalBrief", brief); err != nil {
 		return contractsv1.ApprovalPreview{}, err
 	}

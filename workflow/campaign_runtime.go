@@ -729,7 +729,7 @@ func (e *Engine) driveCoreNode(command CampaignDriveCommand, state contractsv1.C
 		if err != nil {
 			return false, err
 		}
-		decision, receipt, err := verifiedApprovalDecision(approvalReplay, sourceReplay, action, result, node.Definition.ApprovalPolicy)
+		decision, receipt, err := verifiedApprovalDecision(approvalReplay, sourceReplay, action, result, node.Definition.ApprovalPolicy, e.approvalActors)
 		if err != nil {
 			return false, err
 		}
@@ -788,7 +788,7 @@ func (e *Engine) approvalSource(prepared preparedCampaign, workflow preparedWork
 	return matches[0].replay, matches[0].action, matches[0].result, nil
 }
 
-func verifiedApprovalDecision(replay, source contractsv1.ReplayBundle, action contractsv1.ActionArtifact, result contractsv1.Receipt, approvalPolicy *contractsv1.Identifier) (contractsv1.ApprovalOptionDecision, contractsv1.Receipt, error) {
+func verifiedApprovalDecision(replay, source contractsv1.ReplayBundle, action contractsv1.ActionArtifact, result contractsv1.Receipt, approvalPolicy *contractsv1.Identifier, approvalActors map[string]map[string]bool) (contractsv1.ApprovalOptionDecision, contractsv1.Receipt, error) {
 	if err := VerifyReplay(replay); err != nil || len(replay.Receipts) != 1 {
 		return "", contractsv1.Receipt{}, errors.New("approval decision Replay is invalid")
 	}
@@ -805,7 +805,7 @@ func verifiedApprovalDecision(replay, source contractsv1.ReplayBundle, action co
 		return "", contractsv1.Receipt{}, errors.New("approval decision brief is invalid")
 	}
 	terminal, _ := receiptByType(source, contractsv1.ReceiptReceiptTypeTerminal)
-	if err := decodePayload(receipt.Payload["preview"], &preview); err != nil || !reflect.DeepEqual(preview.Brief, brief) || !reflect.DeepEqual(brief.Action, action) || !containsEvidenceReceipt(brief.Evidence, result) || approvalPolicy == nil || brief.ApprovalPolicy == nil || *brief.ApprovalPolicy != *approvalPolicy || preview.Actor != *receipt.Actor || preview.SourceAggregateId != source.AggregateId || preview.BaseRevision != 0 || preview.ExpiresAt == nil || receipt.OccurredAt.Before(terminal.OccurredAt) || receipt.OccurredAt.After(*preview.ExpiresAt) {
+	if err := decodePayload(receipt.Payload["preview"], &preview); err != nil || !reflect.DeepEqual(preview.Brief, brief) || !reflect.DeepEqual(brief.Action, action) || !containsEvidenceReceipt(brief.Evidence, result) || approvalPolicy == nil || brief.ApprovalPolicy == nil || *brief.ApprovalPolicy != *approvalPolicy || !approvalActorAllowed(approvalActors, approvalPolicy, *receipt.Actor) || preview.Actor != *receipt.Actor || preview.SourceAggregateId != source.AggregateId || preview.BaseRevision != 0 || preview.ExpiresAt == nil || receipt.OccurredAt.Before(terminal.OccurredAt) || receipt.OccurredAt.After(*preview.ExpiresAt) {
 		return "", contractsv1.Receipt{}, errors.New("approval decision is not bound to the exact action and result")
 	}
 	if err := contract.ValidateDefinition("ApprovalPreview", preview); err != nil {
@@ -901,9 +901,10 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 				return state, err
 			}
 			node := nodeStatePtr(&state, payload.WorkflowRef, string(payload.NodeId))
-			_, definition, exists := preparedNode(prepared, payload.WorkflowRef, string(payload.NodeId))
+			workflow, definition, exists := preparedNode(prepared, payload.WorkflowRef, string(payload.NodeId))
 			resolved := resolvedContext{Bundle: payload.Bundle, Packs: payload.Packs}
-			if node == nil || !exists || !campaignNodeReadyForContext(state, prepared, payload.WorkflowRef, string(payload.NodeId)) || definition.Definition.Kind != contractsv1.NodeDefinitionKindAgent || validateResolvedContextForNode(resolved, definition, prepared.request.Campaign.Scope, prepared.request.Campaign.EvidenceFrontier.Cutoff) != nil || payload.Bundle.JobId != state.JobId || payload.Bundle.CampaignId != state.CampaignId || payload.Bundle.WorkflowRef != payload.WorkflowRef || payload.Bundle.NodeId != payload.NodeId || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) {
+			request := RunRequest{Job: prepared.request.Job, Campaign: prepared.request.Campaign, Workflow: workflow.definition, NodeID: string(payload.NodeId)}
+			if node == nil || !exists || !campaignNodeReadyForContext(state, prepared, payload.WorkflowRef, string(payload.NodeId)) || definition.Definition.Kind != contractsv1.NodeDefinitionKindAgent || validateResolvedContextForNode(resolved, e.registry, request, workflow.compiled, definition, workflow.compileReceipt) != nil || payload.Bundle.JobId != state.JobId || payload.Bundle.CampaignId != state.CampaignId || payload.Bundle.WorkflowRef != payload.WorkflowRef || payload.Bundle.NodeId != payload.NodeId || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) {
 				return state, errors.New("Campaign Context transition binding is invalid")
 			}
 			if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeContextBound {
@@ -951,7 +952,7 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			}
 			source, action, result, err := e.approvalSource(prepared, workflow, definition)
 			actionHash, hashErr := Digest(action)
-			if err != nil || hashErr != nil || definition.Definition.ApprovalPolicy == nil || payload.ApprovalPolicy != *definition.Definition.ApprovalPolicy || payload.SourceReplayHash != source.BundleHash || payload.ActionHash != contractsv1.SHA256(actionHash) || payload.ApprovalId != contractsv1.Identifier(shortID("approval-", actionHash)) || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{source.BundleHash, result.ReceiptHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.ActionHash}) {
+			if err != nil || hashErr != nil || definition.Definition.ApprovalPolicy == nil || payload.ApprovalPolicy != nil && *payload.ApprovalPolicy != *definition.Definition.ApprovalPolicy || payload.SourceReplayHash != source.BundleHash || payload.ActionHash != contractsv1.SHA256(actionHash) || payload.ApprovalId != contractsv1.Identifier(shortID("approval-", actionHash)) || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{source.BundleHash, result.ReceiptHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.ActionHash}) {
 				return state, errors.New("Campaign approval request binding is invalid")
 			}
 			node.Status, node.ApprovalId = contractsv1.CampaignNodeExecutionStatusAwaitingApproval, &payload.ApprovalId
@@ -968,7 +969,7 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			}
 			source, action, result, err := e.approvalSource(prepared, workflow, definition)
 			approvalReplay, replayErr := e.ledger.Replay(approvalAggregate(string(payload.ApprovalId)))
-			decision, approvalReceipt, decisionErr := verifiedApprovalDecision(approvalReplay, source, action, result, definition.Definition.ApprovalPolicy)
+			decision, approvalReceipt, decisionErr := verifiedApprovalDecision(approvalReplay, source, action, result, definition.Definition.ApprovalPolicy, e.approvalActors)
 			expectedArtifact, artifactErr := e.approvalDecisionArtifact(prepared.request, workflow, definition, action, approvalReceipt, decision)
 			expectedArtifactHash, expectedHashErr := Digest(expectedArtifact)
 			payloadArtifactHash, payloadHashErr := Digest(payload.Artifact)

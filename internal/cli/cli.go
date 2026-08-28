@@ -319,7 +319,8 @@ func demoAuthoringCore(ledger, sources workflow.Ledger, snapshot *contractsv1.Ca
 		workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval},
 		workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead},
 		workflow.OutputCatalog{"recommendation@1": validateRecommendation, "review-decision@1": func(any) error { return nil }},
-		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger, sources), nil
+		[]string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger, sources).
+		WithApprovalAuthorities(workflow.ApprovalAuthorityCatalog{"human-confirm": []string{"local-operator"}}), nil
 }
 
 func loadCanvasSources(path string) (workflow.Ledger, *contractsv1.CanvasSnapshot, error) {

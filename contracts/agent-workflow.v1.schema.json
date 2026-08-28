@@ -366,7 +366,7 @@
     "ApprovalRequestedEventPayload": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["workflow_ref", "node_id", "approval_id", "approval_policy", "source_replay_hash", "action_hash"],
+      "required": ["workflow_ref", "node_id", "approval_id", "source_replay_hash", "action_hash"],
       "properties": {
         "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
         "node_id": { "$ref": "#/$defs/Identifier" },

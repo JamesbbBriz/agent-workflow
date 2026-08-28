@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,11 +75,12 @@ type RunResult struct {
 }
 
 type Engine struct {
-	registry     *Registry
-	capabilities CapabilityCatalog
-	outputs      OutputCatalog
-	provider     Provider
-	ledger       Ledger
+	registry       *Registry
+	capabilities   CapabilityCatalog
+	outputs        OutputCatalog
+	provider       Provider
+	ledger         Ledger
+	approvalActors map[string]map[string]bool
 }
 
 type Ledger interface {
@@ -86,7 +88,11 @@ type Ledger interface {
 	Replay(string) (contractsv1.ReplayBundle, error)
 }
 
-type atomicLedger interface {
+// AtomicLedger is required for provider execution so accepted results and
+// terminal state cannot be split by a crash. Basic Ledger implementations
+// remain readable for historical Replay.
+type AtomicLedger interface {
+	Ledger
 	AppendBatch([]contractsv1.Receipt) error
 }
 
@@ -99,7 +105,21 @@ func NewEngine(registry *Registry, capabilities CapabilityCatalog, outputs Outpu
 	for schema, validator := range outputs {
 		outputCopy[schema] = validator
 	}
-	return &Engine{registry: registry, capabilities: capabilityCopy, outputs: outputCopy, provider: provider, ledger: ledger}
+	return &Engine{registry: registry, capabilities: capabilityCopy, outputs: outputCopy, provider: provider, ledger: ledger, approvalActors: map[string]map[string]bool{}}
+}
+
+func (e *Engine) WithApprovalAuthorities(authorities ApprovalAuthorityCatalog) *Engine {
+	for policy, actors := range authorities {
+		if e.approvalActors[policy] == nil {
+			e.approvalActors[policy] = map[string]bool{}
+		}
+		for _, actor := range actors {
+			if actor = strings.TrimSpace(actor); actor != "" {
+				e.approvalActors[policy][actor] = true
+			}
+		}
+	}
+	return e
 }
 
 func (e *Engine) runAgentNode(ctx context.Context, request RunRequest) (RunResult, error) {
@@ -195,6 +215,9 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 			return e.resumeInvocation(ctx, aggregateID, transitionAt, compiled, invocation, admissionReplay, replay)
 		}
 	}
+	if _, ok := e.ledger.(AtomicLedger); !ok {
+		return RunResult{}, errors.New("provider execution requires an AtomicLedger")
+	}
 	resolved := resolvedContext{}
 	if preparedContext == nil {
 		resolved, err = resolveContext(ctx, e.registry, request, compiled, node, compileReceipt)
@@ -203,7 +226,7 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 		}
 	} else {
 		resolved = *preparedContext
-		if err := validateResolvedContextForNode(resolved, node, request.Campaign.Scope, request.Campaign.EvidenceFrontier.Cutoff); err != nil {
+		if err := validateResolvedContextForNode(resolved, e.registry, request, compiled, node, compileReceipt); err != nil {
 			return RunResult{}, err
 		}
 	}
@@ -262,6 +285,9 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 }
 
 func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occurredAt time.Time, compiled CompiledWorkflow, invocation Invocation, admissionReplay, replay contractsv1.ReplayBundle) (RunResult, error) {
+	if _, ok := e.ledger.(AtomicLedger); !ok {
+		return RunResult{}, errors.New("provider execution requires an AtomicLedger")
+	}
 	if storedResult, ok, err := materializeProviderResult(replay); err != nil {
 		return RunResult{}, err
 	} else if ok {
@@ -443,7 +469,7 @@ func (e *Engine) finishInvocationWithState(aggregateID string, occurredAt time.T
 }
 
 func appendReceiptBatch(ledger Ledger, receipts []contractsv1.Receipt) error {
-	atomic, ok := ledger.(atomicLedger)
+	atomic, ok := ledger.(AtomicLedger)
 	if !ok {
 		return errors.New("ledger does not support atomic receipt batches")
 	}

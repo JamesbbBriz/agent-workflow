@@ -174,25 +174,26 @@ export function mergeAdmissionReadback(current: CanvasSnapshot, admitted: Canvas
 export function ApprovalPanel({ snapshot, artifact, onClose, onCanvas }: { snapshot: CanvasSnapshot; artifact: ActionArtifact; onClose: () => void; onCanvas: (snapshot: CanvasSnapshot) => void }) {
   const source = snapshot.replays.find((replay) => replay.aggregate_id === snapshot.executions.find((execution) => execution.outputs.some((item) => item.id === artifact.id))?.aggregate_id);
   const result = source?.receipts.find((receipt) => receipt.receipt_type === "result");
-  const [actor, setActor] = useState("reviewer@example.com");
+  const workflow = snapshot.definition.workflows.find((definition) => `${definition.id}@${definition.version}` === artifact.workflow_ref);
+  const approvalPolicy = workflow?.nodes.find((node) => node.kind === "approval" && node.depends_on.includes(artifact.node_id))?.approval_policy;
   const [recommendation, setRecommendation] = useState("Approve the exact reviewed action.");
   const [risk, setRisk] = useState("This action changes an external or canonical system.");
   const [preview, setPreview] = useState<ApprovalPreview>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
-  const brief = source && result ? approvalBrief(artifact, result, recommendation, risk) : undefined;
+  const brief = source && result && approvalPolicy ? approvalBrief(artifact, result, recommendation, risk, approvalPolicy) : undefined;
   const prepare = async () => {
     if (!brief || !source) return;
     setBusy(true); setError(undefined);
-    try { setPreview(await request<ApprovalPreview>("/v1/approvals/preview", { actor, brief, source_aggregate_id: source.aggregate_id })); }
+    try { setPreview(await request<ApprovalPreview>("/v1/approvals/preview", { brief, source_aggregate_id: source.aggregate_id })); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Approval preview failed"); }
     finally { setBusy(false); }
   };
   const decide = async (option_id: "approve" | "reject") => {
     if (!preview) return;
     setBusy(true); setError(undefined);
-    try { const result = await request<{ canvas: CanvasSnapshot }>("/v1/approvals/confirm", { actor, option_id, preview }); onCanvas(result.canvas); }
+    try { const result = await request<{ canvas: CanvasSnapshot }>("/v1/approvals/confirm", { option_id, preview }); onCanvas(result.canvas); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Approval failed"); }
     finally { setBusy(false); }
   };
@@ -206,7 +207,7 @@ export function ApprovalPanel({ snapshot, artifact, onClose, onCanvas }: { snaps
         <section><h3>Recommendation</h3><textarea value={recommendation} onChange={(event) => { setRecommendation(event.target.value); setPreview(undefined); }} /><label>Risk<textarea value={risk} onChange={(event) => { setRisk(event.target.value); setPreview(undefined); }} /></label></section>
         <section><h3>Options and trade-offs</h3>{brief.options.map((option) => <article className="approval-option" key={option.id}><strong>{option.label}</strong><span>{option.tradeoffs.join(" · ")}</span></article>)}</section>
         <section><h3>Exact proposed action</h3><code>{JSON.stringify(artifact.content, null, 2)}</code></section>
-        <label className="approval-actor">Actor<input value={actor} onChange={(event) => { setActor(event.target.value); setPreview(undefined); }} /></label>
+        <p className="approval-actor">Signed in as local operator</p>
         {error && <div className="builder-error" role="alert">{error}</div>}
         {preview && <div className="preview-receipt"><ShieldCheck size={24} /><div><strong>Decision token ready</strong><p>Any change makes this token stale.</p></div><code>{preview.commit_token}</code></div>}
       </>}
@@ -215,7 +216,7 @@ export function ApprovalPanel({ snapshot, artifact, onClose, onCanvas }: { snaps
   </aside>;
 }
 
-function approvalBrief(action: ActionArtifact, result: ReplayBundleReceipt, recommendation: string, risk: string): ApprovalBrief {
+function approvalBrief(action: ActionArtifact, result: ReplayBundleReceipt, recommendation: string, risk: string, approval_policy: string): ApprovalBrief {
   return {
     kind: "approval_brief", schema_version: 1, id: "", title: `Approve ${humanize(action.artifact_type)}?`, action,
     evidence: [{ id: result.id, kind: "receipt", artifact_type: "result", schema_version: 1, sha256: result.receipt_hash, media_type: "application/json" }],
@@ -223,7 +224,7 @@ function approvalBrief(action: ActionArtifact, result: ReplayBundleReceipt, reco
       { id: "approve", label: "Approve exact action", decision: "approve", tradeoffs: ["Executes only the hash-bound proposal"] },
       { id: "reject", label: "Reject", decision: "reject", tradeoffs: ["Leaves the target unchanged"] },
     ],
-    recommended_option_id: "approve", recommendation, risks: [risk],
+    recommended_option_id: "approve", recommendation, risks: [risk], approval_policy,
   };
 }
 

@@ -175,12 +175,13 @@ func TestBuilderRestartRestoresCanonicalApprovalProjection(t *testing.T) {
 			result = receipt
 		}
 	}
-	brief := contractsv1.ApprovalBrief{Kind: contractsv1.ApprovalBriefKindApprovalBrief, SchemaVersion: 1, Title: "Approve exact action?", Action: snapshot.Executions[0].Outputs[0], Evidence: []contractsv1.ArtifactRef{{Id: result.Id, Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "result", SchemaVersion: 1, Sha256: result.ReceiptHash, MediaType: "application/json"}}, Options: []contractsv1.ApprovalOption{{Id: "approve", Label: "Approve", Decision: contractsv1.ApprovalOptionDecisionApprove, Tradeoffs: []string{"Changes the target"}}, {Id: "reject", Label: "Reject", Decision: contractsv1.ApprovalOptionDecisionReject, Tradeoffs: []string{"No change"}}}, RecommendedOptionId: "approve", Recommendation: "Approve the reviewed action.", Risks: []string{"Public impact"}}
-	preview, err := core.PreviewApproval(brief, "reviewer@example.com", source.AggregateId)
+	policy := contractsv1.Identifier("human-confirm")
+	brief := contractsv1.ApprovalBrief{Kind: contractsv1.ApprovalBriefKindApprovalBrief, SchemaVersion: 1, Title: "Approve exact action?", Action: snapshot.Executions[0].Outputs[0], Evidence: []contractsv1.ArtifactRef{{Id: result.Id, Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "result", SchemaVersion: 1, Sha256: result.ReceiptHash, MediaType: "application/json"}}, Options: []contractsv1.ApprovalOption{{Id: "approve", Label: "Approve", Decision: contractsv1.ApprovalOptionDecisionApprove, Tradeoffs: []string{"Changes the target"}}, {Id: "reject", Label: "Reject", Decision: contractsv1.ApprovalOptionDecisionReject, Tradeoffs: []string{"No change"}}}, RecommendedOptionId: "approve", Recommendation: "Approve the reviewed action.", Risks: []string{"Public impact"}, ApprovalPolicy: &policy}
+	preview, err := core.PreviewApproval(brief, "local-operator", source.AggregateId)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := core.ConfirmApproval(preview, "reviewer@example.com", "approve", time.Now().UTC()); err != nil {
+	if _, err := core.ConfirmApproval(preview, "local-operator", "approve", time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	reopened, err := workflow.OpenFileLedger(path)

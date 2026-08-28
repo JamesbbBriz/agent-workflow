@@ -173,6 +173,27 @@ func (IntentProducer) Resolve(_ context.Context, request ProducerRequest) (contr
 	}, nil
 }
 
+func verifyProducerContext(producer Producer, request ProducerRequest, pack contractsv1.ContextPackEdition) error {
+	expected, err := producer.Resolve(context.Background(), request)
+	if err != nil {
+		return errors.New("context pack cannot be resolved from its registered producer")
+	}
+	expected.Content = pack.Content // ContentSha256 is verified separately.
+	if producer.Selector() == "intent-chain" {
+		expected.Provenance = pack.Provenance // Built-in intent content is the derived authority; compile identity is historical metadata.
+	}
+	if !sameDigest(expected, pack) {
+		return errors.New("context pack does not match its registered producer")
+	}
+	return nil
+}
+
+func sameDigest(left, right any) bool {
+	leftHash, leftErr := Digest(left)
+	rightHash, rightErr := Digest(right)
+	return leftErr == nil && rightErr == nil && leftHash == rightHash
+}
+
 type resolvedContext struct {
 	Bundle contractsv1.ContextBundle
 	Packs  []contractsv1.ContextPackEdition
@@ -204,6 +225,13 @@ func resolveContext(ctx context.Context, registry *Registry, request RunRequest,
 				return result, needsContext(requirement, err)
 			}
 			return result, fmt.Errorf("resolve context %q: %w", requirement.Id, err)
+		}
+		producerRequest := ProducerRequest{Requirement: requirement, Job: request.Job, Campaign: request.Campaign, Workflow: request.Workflow, WorkflowRef: compiled.WorkflowRef, CompileReceipt: compileReceipt, EvidenceCutoff: request.Campaign.EvidenceFrontier.Cutoff}
+		if err := verifyProducerContext(producer, producerRequest, pack); err != nil {
+			if requirement.Required {
+				return result, needsContext(requirement, err)
+			}
+			return result, fmt.Errorf("context %q: %w", requirement.Id, err)
 		}
 		if err := validatePack(pack, requirement, request.Campaign.Scope, request.Campaign.EvidenceFrontier.Cutoff); err != nil {
 			if requirement.Required {
@@ -250,13 +278,13 @@ func resolveContext(ctx context.Context, registry *Registry, request RunRequest,
 	if err := contract.ValidateDefinition("ContextBundle", result.Bundle); err != nil {
 		return result, err
 	}
-	if err := validateResolvedContextForNode(result, node, request.Campaign.Scope, request.Campaign.EvidenceFrontier.Cutoff); err != nil {
+	if err := validateResolvedContextForNode(result, registry, request, compiled, node, compileReceipt); err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
-func validateResolvedContextForNode(resolved resolvedContext, node CompiledNode, scope contractsv1.Scope, cutoff time.Time) error {
+func validateResolvedContextForNode(resolved resolvedContext, registry *Registry, request RunRequest, compiled CompiledWorkflow, node CompiledNode, compileReceipt contractsv1.Receipt) error {
 	if err := VerifyContextBundle(resolved.Bundle, resolved.Packs); err != nil {
 		return err
 	}
@@ -273,7 +301,15 @@ func validateResolvedContextForNode(resolved resolvedContext, node CompiledNode,
 		if !ok || present[*entry.RequirementId] {
 			return errors.New("context bundle contains an unknown or duplicate requirement")
 		}
-		if err := validatePack(resolved.Packs[index], requirement, scope, cutoff); err != nil {
+		producer, ok := registry.lookup(string(requirement.Selector))
+		if !ok {
+			return errors.New("context bundle producer is not registered")
+		}
+		producerRequest := ProducerRequest{Requirement: requirement, Job: request.Job, Campaign: request.Campaign, Workflow: request.Workflow, WorkflowRef: compiled.WorkflowRef, CompileReceipt: compileReceipt, EvidenceCutoff: request.Campaign.EvidenceFrontier.Cutoff}
+		if err := verifyProducerContext(producer, producerRequest, resolved.Packs[index]); err != nil {
+			return fmt.Errorf("context %q has no producer authority: %w", requirement.Id, err)
+		}
+		if err := validatePack(resolved.Packs[index], requirement, request.Campaign.Scope, request.Campaign.EvidenceFrontier.Cutoff); err != nil {
 			return err
 		}
 		present[*entry.RequirementId] = true

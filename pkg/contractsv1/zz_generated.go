@@ -302,7 +302,7 @@ type ApprovalRequestedEventPayload struct {
 	ApprovalId Identifier `json:"approval_id"`
 
 	// ApprovalPolicy corresponds to the JSON schema field "approval_policy".
-	ApprovalPolicy Identifier `json:"approval_policy"`
+	ApprovalPolicy *Identifier `json:"approval_policy,omitempty,omitzero"`
 
 	// NodeId corresponds to the JSON schema field "node_id".
 	NodeId Identifier `json:"node_id"`
