@@ -332,7 +332,8 @@
       "properties": {
         "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
         "node_id": { "$ref": "#/$defs/Identifier" },
-        "blocker_code": { "$ref": "#/$defs/Identifier" }
+        "blocker_code": { "$ref": "#/$defs/Identifier" },
+        "result_replay_hash": { "$ref": "#/$defs/SHA256" }
       }
     },
     "CampaignTerminalEventPayload": {

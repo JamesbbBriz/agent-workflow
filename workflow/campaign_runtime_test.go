@@ -319,6 +319,25 @@ func TestRunNodeNeverAppendsToIncompleteLegacyV1History(t *testing.T) {
 	if len(after.Receipts) != len(partial.Receipts) || restartedProvider.starts != 0 {
 		t.Fatalf("legacy history changed: receipts=%d want=%d starts=%d", len(after.Receipts), len(partial.Receipts), restartedProvider.starts)
 	}
+
+	driveTarget := workflow.NewMemoryLedger()
+	for _, receipt := range append(admissionReplay.Receipts, partial.Receipts...) {
+		if err := driveTarget.Append(receipt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	driveProvider := &dagProvider{results: map[string]workflow.ProviderResult{}}
+	driveEngine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), driveProvider, driveTarget)
+	if _, err := driveEngine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}}); err == nil || !strings.Contains(err.Error(), "legacy v1 execution is read-only") {
+		t.Fatalf("Campaign Drive resumed incomplete v1 history: %v", err)
+	}
+	afterDrive, err := driveTarget.Replay(partial.AggregateId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterDrive.Receipts) != len(partial.Receipts) || driveProvider.starts != 0 {
+		t.Fatalf("Drive changed legacy history: receipts=%d want=%d starts=%d", len(afterDrive.Receipts), len(partial.Receipts), driveProvider.starts)
+	}
 }
 
 type dagProvider struct {

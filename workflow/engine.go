@@ -253,8 +253,14 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		if err := validateProviderResult(storedResult, invocation); err != nil {
 			return RunResult{}, err
 		}
-		if err := validateArtifacts(artifacts, invocation, e.outputs); err != nil {
+		if err := validateArtifactContracts(artifacts, invocation, e.outputs); err != nil {
 			return RunResult{}, err
+		}
+		if err := validateArtifactBudget(artifacts, invocation); err != nil {
+			if terminalState(replay) == "budget_exhausted" {
+				return RunResult{}, err
+			}
+			return RunResult{}, errors.New("accepted provider result exceeds its recorded budget")
 		}
 		if err := e.finishInvocation(aggregateID, occurredAt, invocation, storedResult, replay); err != nil {
 			return RunResult{}, err
@@ -317,7 +323,13 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		return RunResult{}, ErrProviderDeadline
 	}
 	artifacts := providerResult.Artifacts
-	if err := validateArtifacts(artifacts, invocation, e.outputs); err != nil {
+	if err := validateArtifactContracts(artifacts, invocation, e.outputs); err != nil {
+		return RunResult{}, err
+	}
+	if err := validateArtifactBudget(artifacts, invocation); err != nil {
+		if appendErr := e.finishRejectedInvocation(aggregateID, occurredAt, invocation, providerResult, replay); appendErr != nil {
+			return RunResult{}, appendErr
+		}
 		return RunResult{}, err
 	}
 	if err := e.finishInvocation(aggregateID, occurredAt, invocation, providerResult, replay); err != nil {
@@ -392,6 +404,27 @@ func (e *Engine) finishInvocation(aggregateID string, occurredAt time.Time, invo
 	return nil
 }
 
+func (e *Engine) finishRejectedInvocation(aggregateID string, occurredAt time.Time, invocation Invocation, providerResult ProviderResult, replay contractsv1.ReplayBundle) error {
+	artifactHashes, err := actionArtifactHashes(providerResult.Artifacts)
+	if err != nil {
+		return err
+	}
+	invocationReceipt, ok := receiptByType(replay, contractsv1.ReceiptReceiptTypeInvocation)
+	if !ok {
+		return errors.New("replay has no invocation receipt")
+	}
+	receipts, err := postExecutionReceiptsWithState(aggregateID, occurredAt, invocationReceipt, invocation, providerResult, artifactHashes, false, "budget_exhausted")
+	if err != nil {
+		return err
+	}
+	for _, receipt := range receipts {
+		if err := e.ledger.Append(receipt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func actionArtifactHashes(artifacts []contractsv1.ActionArtifact) ([]contractsv1.SHA256, error) {
 	hashes := make([]contractsv1.SHA256, 0, len(artifacts))
 	for _, artifact := range artifacts {
@@ -408,6 +441,18 @@ func actionArtifactHashes(artifacts []contractsv1.ActionArtifact) ([]contractsv1
 func hasReceipt(bundle contractsv1.ReplayBundle, receiptType contractsv1.ReceiptReceiptType) bool {
 	_, ok := receiptByType(bundle, receiptType)
 	return ok
+}
+
+func terminalState(bundle contractsv1.ReplayBundle) string {
+	receipt, ok := receiptByType(bundle, contractsv1.ReceiptReceiptTypeTerminal)
+	if !ok {
+		return ""
+	}
+	var state string
+	if decodePayload(receipt.Payload["state"], &state) != nil {
+		return ""
+	}
+	return state
 }
 
 func receiptByType(bundle contractsv1.ReplayBundle, receiptType contractsv1.ReceiptReceiptType) (contractsv1.Receipt, bool) {
@@ -709,6 +754,13 @@ func validateOutputCatalog(node contractsv1.NodeDefinition, outputs OutputCatalo
 }
 
 func validateArtifacts(artifacts []contractsv1.ActionArtifact, invocation Invocation, outputs OutputCatalog) error {
+	if err := validateArtifactContracts(artifacts, invocation, outputs); err != nil {
+		return err
+	}
+	return validateArtifactBudget(artifacts, invocation)
+}
+
+func validateArtifactContracts(artifacts []contractsv1.ActionArtifact, invocation Invocation, outputs OutputCatalog) error {
 	if err := validateJSONLimit("action artifact set", artifacts, maxReceiptMaterialBytes); err != nil {
 		return err
 	}
@@ -769,13 +821,18 @@ func validateArtifacts(artifacts []contractsv1.ActionArtifact, invocation Invoca
 	if len(counts) > 0 {
 		return errors.New("provider returned an undeclared artifact type")
 	}
-	if invocation.BudgetEnforced {
-		if len(artifacts) > invocation.Budget.MaxActions {
-			return budgetExceededError{code: "action-budget-exhausted"}
-		}
-		if candidates := artifactCandidateCount(artifacts, invocation.Node.OutputSlots); candidates > invocation.Budget.MaxCandidates {
-			return budgetExceededError{code: "candidate-budget-exhausted"}
-		}
+	return nil
+}
+
+func validateArtifactBudget(artifacts []contractsv1.ActionArtifact, invocation Invocation) error {
+	if !invocation.BudgetEnforced {
+		return nil
+	}
+	if len(artifacts) > invocation.Budget.MaxActions {
+		return budgetExceededError{code: "action-budget-exhausted"}
+	}
+	if candidates := artifactCandidateCount(artifacts, invocation.Node.OutputSlots); candidates > invocation.Budget.MaxCandidates {
+		return budgetExceededError{code: "candidate-budget-exhausted"}
 	}
 	return nil
 }
@@ -846,6 +903,10 @@ func preExecutionReceipts(aggregateID string, occurredAt time.Time, compileRecei
 }
 
 func postExecutionReceipts(aggregateID string, occurredAt time.Time, previousReceipt contractsv1.Receipt, invocation Invocation, providerResult ProviderResult, artifactHashes []contractsv1.SHA256) ([]contractsv1.Receipt, error) {
+	return postExecutionReceiptsWithState(aggregateID, occurredAt, previousReceipt, invocation, providerResult, artifactHashes, true, "node_completed")
+}
+
+func postExecutionReceiptsWithState(aggregateID string, occurredAt time.Time, previousReceipt contractsv1.Receipt, invocation Invocation, providerResult ProviderResult, artifactHashes []contractsv1.SHA256, accepted bool, terminalState string) ([]contractsv1.Receipt, error) {
 	version := previousReceipt.AggregateVersion + 1
 	previous := previousReceipt.ReceiptHash
 	providerReceipt, err := sealReceipt(aggregateID, version, contractsv1.ReceiptReceiptTypeProviderExecution, occurredAt, &previous,
@@ -857,14 +918,14 @@ func postExecutionReceipts(aggregateID string, occurredAt time.Time, previousRec
 	receipts := []contractsv1.Receipt{providerReceipt}
 	previous = providerReceipt.ReceiptHash
 	resultReceipt, err := sealReceipt(aggregateID, version+1, contractsv1.ReceiptReceiptTypeResult, occurredAt, &previous,
-		artifactHashes, artifactHashes, map[string]any{"accepted": true, "provider_result": providerResult})
+		artifactHashes, artifactHashes, map[string]any{"accepted": accepted, "provider_result": providerResult})
 	if err != nil {
 		return nil, err
 	}
 	receipts = append(receipts, resultReceipt)
 	previous = resultReceipt.ReceiptHash
 	terminalReceipt, err := sealReceipt(aggregateID, version+2, contractsv1.ReceiptReceiptTypeTerminal, occurredAt, &previous,
-		artifactHashes, nil, map[string]any{"state": "node_completed"})
+		artifactHashes, nil, map[string]any{"state": terminalState})
 	if err != nil {
 		return nil, err
 	}

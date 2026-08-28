@@ -134,9 +134,10 @@ export interface ProducerElement {
 }
 
 export interface BudgetExhaustedEventPayload {
-    blocker_code: string;
-    node_id:      string;
-    workflow_ref: string;
+    blocker_code:        string;
+    node_id:             string;
+    result_replay_hash?: string;
+    workflow_ref:        string;
 }
 
 export interface CampaignAdmissionEventPayload {

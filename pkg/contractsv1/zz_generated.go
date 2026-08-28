@@ -325,6 +325,9 @@ type BudgetExhaustedEventPayload struct {
 	// NodeId corresponds to the JSON schema field "node_id".
 	NodeId Identifier `json:"node_id"`
 
+	// ResultReplayHash corresponds to the JSON schema field "result_replay_hash".
+	ResultReplayHash *SHA256 `json:"result_replay_hash,omitempty,omitzero"`
+
 	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
 	WorkflowRef WorkflowRef `json:"workflow_ref"`
 }
