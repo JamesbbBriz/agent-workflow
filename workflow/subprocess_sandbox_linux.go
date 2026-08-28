@@ -3,30 +3,38 @@
 package workflow
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
 
 func sandboxDriver() (contractsv1.ProviderIsolationEvidenceDriver, error) {
-	if _, err := exec.LookPath("bwrap"); err != nil {
+	bwrap, err := exec.LookPath("bwrap")
+	if err != nil {
 		return "", err
+	}
+	probe := exec.Command(bwrap, "--unshare-all", "--ro-bind", "/", "/", "--", "/bin/true")
+	probe.Env = []string{}
+	if err := probe.Run(); err != nil {
+		return "", fmt.Errorf("bubblewrap isolation is unavailable: %w", err)
 	}
 	return contractsv1.ProviderIsolationEvidenceDriverBubblewrap, nil
 }
 
-func sandboxCommand(executable string, args []string, root string) (string, []string, error) {
+func sandboxCommand(executable string, args []string, root string, maxOutputBytes int) (string, []string, error) {
 	bwrap, err := exec.LookPath("bwrap")
 	if err != nil {
 		return "", nil, err
 	}
-	commandArgs := []string{"--die-with-parent", "--new-session", "--unshare-all", "--proc", "/proc", "--dev", "/dev", "--dir", "/workspace", "--ro-bind", root + "/input", "/workspace/input", "--bind", root + "/output", "/workspace/output", "--ro-bind", executable, "/provider", "--chdir", "/workspace"}
+	commandArgs := []string{"--die-with-parent", "--new-session", "--unshare-all", "--proc", "/proc", "--dev", "/dev", "--dir", "/workspace", "--dir", "/workspace/output", "--ro-bind", root + "/input", "/workspace/input", "--bind", root + "/output/result", "/workspace/output/result", "--ro-bind", executable, "/provider", "--chdir", "/workspace"}
 	for _, path := range []string{"/usr", "/bin", "/lib", "/lib64"} {
 		if _, err := os.Stat(path); err == nil {
 			commandArgs = append(commandArgs, "--ro-bind", path, path)
 		}
 	}
-	commandArgs = append(commandArgs, "--", "/provider")
+	commandArgs = append(commandArgs, "--", "/bin/sh", "-c", `ulimit -f "$1"; shift; exec "$@"`, "agent-workflow-provider", strconv.Itoa(maxOutputBytes/512), "/provider")
 	return bwrap, append(commandArgs, args...), nil
 }

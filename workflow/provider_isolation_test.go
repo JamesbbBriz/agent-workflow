@@ -148,7 +148,7 @@ func TestSubprocessProviderEnforcesCancellationAndOutputLimit(t *testing.T) {
 	})
 
 	t.Run("output", func(t *testing.T) {
-		provider := newProvider("printf 'output-that-exceeds-the-limit'\n", 8)
+		provider := newProvider("i=0; while [ \"$i\" -lt 100; do printf 12345678; i=$((i+1)); done\n", 512)
 		invocation := Invocation{IdempotencyKey: "output-attempt", Deadline: time.Now().Add(5 * time.Second)}
 		if err := provider.Start(context.Background(), invocation); err != nil {
 			t.Fatal(err)
@@ -156,6 +156,24 @@ func TestSubprocessProviderEnforcesCancellationAndOutputLimit(t *testing.T) {
 		_, ready, err := waitForProvider(provider, invocation.IdempotencyKey, invocation.Deadline)
 		if err == nil || ready {
 			t.Fatalf("oversized provider output was accepted: ready=%v err=%v", ready, err)
+		}
+	})
+
+	t.Run("staged output", func(t *testing.T) {
+		script := "i=0; while [ \"$i\" -lt 100; do printf 12345678; i=$((i+1)); done > output/result\n" +
+			"printf '%s\\n' '{\"idempotency_key\":\"file-attempt\",\"completed_at\":\"2026-08-28T00:00:00Z\",\"artifacts\":[]}'\n"
+		provider := newProvider(script, 512)
+		invocation := Invocation{IdempotencyKey: "file-attempt", Deadline: time.Now().Add(5 * time.Second)}
+		if err := provider.Start(context.Background(), invocation); err != nil {
+			t.Fatal(err)
+		}
+		_, _, _ = waitForProvider(provider, invocation.IdempotencyKey, invocation.Deadline)
+		info, statErr := os.Stat(filepath.Join(provider.config.StagedRoot, "output", "result"))
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+		if info.Size() > 512 {
+			t.Fatalf("staged output escaped file limit: size=%d", info.Size())
 		}
 	})
 }

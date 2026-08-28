@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
@@ -18,7 +19,7 @@ func sandboxDriver() (contractsv1.ProviderIsolationEvidenceDriver, error) {
 	return contractsv1.ProviderIsolationEvidenceDriverSandboxExec, nil
 }
 
-func sandboxCommand(executable string, args []string, root string) (string, []string, error) {
+func sandboxCommand(executable string, args []string, root string, maxOutputBytes int) (string, []string, error) {
 	sandbox, err := exec.LookPath("sandbox-exec")
 	if err != nil {
 		return "", nil, err
@@ -32,17 +33,17 @@ func sandboxCommand(executable string, args []string, root string) (string, []st
 	}
 	executablePattern := regexp.QuoteMeta(strings.TrimPrefix(executable, "/"))
 	readPattern := fmt.Sprintf(`^/(?!System(?:/|$)|usr(?:/|$)|bin(?:/|$)|sbin(?:/|$)|dev(?:/|$)|etc(?:/|$)|Library(?:/|$)|private/etc(?:/|$)|private/var/db(?:/|$)|(?:%s)(?:/|$)|%s$)`, rootPatterns, executablePattern)
-	outputRoots := []string{root + "/output"}
+	outputFiles := []string{root + "/output/result"}
 	if strings.HasPrefix(root, "/private/var/") {
-		outputRoots = append(outputRoots, "/"+strings.TrimPrefix(root+"/output", "/private/"))
+		outputFiles = append(outputFiles, "/"+strings.TrimPrefix(root+"/output/result", "/private/"))
 	} else if strings.HasPrefix(root, "/var/") {
-		outputRoots = append(outputRoots, "/private"+root+"/output")
+		outputFiles = append(outputFiles, "/private"+root+"/output/result")
 	}
 	writeFilters := `(require-not (literal "/dev/null"))`
-	for _, outputRoot := range outputRoots {
-		writeFilters += fmt.Sprintf(`(require-not (subpath "%s"))`, strings.ReplaceAll(outputRoot, `"`, `\"`))
+	for _, outputFile := range outputFiles {
+		writeFilters += fmt.Sprintf(`(require-not (literal "%s"))`, strings.ReplaceAll(outputFile, `"`, `\"`))
 	}
 	profile := fmt.Sprintf(`(version 1)(allow default)(deny network*)(deny file-read-data (regex #"%s"))(deny file-write* (require-all %s))`, readPattern, writeFilters)
-	commandArgs := []string{"-p", profile, executable}
+	commandArgs := []string{"-p", profile, "/bin/sh", "-c", `ulimit -f "$1"; shift; exec "$@"`, "agent-workflow-provider", strconv.Itoa(maxOutputBytes / 512), executable}
 	return sandbox, append(commandArgs, args...), nil
 }

@@ -85,8 +85,19 @@ func NewSubprocessProvider(config SubprocessProviderConfig) (*SubprocessProvider
 	if config.MaxOutputBytes == 0 {
 		config.MaxOutputBytes = defaultProviderOutputLimit
 	}
-	if config.MaxOutputBytes < 1 || config.MaxOutputBytes > 8<<20 {
-		return nil, errors.New("provider output limit must be between 1 byte and 8 MiB")
+	if config.MaxOutputBytes < 512 || config.MaxOutputBytes > 8<<20 || config.MaxOutputBytes%512 != 0 {
+		return nil, errors.New("provider output limit must be a multiple of 512 bytes between 512 bytes and 8 MiB")
+	}
+	outputPath := filepath.Join(root, "output", "result")
+	output, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("prepare provider output: %w", err)
+	}
+	if err := output.Close(); err != nil {
+		return nil, err
+	}
+	if info, err := os.Lstat(outputPath); err != nil || !info.Mode().IsRegular() {
+		return nil, errors.New("provider output/result must be a regular file")
 	}
 	config.Args = append([]string{}, config.Args...)
 	environment := make(map[string]string, len(config.Environment))
@@ -161,7 +172,7 @@ func (p *SubprocessProvider) Start(ctx context.Context, invocation Invocation) e
 	if err != nil {
 		return err
 	}
-	name, args, err := sandboxCommand(p.config.Executable, p.config.Args, p.config.StagedRoot)
+	name, args, err := sandboxCommand(p.config.Executable, p.config.Args, p.config.StagedRoot, p.config.MaxOutputBytes)
 	if err != nil {
 		return err
 	}
@@ -192,6 +203,13 @@ func (p *SubprocessProvider) Start(ctx context.Context, invocation Invocation) e
 
 func (p *SubprocessProvider) execute(invocation Invocation, cmd *exec.Cmd, stdout *limitedBuffer, running *subprocessRun, cancel context.CancelFunc) {
 	err := cmd.Run()
+	if err == nil {
+		if info, statErr := os.Stat(filepath.Join(p.config.StagedRoot, "output", "result")); statErr != nil {
+			err = statErr
+		} else if info.Size() > int64(p.config.MaxOutputBytes) {
+			err = errors.New("provider staged output exceeded its limit")
+		}
+	}
 	if err == nil {
 		var result ProviderResult
 		decoder := json.NewDecoder(bytes.NewReader(stdout.Bytes()))
@@ -258,6 +276,9 @@ func (p *SubprocessProvider) Cancel(_ context.Context, key string) error {
 }
 
 func (p *SubprocessProvider) verifyInputs() error {
+	if info, err := os.Lstat(filepath.Join(p.config.StagedRoot, "output", "result")); err != nil || !info.Mode().IsRegular() {
+		return errors.New("provider output/result changed after isolation admission")
+	}
 	executableHash, err := hashFile(p.config.Executable)
 	if err != nil {
 		return err

@@ -106,7 +106,7 @@ Job -> Campaign -> Workflow@version -> Node Contract
 
 The Go Core is the only canonical mutation authority. Storage, provider Agents, CLI, GUI, MCP, and WebMCP are adapters. Context Packs contain evidence; Action Artifacts contain decisions or proposed mutations.
 
-`CampaignRuntime.ReplayAt` reads one exact receipt prefix as raw diagnostic data or as the `public_metadata@1` redacted projection. `NewSubprocessProvider` is the reference production isolation seam; its staged root must contain read-only `input/` and writable `output/`. Ordinary in-process providers remain explicitly trusted/testing adapters, and a production Engine can reject them with `RequireProviderIsolation(staged_subprocess)` before Campaign admission.
+`CampaignRuntime.ReplayAt` reads one exact receipt prefix as raw diagnostic data or as the `public_metadata@1` redacted projection. `NewSubprocessProvider` is the reference production isolation seam; its staged root must contain read-only `input/` and the single bounded writable file `output/result`. Ordinary in-process providers remain explicitly trusted/testing adapters, and a production Engine can reject them with `RequireProviderIsolation(staged_subprocess)` before Campaign admission.
 
 See [Architecture](docs/architecture.md), [Security](SECURITY.md), [Compatibility](COMPATIBILITY.md), and [Contributing](CONTRIBUTING.md).
 
