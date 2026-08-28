@@ -78,6 +78,10 @@ func NewWithWebMCPPortfolio(core *workflow.AuthoringCore, now func() time.Time, 
 	return newWithWebMCP(NewWithPortfolio(core, now, portfolio).(*Handler), config)
 }
 
+func NewWithWebMCPControlPlane(core *workflow.AuthoringCore, now func() time.Time, portfolio *contractsv1.CanvasPortfolioSnapshot, history DefinitionHistory, changeCases []contractsv1.ChangeCaseCanvas, config WebMCPConfig) (http.Handler, error) {
+	return newWithWebMCP(NewWithControlPlane(core, now, portfolio, history, changeCases).(*Handler), config)
+}
+
 func newWithWebMCP(handler *Handler, config WebMCPConfig) (http.Handler, error) {
 	if config.Audit == nil {
 		return nil, errors.New("WebMCP audit writer is required")

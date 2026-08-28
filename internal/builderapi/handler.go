@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JamesbbBriz/agent-workflow/canvas"
+	"github.com/JamesbbBriz/agent-workflow/internal/contract"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 	"github.com/JamesbbBriz/agent-workflow/workflow"
 )
@@ -21,14 +22,15 @@ const maxRequestBytes = 2 << 20
 const localApprovalActor = "local-operator"
 
 type Handler struct {
-	core      *workflow.AuthoringCore
-	now       func() time.Time
-	mu        sync.Mutex
-	canvas    *contractsv1.CanvasSnapshot
-	portfolio *contractsv1.CanvasPortfolioSnapshot
-	jobs      map[contractsv1.Identifier]contractsv1.JobDefinition
-	campaigns map[contractsv1.Identifier]contractsv1.CampaignDefinition
-	webMCP    *webMCPGate
+	core        *workflow.AuthoringCore
+	now         func() time.Time
+	mu          sync.Mutex
+	canvas      *contractsv1.CanvasSnapshot
+	portfolio   *contractsv1.CanvasPortfolioSnapshot
+	changeCases []contractsv1.ChangeCaseCanvas
+	jobs        map[contractsv1.Identifier]contractsv1.JobDefinition
+	campaigns   map[contractsv1.Identifier]contractsv1.CampaignDefinition
+	webMCP      *webMCPGate
 }
 
 type DefinitionHistory struct {
@@ -56,10 +58,14 @@ func NewWithPortfolio(core *workflow.AuthoringCore, now func() time.Time, portfo
 }
 
 func NewWithPortfolioHistory(core *workflow.AuthoringCore, now func() time.Time, portfolio *contractsv1.CanvasPortfolioSnapshot, history DefinitionHistory) http.Handler {
+	return NewWithControlPlane(core, now, portfolio, history, nil)
+}
+
+func NewWithControlPlane(core *workflow.AuthoringCore, now func() time.Time, portfolio *contractsv1.CanvasPortfolioSnapshot, history DefinitionHistory, changeCases []contractsv1.ChangeCaseCanvas) http.Handler {
 	if now == nil {
 		now = time.Now
 	}
-	handler := &Handler{core: core, now: now, portfolio: portfolio, jobs: map[contractsv1.Identifier]contractsv1.JobDefinition{}, campaigns: map[contractsv1.Identifier]contractsv1.CampaignDefinition{}}
+	handler := &Handler{core: core, now: now, portfolio: portfolio, changeCases: append([]contractsv1.ChangeCaseCanvas{}, changeCases...), jobs: map[contractsv1.Identifier]contractsv1.JobDefinition{}, campaigns: map[contractsv1.Identifier]contractsv1.CampaignDefinition{}}
 	for _, job := range history.Jobs {
 		handler.jobs[job.Id] = job
 	}
@@ -102,6 +108,31 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.write(w, *h.portfolio, nil)
+		return
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/control-plane":
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.portfolio == nil {
+			h.write(w, nil, errors.New("trusted Canvas portfolio is unavailable"))
+			return
+		}
+		providers, err := providerReadiness()
+		if err != nil {
+			h.write(w, nil, err)
+			return
+		}
+		changeCases := make([]contractsv1.ChangeCaseCanvas, len(h.changeCases))
+		copy(changeCases, h.changeCases)
+		result := contractsv1.ControlPlaneSnapshot{
+			Kind: contractsv1.ControlPlaneSnapshotKindControlPlaneSnapshot, SchemaVersion: 1,
+			GeneratedAt: h.now().UTC(), Portfolio: *h.portfolio,
+			ChangeCases: changeCases, Providers: providers,
+		}
+		if err := contract.ValidateDefinition("ControlPlaneSnapshot", result); err != nil {
+			h.write(w, nil, err)
+			return
+		}
+		h.write(w, result, nil)
 		return
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/canvas":
 		h.mu.Lock()
@@ -266,6 +297,19 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		h.notFound(w)
 	}
+}
+
+func providerReadiness() ([]contractsv1.ProviderReadiness, error) {
+	descriptors := workflow.BundledProviderDescriptors()
+	result := make([]contractsv1.ProviderReadiness, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		readiness, err := workflow.InspectProviderReadiness(descriptor.Id)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, readiness)
+	}
+	return result, nil
 }
 
 func (h *Handler) writeApproval(w http.ResponseWriter, target contractsv1.CanvasSnapshot, receipt contractsv1.Receipt, replay contractsv1.ReplayBundle) {

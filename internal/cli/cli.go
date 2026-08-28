@@ -164,7 +164,11 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 			return writeError(stdout, stderr, true, "canvas_unavailable", err)
 		}
 	}
-	var handler http.Handler = builderapi.NewWithPortfolioHistory(core, time.Now, portfolio, history)
+	changeCases, err := restoreChangeCases(ledger, time.Now().UTC())
+	if err != nil {
+		return writeError(stdout, stderr, true, "change_cases_unavailable", err)
+	}
+	var handler http.Handler = builderapi.NewWithControlPlane(core, time.Now, portfolio, history, changeCases)
 	var auditFile *os.File
 	if *webOrigin != "" {
 		auditFile, err = os.OpenFile(*webMCPAuditPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -187,7 +191,7 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 			return writeError(stdout, stderr, true, "audit_unavailable", errors.New("WebMCP audit log is unavailable"))
 		}
 		defer auditFile.Close()
-		handler, err = builderapi.NewWithWebMCPPortfolio(core, time.Now, portfolio, builderapi.WebMCPConfig{PageOrigin: *webOrigin, Audit: auditFile})
+		handler, err = builderapi.NewWithWebMCPControlPlane(core, time.Now, portfolio, history, changeCases, builderapi.WebMCPConfig{PageOrigin: *webOrigin, Audit: auditFile})
 		if err != nil {
 			return writeError(stdout, stderr, true, "webmcp_unavailable", err)
 		}
@@ -383,6 +387,32 @@ func restoreCanvasApprovals(snapshot *contractsv1.CanvasSnapshot, ledger *workfl
 		snapshot = &next
 	}
 	return snapshot, nil
+}
+
+func restoreChangeCases(ledger *workflow.FileLedger, generatedAt time.Time) ([]contractsv1.ChangeCaseCanvas, error) {
+	replays, err := ledger.ReplaysByReceiptTypes(
+		contractsv1.ReceiptReceiptTypeChangeProposed,
+		contractsv1.ReceiptReceiptTypeChangeMerged,
+		contractsv1.ReceiptReceiptTypeConflictDetected,
+		contractsv1.ReceiptReceiptTypeResolutionProposed,
+		contractsv1.ReceiptReceiptTypeResolutionApproved,
+		contractsv1.ReceiptReceiptTypeMutationLeaseAcquired,
+		contractsv1.ReceiptReceiptTypeMutationApplied,
+		contractsv1.ReceiptReceiptTypeMutationReadback,
+		contractsv1.ReceiptReceiptTypeResourceGenerationAdvanced,
+	)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]contractsv1.ChangeCaseCanvas, 0, len(replays))
+	for _, replay := range replays {
+		projected, err := canvas.ProjectChangeCase(replay, generatedAt)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, projected)
+	}
+	return result, nil
 }
 
 func restorePortfolioApprovals(portfolio *contractsv1.CanvasPortfolioSnapshot, ledger *workflow.FileLedger) (*contractsv1.CanvasPortfolioSnapshot, error) {
