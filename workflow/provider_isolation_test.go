@@ -66,8 +66,8 @@ func TestSubprocessProviderSandboxHidesAmbientEnvironmentAndOutsideFiles(t *test
 	completedAt := time.Now().UTC()
 	script := "#!/bin/sh\n" +
 		"[ -z \"$UNDECLARED_PROVIDER_CANARY\" ] || exit 21\n" +
-		"if IFS= read -r value < \"$1\"; then exit 24; fi\n" +
-		"if printf tamper > input/tamper; then exit 25; fi\n" +
+		"if /usr/bin/cat \"$1\" >/dev/null 2>&1; then exit 24; fi\n" +
+		"if /usr/bin/tee input/tamper </dev/null >/dev/null 2>&1; then exit 25; fi\n" +
 		"printf output > output/result || exit 26\n" +
 		"printf '%s\\n' '{\"idempotency_key\":\"sandbox-attempt\",\"completed_at\":\"" + completedAt.Format(time.RFC3339Nano) + "\",\"artifacts\":[]}'\n"
 	if err := os.WriteFile(filepath.Join(root, "input", "provider.sh"), []byte(script), 0700); err != nil {
