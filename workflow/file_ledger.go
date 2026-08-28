@@ -275,7 +275,7 @@ func (l *FileLedger) load() (map[string][]contractsv1.Receipt, error) {
 	defer file.Close()
 	all := make(map[string][]contractsv1.Receipt)
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), contract.MaxDocumentBytes+1)
 	line := 0
 	for scanner.Scan() {
 		line++

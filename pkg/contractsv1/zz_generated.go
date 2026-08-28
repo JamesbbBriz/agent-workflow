@@ -152,6 +152,9 @@ type AgentWorkflowContractCatalog struct {
 	// "core_completed_event_payload".
 	CoreCompletedEventPayload *CoreCompletedEventPayload `json:"core_completed_event_payload,omitempty,omitzero"`
 
+	// ExecutorProfile corresponds to the JSON schema field "executor_profile".
+	ExecutorProfile *ExecutorProfile `json:"executor_profile,omitempty,omitzero"`
+
 	// JobDefinition corresponds to the JSON schema field "job_definition".
 	JobDefinition *JobDefinition `json:"job_definition,omitempty,omitzero"`
 
@@ -173,6 +176,19 @@ type AgentWorkflowContractCatalog struct {
 	// "proposal_replacement".
 	ProposalReplacement *ProposalReplacement `json:"proposal_replacement,omitempty,omitzero"`
 
+	// ProviderCancellation corresponds to the JSON schema field
+	// "provider_cancellation".
+	ProviderCancellation *ProviderCancellation `json:"provider_cancellation,omitempty,omitzero"`
+
+	// ProviderDescriptor corresponds to the JSON schema field "provider_descriptor".
+	ProviderDescriptor *ProviderDescriptor `json:"provider_descriptor,omitempty,omitzero"`
+
+	// ProviderEvent corresponds to the JSON schema field "provider_event".
+	ProviderEvent *ProviderEvent `json:"provider_event,omitempty,omitzero"`
+
+	// ProviderEventPage corresponds to the JSON schema field "provider_event_page".
+	ProviderEventPage *ProviderEventPage `json:"provider_event_page,omitempty,omitzero"`
+
 	// ProviderExecutionEventPayload corresponds to the JSON schema field
 	// "provider_execution_event_payload".
 	ProviderExecutionEventPayload *ProviderExecutionEventPayload `json:"provider_execution_event_payload,omitempty,omitzero"`
@@ -180,6 +196,21 @@ type AgentWorkflowContractCatalog struct {
 	// ProviderIsolationEvidence corresponds to the JSON schema field
 	// "provider_isolation_evidence".
 	ProviderIsolationEvidence *ProviderIsolationEvidence `json:"provider_isolation_evidence,omitempty,omitzero"`
+
+	// ProviderObservation corresponds to the JSON schema field
+	// "provider_observation".
+	ProviderObservation *ProviderObservation `json:"provider_observation,omitempty,omitzero"`
+
+	// ProviderProtocolRequest corresponds to the JSON schema field
+	// "provider_protocol_request".
+	ProviderProtocolRequest *ProviderProtocolRequest `json:"provider_protocol_request,omitempty,omitzero"`
+
+	// ProviderProtocolResponse corresponds to the JSON schema field
+	// "provider_protocol_response".
+	ProviderProtocolResponse *ProviderProtocolResponse `json:"provider_protocol_response,omitempty,omitzero"`
+
+	// ProviderRunRef corresponds to the JSON schema field "provider_run_ref".
+	ProviderRunRef *ProviderRunRef `json:"provider_run_ref,omitempty,omitzero"`
 
 	// Receipt corresponds to the JSON schema field "receipt".
 	Receipt *Receipt `json:"receipt,omitempty,omitzero"`
@@ -1484,6 +1515,53 @@ type EvidenceFrontier struct {
 	SourceHashes []SHA256 `json:"source_hashes"`
 }
 
+type ExecutorProfile struct {
+	// AdapterVersion corresponds to the JSON schema field "adapter_version".
+	AdapterVersion string `json:"adapter_version"`
+
+	// Capabilities corresponds to the JSON schema field "capabilities".
+	Capabilities []ProviderCapability `json:"capabilities"`
+
+	// ConfigHash corresponds to the JSON schema field "config_hash".
+	ConfigHash SHA256 `json:"config_hash"`
+
+	// ConfigRef corresponds to the JSON schema field "config_ref".
+	ConfigRef string `json:"config_ref"`
+
+	// IsolationProfile corresponds to the JSON schema field "isolation_profile".
+	IsolationProfile ProviderIsolationProfile `json:"isolation_profile"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ExecutorProfileKind `json:"kind"`
+
+	// ModelRef corresponds to the JSON schema field "model_ref".
+	ModelRef string `json:"model_ref"`
+
+	// NetworkAccess corresponds to the JSON schema field "network_access".
+	NetworkAccess bool `json:"network_access"`
+
+	// ProviderId corresponds to the JSON schema field "provider_id".
+	ProviderId ProviderID `json:"provider_id"`
+
+	// ProviderVersion corresponds to the JSON schema field "provider_version".
+	ProviderVersion string `json:"provider_version"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ExecutorProfileSchemaVersion `json:"schema_version"`
+
+	// SecretRefs corresponds to the JSON schema field "secret_refs".
+	SecretRefs []string `json:"secret_refs"`
+
+	// ToolAllowlist corresponds to the JSON schema field "tool_allowlist".
+	ToolAllowlist Strings `json:"tool_allowlist"`
+}
+
+type ExecutorProfileKind string
+
+const ExecutorProfileKindExecutorProfile ExecutorProfileKind = "executor_profile"
+
+type ExecutorProfileSchemaVersion int
+
 type ExpandedNodeContract struct {
 	// ContextAuthorities corresponds to the JSON schema field "context_authorities".
 	ContextAuthorities []ExpandedNodeContractContextAuthoritiesElem `json:"context_authorities"`
@@ -1775,9 +1853,152 @@ const ProposalReplacementReasonHumanImplementation ProposalReplacementReason = "
 const ProposalReplacementReasonRebase ProposalReplacementReason = "rebase"
 const ProposalReplacementReasonResolver ProposalReplacementReason = "resolver"
 
+type ProviderCancellation struct {
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ProviderCancellationKind `json:"kind"`
+
+	// RunRef corresponds to the JSON schema field "run_ref".
+	RunRef string `json:"run_ref"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ProviderCancellationSchemaVersion `json:"schema_version"`
+
+	// Status corresponds to the JSON schema field "status".
+	Status ProviderCancellationStatus `json:"status"`
+}
+
+type ProviderCancellationKind string
+
+const ProviderCancellationKindProviderCancellation ProviderCancellationKind = "provider_cancellation"
+
+type ProviderCancellationSchemaVersion int
+
+type ProviderCancellationStatus string
+
+const ProviderCancellationStatusAccepted ProviderCancellationStatus = "accepted"
+const ProviderCancellationStatusAlreadyTerminal ProviderCancellationStatus = "already_terminal"
+const ProviderCancellationStatusUnsupported ProviderCancellationStatus = "unsupported"
+
+type ProviderCapability string
+
+const ProviderCapabilityEventCursor ProviderCapability = "event_cursor"
+const ProviderCapabilityInteractiveApproval ProviderCapability = "interactive_approval"
+const ProviderCapabilityPolling ProviderCapability = "polling"
+const ProviderCapabilityResume ProviderCapability = "resume"
+const ProviderCapabilityScopedCancel ProviderCapability = "scoped_cancel"
+const ProviderCapabilityStreaming ProviderCapability = "streaming"
+const ProviderCapabilityStructuredOutput ProviderCapability = "structured_output"
+const ProviderCapabilityToolAllowlist ProviderCapability = "tool_allowlist"
+const ProviderCapabilityUsage ProviderCapability = "usage"
+
+type ProviderDescriptor struct {
+	// AdapterVersion corresponds to the JSON schema field "adapter_version".
+	AdapterVersion string `json:"adapter_version"`
+
+	// AuthEnvironment corresponds to the JSON schema field "auth_environment".
+	AuthEnvironment []string `json:"auth_environment"`
+
+	// Capabilities corresponds to the JSON schema field "capabilities".
+	Capabilities []ProviderCapability `json:"capabilities"`
+
+	// DisplayName corresponds to the JSON schema field "display_name".
+	DisplayName string `json:"display_name"`
+
+	// Executable corresponds to the JSON schema field "executable".
+	Executable string `json:"executable"`
+
+	// Id corresponds to the JSON schema field "id".
+	Id ProviderID `json:"id"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ProviderDescriptorKind `json:"kind"`
+
+	// ProtocolVersion corresponds to the JSON schema field "protocol_version".
+	ProtocolVersion ProviderDescriptorProtocolVersion `json:"protocol_version"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ProviderDescriptorSchemaVersion `json:"schema_version"`
+}
+
+type ProviderDescriptorKind string
+
+const ProviderDescriptorKindProviderDescriptor ProviderDescriptorKind = "provider_descriptor"
+
+type ProviderDescriptorProtocolVersion int
+
+type ProviderDescriptorSchemaVersion int
+
+type ProviderEvent struct {
+	// Cursor corresponds to the JSON schema field "cursor".
+	Cursor int `json:"cursor"`
+
+	// EventType corresponds to the JSON schema field "event_type".
+	EventType ProviderEventEventType `json:"event_type"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ProviderEventKind `json:"kind"`
+
+	// ObservedAt corresponds to the JSON schema field "observed_at".
+	ObservedAt time.Time `json:"observed_at"`
+
+	// PayloadHash corresponds to the JSON schema field "payload_hash".
+	PayloadHash SHA256 `json:"payload_hash"`
+
+	// RunRef corresponds to the JSON schema field "run_ref".
+	RunRef string `json:"run_ref"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ProviderEventSchemaVersion `json:"schema_version"`
+}
+
+type ProviderEventEventType string
+
+const ProviderEventEventTypeCancelled ProviderEventEventType = "cancelled"
+const ProviderEventEventTypeFailed ProviderEventEventType = "failed"
+const ProviderEventEventTypeMessage ProviderEventEventType = "message"
+const ProviderEventEventTypeResult ProviderEventEventType = "result"
+const ProviderEventEventTypeStarted ProviderEventEventType = "started"
+const ProviderEventEventTypeTool ProviderEventEventType = "tool"
+const ProviderEventEventTypeUsage ProviderEventEventType = "usage"
+
+type ProviderEventKind string
+
+const ProviderEventKindProviderEvent ProviderEventKind = "provider_event"
+
+type ProviderEventPage struct {
+	// AfterCursor corresponds to the JSON schema field "after_cursor".
+	AfterCursor int `json:"after_cursor"`
+
+	// Events corresponds to the JSON schema field "events".
+	Events []ProviderEvent `json:"events"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ProviderEventPageKind `json:"kind"`
+
+	// NextCursor corresponds to the JSON schema field "next_cursor".
+	NextCursor int `json:"next_cursor"`
+
+	// RunRef corresponds to the JSON schema field "run_ref".
+	RunRef string `json:"run_ref"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ProviderEventPageSchemaVersion `json:"schema_version"`
+}
+
+type ProviderEventPageKind string
+
+const ProviderEventPageKindProviderEventPage ProviderEventPageKind = "provider_event_page"
+
+type ProviderEventPageSchemaVersion int
+
+type ProviderEventSchemaVersion int
+
 type ProviderExecutionEventPayload struct {
 	// CompletedAt corresponds to the JSON schema field "completed_at".
 	CompletedAt time.Time `json:"completed_at"`
+
+	// ExecutorProfile corresponds to the JSON schema field "executor_profile".
+	ExecutorProfile *ExecutorProfile `json:"executor_profile,omitempty,omitzero"`
 
 	// IdempotencyKey corresponds to the JSON schema field "idempotency_key".
 	IdempotencyKey string `json:"idempotency_key"`
@@ -1787,7 +2008,25 @@ type ProviderExecutionEventPayload struct {
 
 	// NodeId corresponds to the JSON schema field "node_id".
 	NodeId Identifier `json:"node_id"`
+
+	// ProviderEvents corresponds to the JSON schema field "provider_events".
+	ProviderEvents []ProviderEvent `json:"provider_events,omitempty,omitzero"`
+
+	// ProviderObservation corresponds to the JSON schema field
+	// "provider_observation".
+	ProviderObservation *ProviderObservation `json:"provider_observation,omitempty,omitzero"`
+
+	// ProviderRun corresponds to the JSON schema field "provider_run".
+	ProviderRun *ProviderRunRef `json:"provider_run,omitempty,omitzero"`
 }
+
+type ProviderID string
+
+const ProviderIDClaudeCode ProviderID = "claude-code"
+const ProviderIDCodex ProviderID = "codex"
+const ProviderIDHermesAgent ProviderID = "hermes-agent"
+const ProviderIDOpenclaw ProviderID = "openclaw"
+const ProviderIDPi ProviderID = "pi"
 
 type ProviderIsolationEvidence struct {
 	// DeclaredEnvironment corresponds to the JSON schema field
@@ -1805,6 +2044,9 @@ type ProviderIsolationEvidence struct {
 
 	// Kind corresponds to the JSON schema field "kind".
 	Kind ProviderIsolationEvidenceKind `json:"kind"`
+
+	// NetworkAccess corresponds to the JSON schema field "network_access".
+	NetworkAccess *bool `json:"network_access,omitempty,omitzero"`
 
 	// Profile corresponds to the JSON schema field "profile".
 	Profile ProviderIsolationProfile `json:"profile"`
@@ -1832,6 +2074,189 @@ type ProviderIsolationProfile string
 
 const ProviderIsolationProfileStagedSubprocess ProviderIsolationProfile = "staged_subprocess"
 const ProviderIsolationProfileTrustedInProcess ProviderIsolationProfile = "trusted_in_process"
+
+type ProviderObservation struct {
+	// ErrorCode corresponds to the JSON schema field "error_code".
+	ErrorCode *Identifier `json:"error_code,omitempty,omitzero"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ProviderObservationKind `json:"kind"`
+
+	// NextCursor corresponds to the JSON schema field "next_cursor".
+	NextCursor int `json:"next_cursor"`
+
+	// OutputHash corresponds to the JSON schema field "output_hash".
+	OutputHash *SHA256 `json:"output_hash,omitempty,omitzero"`
+
+	// RunRef corresponds to the JSON schema field "run_ref".
+	RunRef string `json:"run_ref"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ProviderObservationSchemaVersion `json:"schema_version"`
+
+	// Status corresponds to the JSON schema field "status".
+	Status ProviderObservationStatus `json:"status"`
+
+	// Usage corresponds to the JSON schema field "usage".
+	Usage ProviderUsage `json:"usage"`
+}
+
+type ProviderObservationKind string
+
+const ProviderObservationKindProviderObservation ProviderObservationKind = "provider_observation"
+
+type ProviderObservationSchemaVersion int
+
+type ProviderObservationStatus string
+
+const ProviderObservationStatusCancelled ProviderObservationStatus = "cancelled"
+const ProviderObservationStatusFailed ProviderObservationStatus = "failed"
+const ProviderObservationStatusQueued ProviderObservationStatus = "queued"
+const ProviderObservationStatusRunning ProviderObservationStatus = "running"
+const ProviderObservationStatusSucceeded ProviderObservationStatus = "succeeded"
+
+type ProviderProtocolRequest struct {
+	// AfterCursor corresponds to the JSON schema field "after_cursor".
+	AfterCursor *int `json:"after_cursor,omitempty,omitzero"`
+
+	// Deadline corresponds to the JSON schema field "deadline".
+	Deadline *time.Time `json:"deadline,omitempty,omitzero"`
+
+	// ExecutorProfile corresponds to the JSON schema field "executor_profile".
+	ExecutorProfile *ExecutorProfile `json:"executor_profile,omitempty,omitzero"`
+
+	// IdempotencyKey corresponds to the JSON schema field "idempotency_key".
+	IdempotencyKey *string `json:"idempotency_key,omitempty,omitzero"`
+
+	// InputManifestHash corresponds to the JSON schema field "input_manifest_hash".
+	InputManifestHash *SHA256 `json:"input_manifest_hash,omitempty,omitzero"`
+
+	// Invocation corresponds to the JSON schema field "invocation".
+	Invocation ProviderProtocolRequestInvocation `json:"invocation,omitempty,omitzero"`
+
+	// InvocationId corresponds to the JSON schema field "invocation_id".
+	InvocationId *string `json:"invocation_id,omitempty,omitzero"`
+
+	// Operation corresponds to the JSON schema field "operation".
+	Operation ProviderProtocolRequestOperation `json:"operation"`
+
+	// OutputContractHash corresponds to the JSON schema field "output_contract_hash".
+	OutputContractHash *SHA256 `json:"output_contract_hash,omitempty,omitzero"`
+
+	// ProtocolVersion corresponds to the JSON schema field "protocol_version".
+	ProtocolVersion ProviderProtocolRequestProtocolVersion `json:"protocol_version"`
+
+	// RequestId corresponds to the JSON schema field "request_id".
+	RequestId string `json:"request_id"`
+
+	// RunRef corresponds to the JSON schema field "run_ref".
+	RunRef *string `json:"run_ref,omitempty,omitzero"`
+
+	// StagedWorkspace corresponds to the JSON schema field "staged_workspace".
+	StagedWorkspace *ProviderProtocolRequestStagedWorkspace `json:"staged_workspace,omitempty,omitzero"`
+}
+
+type ProviderProtocolRequestInvocation map[string]interface{}
+
+type ProviderProtocolRequestOperation string
+
+const ProviderProtocolRequestOperationCancel ProviderProtocolRequestOperation = "cancel"
+const ProviderProtocolRequestOperationDescribe ProviderProtocolRequestOperation = "describe"
+const ProviderProtocolRequestOperationEvents ProviderProtocolRequestOperation = "events"
+const ProviderProtocolRequestOperationInspect ProviderProtocolRequestOperation = "inspect"
+const ProviderProtocolRequestOperationStart ProviderProtocolRequestOperation = "start"
+
+type ProviderProtocolRequestProtocolVersion int
+
+type ProviderProtocolRequestStagedWorkspace string
+
+const ProviderProtocolRequestStagedWorkspaceWorkspace ProviderProtocolRequestStagedWorkspace = "/workspace"
+
+type ProviderProtocolResponse struct {
+	// Cancellation corresponds to the JSON schema field "cancellation".
+	Cancellation *ProviderCancellation `json:"cancellation,omitempty,omitzero"`
+
+	// Descriptor corresponds to the JSON schema field "descriptor".
+	Descriptor *ProviderDescriptor `json:"descriptor,omitempty,omitzero"`
+
+	// ErrorCode corresponds to the JSON schema field "error_code".
+	ErrorCode *Identifier `json:"error_code,omitempty,omitzero"`
+
+	// Events corresponds to the JSON schema field "events".
+	Events *ProviderEventPage `json:"events,omitempty,omitzero"`
+
+	// Observation corresponds to the JSON schema field "observation".
+	Observation *ProviderObservation `json:"observation,omitempty,omitzero"`
+
+	// ProtocolVersion corresponds to the JSON schema field "protocol_version".
+	ProtocolVersion ProviderProtocolResponseProtocolVersion `json:"protocol_version"`
+
+	// RequestId corresponds to the JSON schema field "request_id".
+	RequestId string `json:"request_id"`
+
+	// ResponseType corresponds to the JSON schema field "response_type".
+	ResponseType ProviderProtocolResponseResponseType `json:"response_type"`
+
+	// Run corresponds to the JSON schema field "run".
+	Run *ProviderRunRef `json:"run,omitempty,omitzero"`
+}
+
+type ProviderProtocolResponseProtocolVersion int
+
+type ProviderProtocolResponseResponseType string
+
+const ProviderProtocolResponseResponseTypeCancellation ProviderProtocolResponseResponseType = "cancellation"
+const ProviderProtocolResponseResponseTypeDescriptor ProviderProtocolResponseResponseType = "descriptor"
+const ProviderProtocolResponseResponseTypeError ProviderProtocolResponseResponseType = "error"
+const ProviderProtocolResponseResponseTypeEvents ProviderProtocolResponseResponseType = "events"
+const ProviderProtocolResponseResponseTypeObservation ProviderProtocolResponseResponseType = "observation"
+const ProviderProtocolResponseResponseTypeRun ProviderProtocolResponseResponseType = "run"
+
+type ProviderRunRef struct {
+	// ExecutorConfigHash corresponds to the JSON schema field "executor_config_hash".
+	ExecutorConfigHash SHA256 `json:"executor_config_hash"`
+
+	// InvocationId corresponds to the JSON schema field "invocation_id".
+	InvocationId string `json:"invocation_id"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ProviderRunRefKind `json:"kind"`
+
+	// ProviderId corresponds to the JSON schema field "provider_id".
+	ProviderId ProviderID `json:"provider_id"`
+
+	// RunRef corresponds to the JSON schema field "run_ref".
+	RunRef string `json:"run_ref"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ProviderRunRefSchemaVersion `json:"schema_version"`
+
+	// SessionRef corresponds to the JSON schema field "session_ref".
+	SessionRef *string `json:"session_ref,omitempty,omitzero"`
+
+	// StartedAt corresponds to the JSON schema field "started_at".
+	StartedAt time.Time `json:"started_at"`
+}
+
+type ProviderRunRefKind string
+
+const ProviderRunRefKindProviderRunRef ProviderRunRefKind = "provider_run_ref"
+
+type ProviderRunRefSchemaVersion int
+
+type ProviderUsage struct {
+	// CachedTokens corresponds to the JSON schema field "cached_tokens".
+	CachedTokens int `json:"cached_tokens"`
+
+	// InputTokens corresponds to the JSON schema field "input_tokens".
+	InputTokens int `json:"input_tokens"`
+
+	// OutputTokens corresponds to the JSON schema field "output_tokens".
+	OutputTokens int `json:"output_tokens"`
+
+	// ToolCalls corresponds to the JSON schema field "tool_calls".
+	ToolCalls int `json:"tool_calls"`
+}
 
 type Receipt struct {
 	// Actor corresponds to the JSON schema field "actor".
@@ -2373,10 +2798,6 @@ type WorkflowLintIssueSeverity string
 const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
 const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
 
-type WorkflowRef string
-
-type RedactedReceiptPreviousReceiptHash_0 = SHA256
-
 type WorkflowLintReport struct {
 	// Issues corresponds to the JSON schema field "issues".
 	Issues []WorkflowLintIssue `json:"issues"`
@@ -2395,6 +2816,10 @@ type WorkflowLintReportKind string
 
 const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflow_lint_report"
 
+type RedactedReceiptPreviousReceiptHash_0 = SHA256
+
 type WorkflowLintReportSchemaVersion int
+
+type WorkflowRef string
 
 type ReceiptPreviousReceiptHash_0 = SHA256

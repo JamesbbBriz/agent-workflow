@@ -87,6 +87,21 @@ npm run generate
 npm run check:generated
 ```
 
+Build the five bundled bridges, then inspect the bridge and upstream CLI
+requirements:
+
+```bash
+./adapters/install.sh
+go run ./cmd/agent-workflow provider list
+go run ./cmd/agent-workflow provider doctor --id codex
+go run ./cmd/agent-workflow provider doctor --id openclaw --staged-root ./staged --config-ref tenant-a
+```
+
+Each available adapter is checked through the same admitted fixture with
+`provider conformance`. The Core speaks the versioned NDJSON protocol, binds
+the exact executor profile and staged isolation evidence into Replay, and
+fails closed instead of selecting another provider.
+
 ## Architecture boundary
 
 ```text
@@ -112,7 +127,7 @@ See [Architecture](docs/architecture.md), [Security](SECURITY.md), [Compatibilit
 
 ## Status
 
-The v1 definitions plus versioned Campaign execution, Context recovery, approvals/waits, multi-Campaign Builder/Canvas, exact-cutoff redacted Replay, reference provider isolation, and domain-neutral Change Case coordination are implemented. Bundled Agent Runner profiles and the SEO Ops conformance consumer remain release work; see the [runtime closure plan](docs/runtime-closure-plan.md). WebMCP is not a Core dependency.
+The v1 definitions plus versioned Campaign execution, Context recovery, approvals/waits, multi-Campaign Builder/Canvas, exact-cutoff redacted Replay, reference provider isolation, domain-neutral Change Case coordination, and five bundled Agent Runner bridges are implemented. The SEO Ops conformance consumer remains release work; see the [runtime closure plan](docs/runtime-closure-plan.md). WebMCP is not a Core dependency.
 
 ## License
 

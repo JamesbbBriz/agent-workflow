@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"errors"
+	"reflect"
 
 	"github.com/JamesbbBriz/agent-workflow/internal/contract"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
@@ -22,9 +23,12 @@ func (e *Engine) providerIsolation() (contractsv1.ProviderIsolationEvidence, err
 		Driver:              contractsv1.ProviderIsolationEvidenceDriverInProcess,
 		DeclaredEnvironment: []string{},
 	}
-	if isolated, ok := e.provider.(*SubprocessProvider); ok {
+	switch isolated := e.provider.(type) {
+	case *SubprocessProvider:
 		evidence = isolated.IsolationEvidence()
-	} else {
+	case *AgentRunnerProvider:
+		evidence = isolated.IsolationEvidence()
+	default:
 		var err error
 		evidence, err = sealProviderIsolation(evidence)
 		if err != nil {
@@ -64,6 +68,16 @@ func (e *Engine) validateInvocationIsolation(invocation Invocation) error {
 	if current.EvidenceHash != invocation.Isolation.EvidenceHash {
 		return errors.New("provider isolation evidence changed after invocation admission")
 	}
+	runner, isRunner := e.provider.(*AgentRunnerProvider)
+	if invocation.ExecutorProfile == nil {
+		if isRunner {
+			return errors.New("provider changed after invocation admission")
+		}
+		return nil
+	}
+	if !isRunner || VerifyExecutorProfile(*invocation.ExecutorProfile) != nil || !reflect.DeepEqual(runner.ExecutorProfile(), *invocation.ExecutorProfile) {
+		return errors.New("executor profile changed after invocation admission")
+	}
 	return nil
 }
 
@@ -89,7 +103,7 @@ func verifyProviderIsolation(evidence contractsv1.ProviderIsolationEvidence) err
 	}
 	switch evidence.Profile {
 	case contractsv1.ProviderIsolationProfileTrustedInProcess:
-		if evidence.Driver != contractsv1.ProviderIsolationEvidenceDriverInProcess || evidence.ExecutableSha256 != nil || evidence.StagedRootSha256 != nil || len(evidence.DeclaredEnvironment) != 0 {
+		if evidence.Driver != contractsv1.ProviderIsolationEvidenceDriverInProcess || evidence.ExecutableSha256 != nil || evidence.StagedRootSha256 != nil || evidence.NetworkAccess != nil || len(evidence.DeclaredEnvironment) != 0 {
 			return errors.New("trusted in-process isolation evidence is inconsistent")
 		}
 	case contractsv1.ProviderIsolationProfileStagedSubprocess:

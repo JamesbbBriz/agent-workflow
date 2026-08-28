@@ -602,7 +602,11 @@
         "node_id": { "$ref": "#/$defs/Identifier" },
         "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 200 },
         "completed_at": { "type": "string", "format": "date-time" },
-        "isolation": { "$ref": "#/$defs/ProviderIsolationEvidence" }
+        "isolation": { "$ref": "#/$defs/ProviderIsolationEvidence" },
+        "executor_profile": { "$ref": "#/$defs/ExecutorProfile" },
+        "provider_run": { "$ref": "#/$defs/ProviderRunRef" },
+        "provider_events": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/$defs/ProviderEvent" } },
+        "provider_observation": { "$ref": "#/$defs/ProviderObservation" }
       }
     },
     "Receipt": {
@@ -708,6 +712,7 @@
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$", "maxLength": 128 }
         },
+        "network_access": { "type": "boolean" },
         "evidence_hash": { "$ref": "#/$defs/SHA256" }
       },
       "allOf": [
@@ -716,6 +721,163 @@
           "then": { "required": ["executable_sha256", "staged_root_sha256"] }
         }
       ]
+    },
+    "ProviderID": {
+      "enum": ["codex", "claude-code", "pi", "openclaw", "hermes-agent"]
+    },
+    "ProviderCapability": {
+      "enum": ["streaming", "polling", "scoped_cancel", "resume", "structured_output", "tool_allowlist", "interactive_approval", "usage", "event_cursor"]
+    },
+    "ProviderDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "display_name", "adapter_version", "protocol_version", "executable", "capabilities", "auth_environment"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["provider_descriptor"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "id": { "$ref": "#/$defs/ProviderID" },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "adapter_version": { "type": "string", "pattern": "^[1-9][0-9]*\\.[0-9]+\\.[0-9]+$" },
+        "protocol_version": { "type": "integer", "enum": [1] },
+        "executable": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "capabilities": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/ProviderCapability" } },
+        "auth_environment": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$", "maxLength": 128 } }
+      }
+    },
+    "ExecutorProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "provider_id", "provider_version", "adapter_version", "model_ref", "config_ref", "capabilities", "isolation_profile", "network_access", "tool_allowlist", "secret_refs", "config_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["executor_profile"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "provider_id": { "$ref": "#/$defs/ProviderID" },
+        "provider_version": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "adapter_version": { "type": "string", "pattern": "^[1-9][0-9]*\\.[0-9]+\\.[0-9]+$" },
+        "model_ref": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "config_ref": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "capabilities": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/ProviderCapability" } },
+        "isolation_profile": { "$ref": "#/$defs/ProviderIsolationProfile" },
+        "network_access": { "type": "boolean" },
+        "tool_allowlist": { "$ref": "#/$defs/Strings" },
+        "secret_refs": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^env:[A-Z_][A-Z0-9_]*$", "maxLength": 132 } },
+        "config_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "ProviderRunRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "provider_id", "invocation_id", "run_ref", "executor_config_hash", "started_at"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["provider_run_ref"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "provider_id": { "$ref": "#/$defs/ProviderID" },
+        "invocation_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "run_ref": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "executor_config_hash": { "$ref": "#/$defs/SHA256" },
+        "session_ref": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "started_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ProviderUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input_tokens", "output_tokens", "cached_tokens", "tool_calls"],
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "cached_tokens": { "type": "integer", "minimum": 0 },
+        "tool_calls": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ProviderEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "run_ref", "cursor", "event_type", "observed_at", "payload_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["provider_event"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "run_ref": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "cursor": { "type": "integer", "minimum": 1 },
+        "event_type": { "enum": ["started", "message", "tool", "usage", "result", "failed", "cancelled"] },
+        "observed_at": { "type": "string", "format": "date-time" },
+        "payload_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "ProviderEventPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "run_ref", "after_cursor", "events", "next_cursor"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["provider_event_page"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "run_ref": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "after_cursor": { "type": "integer", "minimum": 0 },
+        "events": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/$defs/ProviderEvent" } },
+        "next_cursor": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ProviderObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "run_ref", "status", "next_cursor", "usage"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["provider_observation"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "run_ref": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "status": { "enum": ["queued", "running", "succeeded", "failed", "cancelled"] },
+        "next_cursor": { "type": "integer", "minimum": 0 },
+        "usage": { "$ref": "#/$defs/ProviderUsage" },
+        "output_hash": { "$ref": "#/$defs/SHA256" },
+        "error_code": { "$ref": "#/$defs/Identifier" }
+      }
+    },
+    "ProviderCancellation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "run_ref", "status"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["provider_cancellation"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "run_ref": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "status": { "enum": ["accepted", "already_terminal", "unsupported"] }
+      }
+    },
+    "ProviderProtocolRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "request_id", "operation"],
+      "properties": {
+        "protocol_version": { "type": "integer", "enum": [1] },
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "operation": { "enum": ["describe", "start", "events", "inspect", "cancel"] },
+        "invocation_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "deadline": { "type": "string", "format": "date-time" },
+        "staged_workspace": { "type": "string", "enum": ["/workspace"] },
+        "input_manifest_hash": { "$ref": "#/$defs/SHA256" },
+        "output_contract_hash": { "$ref": "#/$defs/SHA256" },
+        "executor_profile": { "$ref": "#/$defs/ExecutorProfile" },
+        "invocation": { "type": "object" },
+        "run_ref": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "after_cursor": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ProviderProtocolResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "request_id", "response_type"],
+      "properties": {
+        "protocol_version": { "type": "integer", "enum": [1] },
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "response_type": { "enum": ["descriptor", "run", "events", "observation", "cancellation", "error"] },
+        "descriptor": { "$ref": "#/$defs/ProviderDescriptor" },
+        "run": { "$ref": "#/$defs/ProviderRunRef" },
+        "events": { "$ref": "#/$defs/ProviderEventPage" },
+        "observation": { "$ref": "#/$defs/ProviderObservation" },
+        "cancellation": { "$ref": "#/$defs/ProviderCancellation" },
+        "error_code": { "$ref": "#/$defs/Identifier" }
+      }
     },
     "RedactedReceipt": {
       "type": "object",

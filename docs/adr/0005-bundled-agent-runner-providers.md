@@ -1,6 +1,6 @@
 # ADR 0005: Bundled Agent Runner providers
 
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -63,6 +63,12 @@ The repository contains:
   provider without changing Job, Campaign, Workflow, Context, or output
   contracts.
 
+The five thin profiles are compiled into the static Go registry. Their
+executables are deliberately separate distributables named
+`agent-workflow-codex`, `agent-workflow-claude-code`, `agent-workflow-pi`,
+`agent-workflow-openclaw`, and `agent-workflow-hermes`. The Core discovers no
+plugins and never falls back between them.
+
 Provider dependencies remain inside their adapter directories. The default Go
 build does not require Node, Python, provider credentials, or every provider
 binary. An unavailable adapter reports a typed readiness error; it does not
@@ -74,6 +80,24 @@ Manifest, and retain only opaque session references plus normalized receipts.
 Codex, Claude Code, and Pi run inside the same staged-workspace isolation
 boundary owned by the subprocess adapter. Provider-native sandbox claims are
 recorded as evidence but do not replace the Core isolation profile.
+
+The bundled profiles initially support one exact Node authority:
+`read-evidence`. The bridge rejects any different Capability Manifest or tool
+allowlist, then maps that authority to each CLI's native read-only flags.
+OpenClaw additionally selects a dedicated staged agent profile whose workspace
+and tool allowlist are verified before embedded local launch. Hermes runs
+without user config or durable session state and receives only its read-only
+vision toolset; Context evidence is embedded in the invocation rather than
+granting Hermes' write-capable file toolset.
+
+Readiness and execution resolve upstream CLIs from the same system roots exposed
+inside Bubblewrap (`/usr/local/bin`, `/usr/bin`, and `/bin`) and include the
+isolation probe. OpenClaw readiness also validates the exact staged agent profile
+selected by `config_ref`. User-local PATH entries are not reported ready. Before launching
+an upstream, the subprocess adapter durably reserves the exact invocation in the
+staged output directory and holds a root-wide durable active lease while the
+shared result path is writable. A restarted Core may recover an exact hash-bound result;
+if the external attempt is uncertain, it blocks instead of launching it again.
 
 ## Compatibility
 
@@ -92,4 +116,3 @@ capability, and isolation fields use versioned v2 contracts.
 - Framework integrations and a provider marketplace are not part of the first
   release. They can implement the public process protocol without being named
   or depended on by the Core.
-

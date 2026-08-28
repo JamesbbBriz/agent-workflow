@@ -32,7 +32,7 @@ type response struct {
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder> [options]")
+		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder|provider> [options]")
 		return 2
 	}
 	switch args[0] {
@@ -44,8 +44,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runCanvas(args[1:], stdout, stderr)
 	case "builder":
 		return runBuilder(args[1:], stdout, stderr)
+	case "provider":
+		return runProvider(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder> [options]")
+		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder|provider> [options]")
 		return 2
 	}
 }
@@ -552,7 +554,133 @@ func runDemo(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runProvider(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: agent-workflow provider <list|doctor|conformance> [options]")
+		return 2
+	}
+	switch args[0] {
+	case "list":
+		if len(args) != 1 {
+			return 2
+		}
+		return writeProviderData(stdout, workflow.BundledProviderDescriptors())
+	case "doctor":
+		flags := flag.NewFlagSet("provider doctor", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		id := flags.String("id", "", "bundled provider id")
+		stagedRoot := flags.String("staged-root", "", "staged input/output workspace")
+		configRef := flags.String("config-ref", "default", "non-secret provider configuration reference")
+		if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
+			return 2
+		}
+		if *id != "" {
+			result, err := workflow.InspectProviderReadinessAt(contractsv1.ProviderID(*id), *stagedRoot, *configRef)
+			if err != nil {
+				return writeError(stdout, stderr, true, "unknown_provider", err)
+			}
+			return writeProviderData(stdout, result)
+		}
+		results := make([]workflow.ProviderReadiness, 0, 5)
+		for _, descriptor := range workflow.BundledProviderDescriptors() {
+			result, _ := workflow.InspectProviderReadinessAt(descriptor.Id, *stagedRoot, *configRef)
+			results = append(results, result)
+		}
+		return writeProviderData(stdout, results)
+	case "conformance":
+		return runProviderConformance(args[1:], stdout, stderr)
+	default:
+		fmt.Fprintln(stderr, "usage: agent-workflow provider <list|doctor|conformance> [options]")
+		return 2
+	}
+}
+
+func runProviderConformance(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("provider conformance", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	id := flags.String("id", "", "bundled provider id")
+	adapter := flags.String("adapter", "", "adapter executable; defaults to the bundled command name")
+	stagedRoot := flags.String("staged-root", "", "staged input/output workspace")
+	model := flags.String("model", "", "provider model reference")
+	providerVersion := flags.String("provider-version", "", "provider version")
+	configRef := flags.String("config-ref", "default", "non-secret provider configuration reference")
+	allowNetwork := flags.Bool("allow-network", false, "allow the isolated adapter to reach its provider API")
+	file := flags.String("file", "examples/research-review.workflow.json", "admitted workflow fixture")
+	at := flags.String("at", "", "pinned evidence cutoff in RFC3339")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return 2
+	}
+	if *id == "" || *stagedRoot == "" || *model == "" || *providerVersion == "" || *at == "" {
+		fmt.Fprintln(stderr, "provider conformance requires --id, --staged-root, --model, --provider-version, and --at")
+		return 2
+	}
+	cutoff, err := time.Parse(time.RFC3339, *at)
+	if err != nil {
+		return writeError(stdout, stderr, true, "invalid_time", errors.New("conformance time must be RFC3339"))
+	}
+	descriptor, err := workflow.ProviderDescriptor(contractsv1.ProviderID(*id))
+	if err != nil {
+		return writeError(stdout, stderr, true, "unknown_provider", err)
+	}
+	secretRefs := make([]string, len(descriptor.AuthEnvironment))
+	environment := make(map[string]string, len(descriptor.AuthEnvironment))
+	for i, name := range descriptor.AuthEnvironment {
+		secretRefs[i] = "env:" + name
+		if value := os.Getenv(name); value != "" {
+			environment[name] = value
+		} else {
+			return writeError(stdout, stderr, true, "provider_unavailable", fmt.Errorf("missing env:%s", name))
+		}
+	}
+	profile, err := workflow.SealExecutorProfile(contractsv1.ExecutorProfile{
+		Kind: contractsv1.ExecutorProfileKindExecutorProfile, SchemaVersion: 1,
+		ProviderId: descriptor.Id, ProviderVersion: *providerVersion, AdapterVersion: descriptor.AdapterVersion,
+		ModelRef: *model, ConfigRef: *configRef, Capabilities: descriptor.Capabilities,
+		IsolationProfile: contractsv1.ProviderIsolationProfileStagedSubprocess, NetworkAccess: *allowNetwork, ToolAllowlist: []string{"read-evidence"}, SecretRefs: secretRefs,
+	})
+	if err != nil {
+		return writeError(stdout, stderr, true, "invalid_profile", err)
+	}
+	provider, err := workflow.NewAgentRunnerProvider(workflow.SubprocessProviderConfig{Executable: *adapter, StagedRoot: *stagedRoot, Environment: environment, AllowNetwork: *allowNetwork}, profile)
+	if err != nil {
+		return writeError(stdout, stderr, true, "provider_unavailable", err)
+	}
+	body, err := os.ReadFile(*file)
+	if err != nil {
+		return writeError(stdout, stderr, true, "input_unavailable", errors.New("workflow fixture is unavailable"))
+	}
+	var definition contractsv1.WorkflowDefinition
+	if _, err := contract.ValidateWorkflow(body); err != nil {
+		return writeError(stdout, stderr, true, "invalid_workflow", err)
+	}
+	if err := json.Unmarshal(body, &definition); err != nil {
+		return writeError(stdout, stderr, true, "invalid_workflow", err)
+	}
+	result, err := executeDemoWithProvider(definition, cutoff.UTC(), provider)
+	stopAt := time.Now().Add(5 * time.Minute)
+	for errors.Is(err, workflow.ErrProviderNotReady) && time.Now().Before(stopAt) {
+		time.Sleep(50 * time.Millisecond)
+		result, err = executeDemoWithProvider(definition, cutoff.UTC(), provider)
+	}
+	if err != nil {
+		return writeError(stdout, stderr, true, "conformance_failed", err)
+	}
+	return writeProviderData(stdout, result)
+}
+
+func writeProviderData(stdout io.Writer, data any) int {
+	_ = json.NewEncoder(stdout).Encode(struct {
+		OK   bool `json:"ok"`
+		Data any  `json:"data"`
+	}{OK: true, Data: data})
+	return 0
+}
+
 func executeDemo(definition contractsv1.WorkflowDefinition, cutoff time.Time) (workflow.RunResult, error) {
+	return executeDemoWithProvider(definition, cutoff, &demoProvider{results: make(map[string]workflow.ProviderResult)})
+}
+
+func executeDemoWithProvider(definition contractsv1.WorkflowDefinition, cutoff time.Time, provider workflow.Provider) (workflow.RunResult, error) {
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"example-project"}}
 	brief := map[string]any{"brief": "Prefer evidence-bound recommendations."}
 	briefHash, err := workflow.Digest(brief)
@@ -593,7 +721,10 @@ func executeDemo(definition contractsv1.WorkflowDefinition, cutoff time.Time) (w
 		"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead,
 	}, workflow.OutputCatalog{
 		"recommendation@1": validateRecommendation,
-	}, &demoProvider{results: make(map[string]workflow.ProviderResult)}, ledger)
+	}, provider, ledger)
+	if _, ok := provider.(*workflow.AgentRunnerProvider); ok {
+		engine.RequireProviderIsolation(contractsv1.ProviderIsolationProfileStagedSubprocess)
+	}
 	return engine.RunNode(context.Background(), workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
 }
 

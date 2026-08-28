@@ -26,14 +26,23 @@ export interface AgentWorkflowV1 {
     context_pack_edition?:             Edition;
     context_transition_event_payload?: ContextTransitionEventPayload;
     core_completed_event_payload?:     CoreCompletedEventPayload;
+    executor_profile?:                 ExecutorProfile;
     job_definition?:                   Job;
     mutation_evidence?:                ApplyEvidence;
     mutation_lease?:                   Lease;
     needs_context_event_payload?:      NeedsContextEventPayload;
     node_completed_event_payload?:     NodeCompletedEventPayload;
     proposal_replacement?:             Replacement;
+    provider_cancellation?:            ProviderCancellation;
+    provider_descriptor?:              ProviderDescriptor;
+    provider_event?:                   ProviderEvent;
+    provider_event_page?:              ProviderEventPage;
     provider_execution_event_payload?: ProviderExecutionEventPayload;
     provider_isolation_evidence?:      ProviderIsolation;
+    provider_observation?:             ProviderObservation;
+    provider_protocol_request?:        ProviderProtocolRequest;
+    provider_protocol_response?:       ProviderProtocolResponse;
+    provider_run_ref?:                 ProviderRun;
     receipt?:                          ReplayBundleReceipt;
     redacted_replay?:                  RedactedReplay;
     replay_bundle?:                    CampaignReplay;
@@ -144,7 +153,7 @@ export interface AttemptReservedEventPayload {
 export interface AuthoringCatalog {
     approval_policies: string[];
     blockers:          string[];
-    capabilities:      CapabilityElement[];
+    capabilities:      CapabilityClass[];
     catalog_hash:      string;
     executors:         ExecutorElement[];
     kind:              AuthoringCatalogKind;
@@ -153,7 +162,7 @@ export interface AuthoringCatalog {
     schema_version:    number;
 }
 
-export interface CapabilityElement {
+export interface CapabilityClass {
     authority: CapabilityAuthority;
     name:      string;
 }
@@ -202,7 +211,7 @@ export interface CampaignExecutionStateClass {
     started_at:          string;
     status:              CampaignExecutionStateStatus;
     updated_at:          string;
-    usage:               Usage;
+    usage:               NodeUsage;
     workflow_hashes:     { [key: string]: string };
 }
 
@@ -219,14 +228,14 @@ export interface CampaignExecutionStateNode {
     signal?:              string;
     started_at?:          string;
     status:               NodeStatus;
-    usage:                Usage;
+    usage:                NodeUsage;
     wake_at?:             string;
     workflow_ref:         string;
 }
 
 export type NodeStatus = "pending" | "needs_context" | "running" | "awaiting_approval" | "waiting" | "completed" | "completed_no_action" | "blocked" | "budget_exhausted";
 
-export interface Usage {
+export interface NodeUsage {
     actions:          number;
     attempts:         number;
     candidates:       number;
@@ -239,6 +248,7 @@ export interface ProviderIsolation {
     evidence_hash:        string;
     executable_sha256?:   string;
     kind:                 ProviderIsolationEvidenceKind;
+    network_access?:      boolean;
     profile:              Profile;
     schema_version:       number;
     staged_root_sha256?:  string;
@@ -762,6 +772,28 @@ export interface CoreCompletedEventPayload {
 
 export type CoreCompletedEventPayloadStatus = "completed" | "completed_no_action";
 
+export interface ExecutorProfile {
+    adapter_version:   string;
+    capabilities:      [CapabilityEnum, ...CapabilityEnum[]];
+    config_hash:       string;
+    config_ref:        string;
+    isolation_profile: Profile;
+    kind:              ExecutorProfileKind;
+    model_ref:         string;
+    network_access:    boolean;
+    provider_id:       ProviderID;
+    provider_version:  string;
+    schema_version:    number;
+    secret_refs:       string[];
+    tool_allowlist:    string[];
+}
+
+export type CapabilityEnum = "streaming" | "polling" | "scoped_cancel" | "resume" | "structured_output" | "tool_allowlist" | "interactive_approval" | "usage" | "event_cursor";
+
+export type ExecutorProfileKind = "executor_profile";
+
+export type ProviderID = "codex" | "claude-code" | "pi" | "openclaw" | "hermes-agent";
+
 export interface NeedsContextEventPayload {
     blocker_fingerprint: string;
     node_id:             string;
@@ -777,16 +809,139 @@ export interface NodeCompletedEventPayload {
     node_id:            string;
     result_replay_hash: string;
     status:             CoreCompletedEventPayloadStatus;
-    usage:              Usage;
+    usage:              NodeUsage;
     workflow_ref:       string;
 }
 
-export interface ProviderExecutionEventPayload {
-    completed_at:    string;
-    idempotency_key: string;
-    isolation:       ProviderIsolation;
-    node_id:         string;
+export interface ProviderCancellation {
+    kind:           ProviderCancellationKind;
+    run_ref:        string;
+    schema_version: number;
+    status:         ProviderCancellationStatus;
 }
+
+export type ProviderCancellationKind = "provider_cancellation";
+
+export type ProviderCancellationStatus = "accepted" | "already_terminal" | "unsupported";
+
+export interface ProviderDescriptor {
+    adapter_version:  string;
+    auth_environment: string[];
+    capabilities:     [CapabilityEnum, ...CapabilityEnum[]];
+    display_name:     string;
+    executable:       string;
+    id:               ProviderID;
+    kind:             ProviderDescriptorKind;
+    protocol_version: number;
+    schema_version:   number;
+}
+
+export type ProviderDescriptorKind = "provider_descriptor";
+
+export interface ProviderEvent {
+    cursor:         number;
+    event_type:     EventType;
+    kind:           ProviderEventKind;
+    observed_at:    string;
+    payload_hash:   string;
+    run_ref:        string;
+    schema_version: number;
+}
+
+export type EventType = "started" | "message" | "tool" | "usage" | "result" | "failed" | "cancelled";
+
+export type ProviderEventKind = "provider_event";
+
+export interface ProviderEventPage {
+    after_cursor:   number;
+    events:         ProviderEvent[];
+    kind:           ProviderEventPageKind;
+    next_cursor:    number;
+    run_ref:        string;
+    schema_version: number;
+}
+
+export type ProviderEventPageKind = "provider_event_page";
+
+export interface ProviderExecutionEventPayload {
+    completed_at:          string;
+    executor_profile?:     ExecutorProfile;
+    idempotency_key:       string;
+    isolation:             ProviderIsolation;
+    node_id:               string;
+    provider_events?:      ProviderEvent[];
+    provider_observation?: ProviderObservation;
+    provider_run?:         ProviderRun;
+}
+
+export interface ProviderObservation {
+    error_code?:    string;
+    kind:           ProviderObservationKind;
+    next_cursor:    number;
+    output_hash?:   string;
+    run_ref:        string;
+    schema_version: number;
+    status:         ProviderObservationStatus;
+    usage:          ProviderObservationUsage;
+}
+
+export type ProviderObservationKind = "provider_observation";
+
+export type ProviderObservationStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+export interface ProviderObservationUsage {
+    cached_tokens: number;
+    input_tokens:  number;
+    output_tokens: number;
+    tool_calls:    number;
+}
+
+export interface ProviderRun {
+    executor_config_hash: string;
+    invocation_id:        string;
+    kind:                 ProviderRunRefKind;
+    provider_id:          ProviderID;
+    run_ref:              string;
+    schema_version:       number;
+    session_ref?:         string;
+    started_at:           string;
+}
+
+export type ProviderRunRefKind = "provider_run_ref";
+
+export interface ProviderProtocolRequest {
+    after_cursor?:         number;
+    deadline?:             string;
+    executor_profile?:     ExecutorProfile;
+    idempotency_key?:      string;
+    input_manifest_hash?:  string;
+    invocation?:           { [key: string]: unknown };
+    invocation_id?:        string;
+    operation:             Operation;
+    output_contract_hash?: string;
+    protocol_version:      number;
+    request_id:            string;
+    run_ref?:              string;
+    staged_workspace?:     StagedWorkspace;
+}
+
+export type Operation = "describe" | "start" | "events" | "inspect" | "cancel";
+
+export type StagedWorkspace = "/workspace";
+
+export interface ProviderProtocolResponse {
+    cancellation?:    ProviderCancellation;
+    descriptor?:      ProviderDescriptor;
+    error_code?:      string;
+    events?:          ProviderEventPage;
+    observation?:     ProviderObservation;
+    protocol_version: number;
+    request_id:       string;
+    response_type:    ResponseType;
+    run?:             ProviderRun;
+}
+
+export type ResponseType = "descriptor" | "run" | "events" | "observation" | "cancellation" | "error";
 
 export interface RedactedReplay {
     aggregate_id:        string;

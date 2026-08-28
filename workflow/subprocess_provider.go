@@ -17,10 +17,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/JamesbbBriz/agent-workflow/internal/contract"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
 
-const defaultProviderOutputLimit = 1 << 20
+const defaultProviderOutputLimit = contract.MaxDocumentBytes
 
 var environmentName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
@@ -32,6 +33,7 @@ type SubprocessProviderConfig struct {
 	StagedRoot     string
 	Environment    map[string]string
 	MaxOutputBytes int
+	AllowNetwork   bool
 }
 
 type SubprocessProvider struct {
@@ -123,10 +125,11 @@ func NewSubprocessProvider(config SubprocessProviderConfig) (*SubprocessProvider
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	networkAccess := config.AllowNetwork
 	evidence, err := sealProviderIsolation(contractsv1.ProviderIsolationEvidence{
 		Kind: contractsv1.ProviderIsolationEvidenceKindProviderIsolationEvidence, SchemaVersion: 1,
 		Profile: contractsv1.ProviderIsolationProfileStagedSubprocess, Driver: driver,
-		ExecutableSha256: &executableHash, StagedRootSha256: &rootHash, DeclaredEnvironment: names,
+		ExecutableSha256: &executableHash, StagedRootSha256: &rootHash, DeclaredEnvironment: names, NetworkAccess: &networkAccess,
 	})
 	if err != nil {
 		return nil, err
@@ -144,6 +147,10 @@ func (p *SubprocessProvider) IsolationEvidence() contractsv1.ProviderIsolationEv
 	if p.evidence.StagedRootSha256 != nil {
 		value := *p.evidence.StagedRootSha256
 		evidence.StagedRootSha256 = &value
+	}
+	if p.evidence.NetworkAccess != nil {
+		value := *p.evidence.NetworkAccess
+		evidence.NetworkAccess = &value
 	}
 	return evidence
 }
@@ -172,7 +179,7 @@ func (p *SubprocessProvider) Start(ctx context.Context, invocation Invocation) e
 	if err != nil {
 		return err
 	}
-	name, args, err := sandboxCommand(p.config.Executable, p.config.Args, p.config.StagedRoot, p.config.MaxOutputBytes)
+	name, args, err := sandboxCommand(p.config.Executable, p.config.Args, p.config.StagedRoot, p.config.MaxOutputBytes, p.config.AllowNetwork)
 	if err != nil {
 		return err
 	}
