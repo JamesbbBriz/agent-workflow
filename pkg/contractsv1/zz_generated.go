@@ -118,6 +118,26 @@ type AgentWorkflowContractCatalog struct {
 	// CapabilityManifest corresponds to the JSON schema field "capability_manifest".
 	CapabilityManifest *CapabilityManifest `json:"capability_manifest,omitempty,omitzero"`
 
+	// ChangeCaseCanvas corresponds to the JSON schema field "change_case_canvas".
+	ChangeCaseCanvas *ChangeCaseCanvas `json:"change_case_canvas,omitempty,omitzero"`
+
+	// ChangeCaseEventPayload corresponds to the JSON schema field
+	// "change_case_event_payload".
+	ChangeCaseEventPayload *ChangeCaseEventPayload `json:"change_case_event_payload,omitempty,omitzero"`
+
+	// ChangeCaseReceiptLink corresponds to the JSON schema field
+	// "change_case_receipt_link".
+	ChangeCaseReceiptLink *ChangeCaseReceiptLink `json:"change_case_receipt_link,omitempty,omitzero"`
+
+	// ChangeCaseState corresponds to the JSON schema field "change_case_state".
+	ChangeCaseState *ChangeCaseState `json:"change_case_state,omitempty,omitzero"`
+
+	// ChangeProposal corresponds to the JSON schema field "change_proposal".
+	ChangeProposal *ChangeProposal `json:"change_proposal,omitempty,omitzero"`
+
+	// ConflictSet corresponds to the JSON schema field "conflict_set".
+	ConflictSet *ConflictSet `json:"conflict_set,omitempty,omitzero"`
+
 	// ContextBundle corresponds to the JSON schema field "context_bundle".
 	ContextBundle *ContextBundle `json:"context_bundle,omitempty,omitzero"`
 
@@ -135,6 +155,12 @@ type AgentWorkflowContractCatalog struct {
 	// JobDefinition corresponds to the JSON schema field "job_definition".
 	JobDefinition *JobDefinition `json:"job_definition,omitempty,omitzero"`
 
+	// MutationEvidence corresponds to the JSON schema field "mutation_evidence".
+	MutationEvidence *MutationEvidence `json:"mutation_evidence,omitempty,omitzero"`
+
+	// MutationLease corresponds to the JSON schema field "mutation_lease".
+	MutationLease *MutationLease `json:"mutation_lease,omitempty,omitzero"`
+
 	// NeedsContextEventPayload corresponds to the JSON schema field
 	// "needs_context_event_payload".
 	NeedsContextEventPayload *NeedsContextEventPayload `json:"needs_context_event_payload,omitempty,omitzero"`
@@ -142,6 +168,10 @@ type AgentWorkflowContractCatalog struct {
 	// NodeCompletedEventPayload corresponds to the JSON schema field
 	// "node_completed_event_payload".
 	NodeCompletedEventPayload *NodeCompletedEventPayload `json:"node_completed_event_payload,omitempty,omitzero"`
+
+	// ProposalReplacement corresponds to the JSON schema field
+	// "proposal_replacement".
+	ProposalReplacement *ProposalReplacement `json:"proposal_replacement,omitempty,omitzero"`
 
 	// ProviderExecutionEventPayload corresponds to the JSON schema field
 	// "provider_execution_event_payload".
@@ -159,6 +189,12 @@ type AgentWorkflowContractCatalog struct {
 
 	// ReplayBundle corresponds to the JSON schema field "replay_bundle".
 	ReplayBundle *ReplayBundle `json:"replay_bundle,omitempty,omitzero"`
+
+	// ResolutionArtifact corresponds to the JSON schema field "resolution_artifact".
+	ResolutionArtifact *ResolutionArtifact `json:"resolution_artifact,omitempty,omitzero"`
+
+	// ResourceRef corresponds to the JSON schema field "resource_ref".
+	ResourceRef *ResourceRef `json:"resource_ref,omitempty,omitzero"`
 
 	// WaitResumedEventPayload corresponds to the JSON schema field
 	// "wait_resumed_event_payload".
@@ -1004,6 +1040,243 @@ type CatalogProducer struct {
 	Selector Identifier `json:"selector"`
 }
 
+type ChangeCaseCanvas struct {
+	// GeneratedAt corresponds to the JSON schema field "generated_at".
+	GeneratedAt time.Time `json:"generated_at"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ChangeCaseCanvasKind `json:"kind"`
+
+	// Receipts corresponds to the JSON schema field "receipts".
+	Receipts []ChangeCaseReceiptLink `json:"receipts"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ChangeCaseCanvasSchemaVersion `json:"schema_version"`
+
+	// State corresponds to the JSON schema field "state".
+	State ChangeCaseState `json:"state"`
+}
+
+type ChangeCaseCanvasKind string
+
+const ChangeCaseCanvasKindChangeCaseCanvas ChangeCaseCanvasKind = "change_case_canvas"
+
+type ChangeCaseCanvasSchemaVersion int
+
+type ChangeCaseEventPayload struct {
+	// State corresponds to the JSON schema field "state".
+	State ChangeCaseState `json:"state"`
+}
+
+type ChangeCaseReceiptLink struct {
+	// Id corresponds to the JSON schema field "id".
+	Id string `json:"id"`
+
+	// OccurredAt corresponds to the JSON schema field "occurred_at".
+	OccurredAt time.Time `json:"occurred_at"`
+
+	// ReceiptHash corresponds to the JSON schema field "receipt_hash".
+	ReceiptHash SHA256 `json:"receipt_hash"`
+
+	// ReceiptType corresponds to the JSON schema field "receipt_type".
+	ReceiptType ChangeCaseReceiptLinkReceiptType `json:"receipt_type"`
+}
+
+type ChangeCaseReceiptLinkReceiptType string
+
+const ChangeCaseReceiptLinkReceiptTypeChangeMerged ChangeCaseReceiptLinkReceiptType = "change_merged"
+const ChangeCaseReceiptLinkReceiptTypeChangeProposed ChangeCaseReceiptLinkReceiptType = "change_proposed"
+const ChangeCaseReceiptLinkReceiptTypeConflictDetected ChangeCaseReceiptLinkReceiptType = "conflict_detected"
+const ChangeCaseReceiptLinkReceiptTypeMutationApplied ChangeCaseReceiptLinkReceiptType = "mutation_applied"
+const ChangeCaseReceiptLinkReceiptTypeMutationLeaseAcquired ChangeCaseReceiptLinkReceiptType = "mutation_lease_acquired"
+const ChangeCaseReceiptLinkReceiptTypeMutationReadback ChangeCaseReceiptLinkReceiptType = "mutation_readback"
+const ChangeCaseReceiptLinkReceiptTypeResolutionApproved ChangeCaseReceiptLinkReceiptType = "resolution_approved"
+const ChangeCaseReceiptLinkReceiptTypeResolutionProposed ChangeCaseReceiptLinkReceiptType = "resolution_proposed"
+const ChangeCaseReceiptLinkReceiptTypeResourceGenerationAdvanced ChangeCaseReceiptLinkReceiptType = "resource_generation_advanced"
+
+type ChangeCaseState struct {
+	// ApplyEvidence corresponds to the JSON schema field "apply_evidence".
+	ApplyEvidence *MutationEvidence `json:"apply_evidence,omitempty,omitzero"`
+
+	// BlockerCode corresponds to the JSON schema field "blocker_code".
+	BlockerCode *ChangeCaseStateBlockerCode `json:"blocker_code,omitempty,omitzero"`
+
+	// Conflicts corresponds to the JSON schema field "conflicts".
+	Conflicts *ConflictSet `json:"conflicts,omitempty,omitzero"`
+
+	// Id corresponds to the JSON schema field "id".
+	Id string `json:"id"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ChangeCaseStateKind `json:"kind"`
+
+	// Lease corresponds to the JSON schema field "lease".
+	Lease *MutationLease `json:"lease,omitempty,omitzero"`
+
+	// MergedChange corresponds to the JSON schema field "merged_change".
+	MergedChange interface{} `json:"merged_change,omitempty,omitzero"`
+
+	// MergedChangeHash corresponds to the JSON schema field "merged_change_hash".
+	MergedChangeHash *SHA256 `json:"merged_change_hash,omitempty,omitzero"`
+
+	// Proposals corresponds to the JSON schema field "proposals".
+	Proposals []ChangeProposal `json:"proposals"`
+
+	// ReadbackEvidence corresponds to the JSON schema field "readback_evidence".
+	ReadbackEvidence *MutationEvidence `json:"readback_evidence,omitempty,omitzero"`
+
+	// Resolution corresponds to the JSON schema field "resolution".
+	Resolution *ResolutionArtifact `json:"resolution,omitempty,omitzero"`
+
+	// ResolutionApprovalHash corresponds to the JSON schema field
+	// "resolution_approval_hash".
+	ResolutionApprovalHash *SHA256 `json:"resolution_approval_hash,omitempty,omitzero"`
+
+	// Resource corresponds to the JSON schema field "resource".
+	Resource ResourceRef `json:"resource"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ChangeCaseStateSchemaVersion `json:"schema_version"`
+
+	// Status corresponds to the JSON schema field "status".
+	Status ChangeCaseStateStatus `json:"status"`
+
+	// UpdatedAt corresponds to the JSON schema field "updated_at".
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type ChangeCaseStateBlockerCode string
+
+const ChangeCaseStateBlockerCodeMutationLeaseActive ChangeCaseStateBlockerCode = "mutation_lease_active"
+const ChangeCaseStateBlockerCodeResolutionApprovalRequired ChangeCaseStateBlockerCode = "resolution_approval_required"
+const ChangeCaseStateBlockerCodeResourceGenerationAdvanced ChangeCaseStateBlockerCode = "resource_generation_advanced"
+
+type ChangeCaseStateKind string
+
+const ChangeCaseStateKindChangeCaseState ChangeCaseStateKind = "change_case_state"
+
+type ChangeCaseStateSchemaVersion int
+
+type ChangeCaseStateStatus string
+
+const ChangeCaseStateStatusApplied ChangeCaseStateStatus = "applied"
+const ChangeCaseStateStatusAwaitingResolutionApproval ChangeCaseStateStatus = "awaiting_resolution_approval"
+const ChangeCaseStateStatusBlocked ChangeCaseStateStatus = "blocked"
+const ChangeCaseStateStatusCompleted ChangeCaseStateStatus = "completed"
+const ChangeCaseStateStatusConflicted ChangeCaseStateStatus = "conflicted"
+const ChangeCaseStateStatusLeased ChangeCaseStateStatus = "leased"
+const ChangeCaseStateStatusProposed ChangeCaseStateStatus = "proposed"
+const ChangeCaseStateStatusReady ChangeCaseStateStatus = "ready"
+
+type ChangeProposal struct {
+	// ArtifactId corresponds to the JSON schema field "artifact_id".
+	ArtifactId string `json:"artifact_id"`
+
+	// CampaignId corresponds to the JSON schema field "campaign_id".
+	CampaignId Identifier `json:"campaign_id"`
+
+	// CapabilityHash corresponds to the JSON schema field "capability_hash".
+	CapabilityHash SHA256 `json:"capability_hash"`
+
+	// CaseId corresponds to the JSON schema field "case_id".
+	CaseId string `json:"case_id"`
+
+	// Change corresponds to the JSON schema field "change".
+	Change interface{} `json:"change"`
+
+	// ChangeHash corresponds to the JSON schema field "change_hash".
+	ChangeHash SHA256 `json:"change_hash"`
+
+	// EvidenceHashes corresponds to the JSON schema field "evidence_hashes".
+	EvidenceHashes []SHA256 `json:"evidence_hashes"`
+
+	// Id corresponds to the JSON schema field "id".
+	Id Identifier `json:"id"`
+
+	// JobId corresponds to the JSON schema field "job_id".
+	JobId Identifier `json:"job_id"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ChangeProposalKind `json:"kind"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// ProposalHash corresponds to the JSON schema field "proposal_hash".
+	ProposalHash SHA256 `json:"proposal_hash"`
+
+	// Replacement corresponds to the JSON schema field "replacement".
+	Replacement *ProposalReplacement `json:"replacement,omitempty,omitzero"`
+
+	// Resource corresponds to the JSON schema field "resource".
+	Resource ResourceRef `json:"resource"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ChangeProposalSchemaVersion `json:"schema_version"`
+
+	// SourceCampaignAggregateId corresponds to the JSON schema field
+	// "source_campaign_aggregate_id".
+	SourceCampaignAggregateId string `json:"source_campaign_aggregate_id"`
+
+	// SourceCampaignReplayHash corresponds to the JSON schema field
+	// "source_campaign_replay_hash".
+	SourceCampaignReplayHash SHA256 `json:"source_campaign_replay_hash"`
+
+	// SourceResultAggregateId corresponds to the JSON schema field
+	// "source_result_aggregate_id".
+	SourceResultAggregateId string `json:"source_result_aggregate_id"`
+
+	// SourceResultReplayHash corresponds to the JSON schema field
+	// "source_result_replay_hash".
+	SourceResultReplayHash SHA256 `json:"source_result_replay_hash"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
+}
+
+type ChangeProposalKind string
+
+const ChangeProposalKindChangeProposal ChangeProposalKind = "change_proposal"
+
+type ChangeProposalSchemaVersion int
+
+type ConflictItem struct {
+	// Path corresponds to the JSON schema field "path".
+	Path string `json:"path"`
+
+	// ProposalIds corresponds to the JSON schema field "proposal_ids".
+	ProposalIds []Identifier `json:"proposal_ids"`
+
+	// Reason corresponds to the JSON schema field "reason".
+	Reason string `json:"reason"`
+}
+
+type ConflictSet struct {
+	// CaseId corresponds to the JSON schema field "case_id".
+	CaseId string `json:"case_id"`
+
+	// ConflictHash corresponds to the JSON schema field "conflict_hash".
+	ConflictHash SHA256 `json:"conflict_hash"`
+
+	// Items corresponds to the JSON schema field "items".
+	Items []ConflictItem `json:"items"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ConflictSetKind `json:"kind"`
+
+	// Resource corresponds to the JSON schema field "resource".
+	Resource ResourceRef `json:"resource"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ConflictSetSchemaVersion `json:"schema_version"`
+}
+
+type ConflictSetKind string
+
+const ConflictSetKindConflictSet ConflictSetKind = "conflict_set"
+
+type ConflictSetSchemaVersion int
+
 type ContextBundle struct {
 	// BundleHash corresponds to the JSON schema field "bundle_hash".
 	BundleHash SHA256 `json:"bundle_hash"`
@@ -1305,6 +1578,78 @@ const JobDefinitionKindJobDefinition JobDefinitionKind = "job_definition"
 
 type JobDefinitionSchemaVersion int
 
+type MutationEvidence struct {
+	// CaseId corresponds to the JSON schema field "case_id".
+	CaseId string `json:"case_id"`
+
+	// ChangeHash corresponds to the JSON schema field "change_hash".
+	ChangeHash SHA256 `json:"change_hash"`
+
+	// EvidenceHash corresponds to the JSON schema field "evidence_hash".
+	EvidenceHash SHA256 `json:"evidence_hash"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind MutationEvidenceKind `json:"kind"`
+
+	// LeaseHash corresponds to the JSON schema field "lease_hash".
+	LeaseHash SHA256 `json:"lease_hash"`
+
+	// ObservedHash corresponds to the JSON schema field "observed_hash".
+	ObservedHash SHA256 `json:"observed_hash"`
+
+	// Resource corresponds to the JSON schema field "resource".
+	Resource ResourceRef `json:"resource"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion MutationEvidenceSchemaVersion `json:"schema_version"`
+}
+
+type MutationEvidenceKind string
+
+const MutationEvidenceKindMutationApplyEvidence MutationEvidenceKind = "mutation_apply_evidence"
+const MutationEvidenceKindMutationReadbackEvidence MutationEvidenceKind = "mutation_readback_evidence"
+
+type MutationEvidenceSchemaVersion int
+
+type MutationLease struct {
+	// AcquiredAt corresponds to the JSON schema field "acquired_at".
+	AcquiredAt time.Time `json:"acquired_at"`
+
+	// ApprovalReceiptHash corresponds to the JSON schema field
+	// "approval_receipt_hash".
+	ApprovalReceiptHash SHA256 `json:"approval_receipt_hash"`
+
+	// CaseId corresponds to the JSON schema field "case_id".
+	CaseId string `json:"case_id"`
+
+	// ChangeHash corresponds to the JSON schema field "change_hash".
+	ChangeHash SHA256 `json:"change_hash"`
+
+	// ExpiresAt corresponds to the JSON schema field "expires_at".
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// Id corresponds to the JSON schema field "id".
+	Id Identifier `json:"id"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind MutationLeaseKind `json:"kind"`
+
+	// LeaseHash corresponds to the JSON schema field "lease_hash".
+	LeaseHash SHA256 `json:"lease_hash"`
+
+	// Resource corresponds to the JSON schema field "resource".
+	Resource ResourceRef `json:"resource"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion MutationLeaseSchemaVersion `json:"schema_version"`
+}
+
+type MutationLeaseKind string
+
+const MutationLeaseKindMutationLease MutationLeaseKind = "mutation_lease"
+
+type MutationLeaseSchemaVersion int
+
 type NeedsContextEventPayload struct {
 	// BlockerFingerprint corresponds to the JSON schema field "blocker_fingerprint".
 	BlockerFingerprint SHA256 `json:"blocker_fingerprint"`
@@ -1415,6 +1760,20 @@ const NodeDefinitionWaitModeSignal NodeDefinitionWaitMode = "signal"
 const NodeDefinitionWaitModeTime NodeDefinitionWaitMode = "time"
 
 type NonEmptyStrings []string
+
+type ProposalReplacement struct {
+	// ProposalId corresponds to the JSON schema field "proposal_id".
+	ProposalId Identifier `json:"proposal_id"`
+
+	// Reason corresponds to the JSON schema field "reason".
+	Reason ProposalReplacementReason `json:"reason"`
+}
+
+type ProposalReplacementReason string
+
+const ProposalReplacementReasonHumanImplementation ProposalReplacementReason = "human_implementation"
+const ProposalReplacementReasonRebase ProposalReplacementReason = "rebase"
+const ProposalReplacementReasonResolver ProposalReplacementReason = "resolver"
 
 type ProviderExecutionEventPayload struct {
 	// CompletedAt corresponds to the JSON schema field "completed_at".
@@ -1531,15 +1890,24 @@ const ReceiptReceiptTypeApprovalRequested ReceiptReceiptType = "approval_request
 const ReceiptReceiptTypeAttemptReserved ReceiptReceiptType = "attempt_reserved"
 const ReceiptReceiptTypeBudgetExhausted ReceiptReceiptType = "budget_exhausted"
 const ReceiptReceiptTypeCampaignAdmission ReceiptReceiptType = "campaign_admission"
+const ReceiptReceiptTypeChangeMerged ReceiptReceiptType = "change_merged"
+const ReceiptReceiptTypeChangeProposed ReceiptReceiptType = "change_proposed"
 const ReceiptReceiptTypeCompile ReceiptReceiptType = "compile"
+const ReceiptReceiptTypeConflictDetected ReceiptReceiptType = "conflict_detected"
 const ReceiptReceiptTypeContextAvailable ReceiptReceiptType = "context_available"
 const ReceiptReceiptTypeContextBound ReceiptReceiptType = "context_bound"
 const ReceiptReceiptTypeCoreCompleted ReceiptReceiptType = "core_completed"
 const ReceiptReceiptTypeInvocation ReceiptReceiptType = "invocation"
+const ReceiptReceiptTypeMutationApplied ReceiptReceiptType = "mutation_applied"
+const ReceiptReceiptTypeMutationLeaseAcquired ReceiptReceiptType = "mutation_lease_acquired"
+const ReceiptReceiptTypeMutationReadback ReceiptReceiptType = "mutation_readback"
 const ReceiptReceiptTypeNeedsContext ReceiptReceiptType = "needs_context"
 const ReceiptReceiptTypeNodeCompleted ReceiptReceiptType = "node_completed"
 const ReceiptReceiptTypePackEdition ReceiptReceiptType = "pack_edition"
 const ReceiptReceiptTypeProviderExecution ReceiptReceiptType = "provider_execution"
+const ReceiptReceiptTypeResolutionApproved ReceiptReceiptType = "resolution_approved"
+const ReceiptReceiptTypeResolutionProposed ReceiptReceiptType = "resolution_proposed"
+const ReceiptReceiptTypeResourceGenerationAdvanced ReceiptReceiptType = "resource_generation_advanced"
 const ReceiptReceiptTypeResult ReceiptReceiptType = "result"
 const ReceiptReceiptTypeTerminal ReceiptReceiptType = "terminal"
 const ReceiptReceiptTypeWaitResumed ReceiptReceiptType = "wait_resumed"
@@ -1689,6 +2057,74 @@ type ReplayRedactionProofPolicy string
 const ReplayRedactionProofPolicyPublicMetadata1 ReplayRedactionProofPolicy = "public_metadata@1"
 
 type ReplayRedactionProofSchemaVersion int
+
+type ResolutionArtifact struct {
+	// CaseId corresponds to the JSON schema field "case_id".
+	CaseId string `json:"case_id"`
+
+	// ConflictHash corresponds to the JSON schema field "conflict_hash".
+	ConflictHash SHA256 `json:"conflict_hash"`
+
+	// Id corresponds to the JSON schema field "id".
+	Id Identifier `json:"id"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ResolutionArtifactKind `json:"kind"`
+
+	// ResolutionHash corresponds to the JSON schema field "resolution_hash".
+	ResolutionHash SHA256 `json:"resolution_hash"`
+
+	// ResolutionProposalId corresponds to the JSON schema field
+	// "resolution_proposal_id".
+	ResolutionProposalId Identifier `json:"resolution_proposal_id"`
+
+	// ResolvedChange corresponds to the JSON schema field "resolved_change".
+	ResolvedChange interface{} `json:"resolved_change"`
+
+	// ResolvedChangeHash corresponds to the JSON schema field "resolved_change_hash".
+	ResolvedChangeHash SHA256 `json:"resolved_change_hash"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ResolutionArtifactSchemaVersion `json:"schema_version"`
+
+	// SourceProposalIds corresponds to the JSON schema field "source_proposal_ids".
+	SourceProposalIds []Identifier `json:"source_proposal_ids"`
+}
+
+type ResolutionArtifactKind string
+
+const ResolutionArtifactKindResolutionArtifact ResolutionArtifactKind = "resolution_artifact"
+
+type ResolutionArtifactSchemaVersion int
+
+type ResourceRef struct {
+	// BaselineHash corresponds to the JSON schema field "baseline_hash".
+	BaselineHash SHA256 `json:"baseline_hash"`
+
+	// BaselineRevision corresponds to the JSON schema field "baseline_revision".
+	BaselineRevision string `json:"baseline_revision"`
+
+	// Generation corresponds to the JSON schema field "generation".
+	Generation int `json:"generation"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ResourceRefKind `json:"kind"`
+
+	// ResourceId corresponds to the JSON schema field "resource_id".
+	ResourceId string `json:"resource_id"`
+
+	// ResourceType corresponds to the JSON schema field "resource_type".
+	ResourceType Identifier `json:"resource_type"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ResourceRefSchemaVersion `json:"schema_version"`
+}
+
+type ResourceRefKind string
+
+const ResourceRefKindResourceRef ResourceRefKind = "resource_ref"
+
+type ResourceRefSchemaVersion int
 
 type SHA256 string
 
@@ -1932,12 +2368,12 @@ type WorkflowLintIssue struct {
 	Severity WorkflowLintIssueSeverity `json:"severity"`
 }
 
-type ReceiptPreviousReceiptHash_0 = SHA256
-
 type WorkflowLintIssueSeverity string
 
 const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
 const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
+
+type WorkflowRef string
 
 type RedactedReceiptPreviousReceiptHash_0 = SHA256
 
@@ -1961,4 +2397,4 @@ const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflo
 
 type WorkflowLintReportSchemaVersion int
 
-type WorkflowRef string
+type ReceiptPreviousReceiptHash_0 = SHA256
