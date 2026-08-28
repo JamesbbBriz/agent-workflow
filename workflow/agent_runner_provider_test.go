@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,6 +101,33 @@ func TestProviderActiveLeaseSerializesAcrossInstances(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := second.releaseActiveLease("attempt-2"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProviderActiveLeaseReleaseUsesTheAcquisitionLock(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "output"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	provider := &AgentRunnerProvider{sandbox: &SubprocessProvider{config: SubprocessProviderConfig{StagedRoot: root}}}
+	if err := provider.acquireActiveLease("attempt-1"); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := lockLedger(provider.activeLeasePath(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- provider.releaseActiveLease("attempt-1") }()
+	select {
+	case err := <-done:
+		unlockLedger(lock)
+		t.Fatalf("release bypassed the active lease lock: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	unlockLedger(lock)
+	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 }
@@ -205,6 +233,18 @@ func TestAgentRunnerProviderUsesBoundedProtocolAndExactResult(t *testing.T) {
 	}
 	isolation := provider.IsolationEvidence()
 	invocation := Invocation{IdempotencyKey: "runner-attempt", Deadline: time.Now().Add(10 * time.Second), Node: contractsv1.NodeDefinition{Id: "research", OutputSlots: []contractsv1.Slot{}}, InputHashes: []contractsv1.SHA256{repeatedSHA('1')}, ExecutorProfile: &profile, Isolation: &isolation}
+	badHandshake, err := NewAgentRunnerProvider(SubprocessProviderConfig{
+		Executable: executable, Args: []string{"-test.run=TestAgentRunnerProtocolHelper"}, StagedRoot: root,
+		Environment: map[string]string{"OPENAI_API_KEY": "agent-workflow-helper", "AGENT_WORKFLOW_PROTOCOL_MODE": "bad-descriptor"},
+	}, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badInvocation := invocation
+	badInvocation.IdempotencyKey = "runner-bad-handshake"
+	if err := badHandshake.Start(context.Background(), badInvocation); err == nil {
+		t.Fatal("mismatched provider descriptor was accepted")
+	}
 	cancelled := invocation
 	cancelled.IdempotencyKey = "runner-cancelled"
 	if err := provider.Start(context.Background(), cancelled); err != nil {
@@ -212,6 +252,14 @@ func TestAgentRunnerProviderUsesBoundedProtocolAndExactResult(t *testing.T) {
 	}
 	if cancellation, err := provider.CancelRun(context.Background(), cancelled.IdempotencyKey); err != nil || cancellation.Status != contractsv1.ProviderCancellationStatusAccepted {
 		t.Fatalf("active cancellation=%#v err=%v", cancellation, err)
+	}
+	failed := invocation
+	failed.IdempotencyKey = "runner-poll-failure"
+	if err := provider.Start(context.Background(), failed); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := provider.Poll(context.Background(), failed.IdempotencyKey); err == nil {
+		t.Fatal("malformed provider poll response was accepted")
 	}
 	if err := provider.Start(context.Background(), invocation); err != nil {
 		t.Fatal(err)
@@ -248,6 +296,18 @@ func TestAgentRunnerProviderUsesBoundedProtocolAndExactResult(t *testing.T) {
 	if _, ready, err := provider.Poll(context.Background(), second.IdempotencyKey); err != nil || !ready {
 		t.Fatalf("second sequential attempt ready=%v err=%v", ready, err)
 	}
+	large := invocation
+	large.IdempotencyKey = "runner-large"
+	large.Node.OutputSlots = []contractsv1.Slot{{Id: "recommendation", ArtifactType: "recommendation", MinItems: 1, MaxItems: 1}}
+	if err := provider.Start(context.Background(), large); err != nil {
+		t.Fatal(err)
+	}
+	if _, ready, err := provider.Poll(context.Background(), large.IdempotencyKey); err != nil || !ready {
+		t.Fatalf("large result ready=%v err=%v", ready, err)
+	}
+	if info, err := os.Stat(provider.attemptPath("output", large.IdempotencyKey)); err != nil || info.Size() <= 1<<20 {
+		t.Fatalf("large accepted result size=%v err=%v", info, err)
+	}
 	cancellation, err := provider.CancelRun(context.Background(), invocation.IdempotencyKey)
 	if err != nil || cancellation.Status != contractsv1.ProviderCancellationStatusAlreadyTerminal {
 		t.Fatalf("terminal cancellation=%#v err=%v", cancellation, err)
@@ -259,8 +319,12 @@ func TestAgentRunnerProtocolHelper(t *testing.T) {
 		return
 	}
 	descriptor, _ := ProviderDescriptor(contractsv1.ProviderIDCodex)
+	if os.Getenv("AGENT_WORKFLOW_PROTOCOL_MODE") == "bad-descriptor" {
+		descriptor, _ = ProviderDescriptor(contractsv1.ProviderIDHermesAgent)
+	}
 	runRef := "opaque-provider-run"
 	invocationID := ""
+	var invocation Invocation
 	cursor := 0
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
@@ -275,9 +339,15 @@ func TestAgentRunnerProtocolHelper(t *testing.T) {
 			response.ResponseType, response.Descriptor = contractsv1.ProviderProtocolResponseResponseTypeDescriptor, &descriptor
 		case contractsv1.ProviderProtocolRequestOperationStart:
 			invocationID = *request.InvocationId
+			body, _ := json.Marshal(request.Invocation)
+			_ = json.Unmarshal(body, &invocation)
 			response.ResponseType = contractsv1.ProviderProtocolResponseResponseTypeRun
 			response.Run = &contractsv1.ProviderRunRef{Kind: contractsv1.ProviderRunRefKindProviderRunRef, SchemaVersion: 1, ProviderId: descriptor.Id, InvocationId: *request.InvocationId, RunRef: runRef, ExecutorConfigHash: request.ExecutorProfile.ConfigHash, StartedAt: time.Now().UTC()}
 		case contractsv1.ProviderProtocolRequestOperationEvents:
+			if invocationID == "runner-poll-failure" {
+				response.ResponseType = contractsv1.ProviderProtocolResponseResponseTypeEvents
+				break
+			}
 			response.ResponseType = contractsv1.ProviderProtocolResponseResponseTypeEvents
 			page := contractsv1.ProviderEventPage{Kind: contractsv1.ProviderEventPageKindProviderEventPage, SchemaVersion: 1, RunRef: runRef, AfterCursor: *request.AfterCursor, NextCursor: cursor, Events: []contractsv1.ProviderEvent{}}
 			if cursor == 0 {
@@ -289,6 +359,11 @@ func TestAgentRunnerProtocolHelper(t *testing.T) {
 			response.Events = &page
 		case contractsv1.ProviderProtocolRequestOperationInspect:
 			result := ProviderResult{IdempotencyKey: invocationID, CompletedAt: time.Now().UTC(), Artifacts: []contractsv1.ActionArtifact{}}
+			if invocationID == "runner-large" {
+				content := map[string]any{"recommendation": strings.Repeat("x", 1100<<10)}
+				hash, _ := Digest(content)
+				result.Artifacts = []contractsv1.ActionArtifact{{Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: "large-result", ArtifactType: "recommendation", JobId: invocation.JobID, CampaignId: invocation.CampaignID, WorkflowRef: invocation.WorkflowRef, NodeId: invocation.Node.Id, InputHashes: invocation.InputHashes, Content: content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: contractsv1.ActionArtifactApprovalStatePending}}
+			}
 			body, _ := json.Marshal(result)
 			if err := os.WriteFile("/workspace/output/result", body, 0600); err != nil {
 				os.Exit(21)

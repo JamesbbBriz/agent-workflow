@@ -198,7 +198,6 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 		cancel()
 		return err
 	}
-	leaseHeld = false
 	removeReservation = false
 	run := &agentRunnerRun{cmd: cmd, stdin: stdin, scanner: bufio.NewScanner(stdout), cancel: cancel}
 	run.scanner.Buffer(make([]byte, 64<<10), providerProtocolMaxLine)
@@ -208,6 +207,7 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 		_ = cmd.Wait()
 		return err
 	}
+	leaseHeld = false
 	p.mu.Lock()
 	delete(p.starting, invocation.IdempotencyKey)
 	p.runs[invocation.IdempotencyKey] = run
@@ -230,6 +230,11 @@ func (p *AgentRunnerProvider) activeLeasePath() string {
 }
 
 func (p *AgentRunnerProvider) acquireActiveLease(key string) error {
+	lock, err := lockLedger(p.activeLeasePath(), true)
+	if err != nil {
+		return err
+	}
+	defer unlockLedger(lock)
 	body, err := json.Marshal(struct {
 		IdempotencyKey string `json:"idempotency_key"`
 	}{IdempotencyKey: key})
@@ -248,6 +253,11 @@ func (p *AgentRunnerProvider) acquireActiveLease(key string) error {
 
 func (p *AgentRunnerProvider) releaseActiveLease(key string) error {
 	path := p.activeLeasePath()
+	lock, err := lockLedger(path, true)
+	if err != nil {
+		return err
+	}
+	defer unlockLedger(lock)
 	body, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -432,64 +442,70 @@ func (p *AgentRunnerProvider) Poll(ctx context.Context, key string) (ProviderRes
 	after := run.cursor
 	eventsResponse, err := run.requestUnlockedContext(ctx, contractsv1.ProviderProtocolRequest{ProtocolVersion: 1, RequestId: key + ":events:" + fmt.Sprint(after), Operation: contractsv1.ProviderProtocolRequestOperationEvents, RunRef: &runRef, AfterCursor: &after})
 	if err != nil {
-		return ProviderResult{}, false, run.fail(err)
+		return ProviderResult{}, false, p.failRun(key, run, err)
 	}
 	if eventsResponse.ResponseType != contractsv1.ProviderProtocolResponseResponseTypeEvents || eventsResponse.Events == nil {
-		return ProviderResult{}, false, run.fail(errors.New("provider events response is incomplete"))
+		return ProviderResult{}, false, p.failRun(key, run, errors.New("provider events response is incomplete"))
 	}
 	if err := validateEventPage(*eventsResponse.Events, run.ref.RunRef, run.cursor); err != nil {
-		return ProviderResult{}, false, run.fail(err)
+		return ProviderResult{}, false, p.failRun(key, run, err)
 	}
 	run.events = append(run.events, eventsResponse.Events.Events...)
 	if len(run.events) > 1000 {
-		return ProviderResult{}, false, run.fail(errors.New("provider event history exceeded its limit"))
+		return ProviderResult{}, false, p.failRun(key, run, errors.New("provider event history exceeded its limit"))
 	}
 	run.cursor = eventsResponse.Events.NextCursor
 	observationResponse, err := run.requestUnlockedContext(ctx, contractsv1.ProviderProtocolRequest{ProtocolVersion: 1, RequestId: key + ":inspect:" + fmt.Sprint(run.cursor), Operation: contractsv1.ProviderProtocolRequestOperationInspect, RunRef: &runRef})
 	if err != nil {
-		return ProviderResult{}, false, run.fail(err)
+		return ProviderResult{}, false, p.failRun(key, run, err)
 	}
 	if observationResponse.ResponseType != contractsv1.ProviderProtocolResponseResponseTypeObservation || observationResponse.Observation == nil {
-		return ProviderResult{}, false, run.fail(errors.New("provider observation response is incomplete"))
+		return ProviderResult{}, false, p.failRun(key, run, errors.New("provider observation response is incomplete"))
 	}
 	observation := *observationResponse.Observation
 	if err := contract.ValidateDefinition("ProviderObservation", observation); err != nil {
-		return ProviderResult{}, false, run.fail(err)
+		return ProviderResult{}, false, p.failRun(key, run, err)
 	}
 	if observation.RunRef != run.ref.RunRef || observation.NextCursor != run.cursor {
-		return ProviderResult{}, false, run.fail(errors.New("provider observation does not match the event frontier"))
+		return ProviderResult{}, false, p.failRun(key, run, errors.New("provider observation does not match the event frontier"))
 	}
 	run.observation = observation
 	switch observation.Status {
 	case contractsv1.ProviderObservationStatusQueued, contractsv1.ProviderObservationStatusRunning:
 		return ProviderResult{}, false, nil
 	case contractsv1.ProviderObservationStatusFailed:
-		if err := p.releaseActiveLease(key); err != nil {
-			return ProviderResult{}, false, run.fail(err)
-		}
-		return ProviderResult{}, false, run.fail(errors.New("provider run failed"))
+		return ProviderResult{}, false, p.failRun(key, run, errors.New("provider run failed"))
 	case contractsv1.ProviderObservationStatusCancelled:
 		run.terminal = true
+		run.stop()
 		if err := p.releaseActiveLease(key); err != nil {
-			return ProviderResult{}, false, run.fail(err)
+			return ProviderResult{}, false, err
 		}
 		return ProviderResult{}, false, nil
 	case contractsv1.ProviderObservationStatusSucceeded:
 		result, err := p.acceptResult(key, run)
 		if err != nil {
-			return ProviderResult{}, false, run.fail(err)
+			return ProviderResult{}, false, p.failRun(key, run, err)
 		}
 		run.terminal = true
 		if err := p.releaseActiveLease(key); err != nil {
-			return ProviderResult{}, false, run.fail(err)
+			return ProviderResult{}, false, p.failRun(key, run, err)
 		}
 		p.mu.Lock()
 		p.results[key] = result
 		p.mu.Unlock()
 		return result, true, nil
 	default:
-		return ProviderResult{}, false, run.fail(errors.New("unknown provider terminal state"))
+		return ProviderResult{}, false, p.failRun(key, run, errors.New("unknown provider terminal state"))
 	}
+}
+
+func (p *AgentRunnerProvider) failRun(key string, run *agentRunnerRun, err error) error {
+	run.fail(err)
+	if releaseErr := p.releaseActiveLease(key); releaseErr != nil {
+		return releaseErr
+	}
+	return err
 }
 
 func (p *AgentRunnerProvider) acceptResult(key string, run *agentRunnerRun) (ProviderResult, error) {
@@ -599,17 +615,17 @@ func (p *AgentRunnerProvider) CancelRun(ctx context.Context, key string) (contra
 	runRef := run.ref.RunRef
 	response, err := run.requestUnlockedContext(ctx, contractsv1.ProviderProtocolRequest{ProtocolVersion: 1, RequestId: key + ":cancel", Operation: contractsv1.ProviderProtocolRequestOperationCancel, RunRef: &runRef})
 	if err != nil {
-		return contractsv1.ProviderCancellation{}, run.fail(err)
+		return contractsv1.ProviderCancellation{}, p.failRun(key, run, err)
 	}
 	if response.ResponseType != contractsv1.ProviderProtocolResponseResponseTypeCancellation || response.Cancellation == nil {
-		return contractsv1.ProviderCancellation{}, run.fail(errors.New("provider cancellation response is incomplete"))
+		return contractsv1.ProviderCancellation{}, p.failRun(key, run, errors.New("provider cancellation response is incomplete"))
 	}
 	cancellation := *response.Cancellation
 	if err := contract.ValidateDefinition("ProviderCancellation", cancellation); err != nil {
-		return contractsv1.ProviderCancellation{}, run.fail(err)
+		return contractsv1.ProviderCancellation{}, p.failRun(key, run, err)
 	}
 	if cancellation.RunRef != run.ref.RunRef {
-		return contractsv1.ProviderCancellation{}, run.fail(errors.New("provider cancellation run identity is invalid"))
+		return contractsv1.ProviderCancellation{}, p.failRun(key, run, errors.New("provider cancellation run identity is invalid"))
 	}
 	run.cancellation = &cancellation
 	if cancellation.Status == contractsv1.ProviderCancellationStatusAccepted || cancellation.Status == contractsv1.ProviderCancellationStatusAlreadyTerminal {

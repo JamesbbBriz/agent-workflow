@@ -17,10 +17,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/JamesbbBriz/agent-workflow/internal/contract"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
 
-const defaultProviderOutputLimit = 1 << 20
+const defaultProviderOutputLimit = contract.MaxDocumentBytes
 
 var environmentName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
