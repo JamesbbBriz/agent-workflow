@@ -175,6 +175,19 @@ func TestProviderProtocolFailsClosed(t *testing.T) {
 	}
 }
 
+func TestProviderProtocolScannerHonorsCanonicalDocumentLimit(t *testing.T) {
+	scanner := bufio.NewScanner(strings.NewReader(strings.Repeat("x", contract.MaxDocumentBytes) + "\n"))
+	scanner.Buffer(make([]byte, 64<<10), providerProtocolMaxLine)
+	if !scanner.Scan() || len(scanner.Bytes()) != contract.MaxDocumentBytes {
+		t.Fatalf("exact-limit protocol token was rejected: %v", scanner.Err())
+	}
+	scanner = bufio.NewScanner(strings.NewReader(strings.Repeat("x", contract.MaxDocumentBytes+1) + "\n"))
+	scanner.Buffer(make([]byte, 64<<10), providerProtocolMaxLine)
+	if scanner.Scan() || scanner.Err() == nil {
+		t.Fatal("oversized protocol token was accepted")
+	}
+}
+
 func TestProviderProtocolWriteHonorsContext(t *testing.T) {
 	cmd := exec.Command("sleep", "30")
 	configureProcessGroup(cmd)

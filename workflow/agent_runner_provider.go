@@ -22,7 +22,7 @@ import (
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
 
-const providerProtocolMaxLine = contract.MaxDocumentBytes
+const providerProtocolMaxLine = contract.MaxDocumentBytes + 1
 
 type providerAttemptReservation struct {
 	IdempotencyKey string             `json:"idempotency_key"`

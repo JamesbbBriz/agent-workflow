@@ -2,13 +2,16 @@ package adapterbridge
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/JamesbbBriz/agent-workflow/internal/contract"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 	"github.com/JamesbbBriz/agent-workflow/workflow"
 )
@@ -153,8 +156,17 @@ func TestBridgeAcceptsCoreSizedProtocolRequest(t *testing.T) {
 		done <- Run(Config{Provider: contractsv1.ProviderIDCodex, Upstream: script, WorkspaceRoot: root}, inputR, outputW)
 	}()
 	request := providerStartRequest(t, contractsv1.ProviderIDCodex)
-	request.Invocation["padding"] = strings.Repeat("x", 1100<<10)
-	if err := json.NewEncoder(inputW).Encode(request); err != nil {
+	request.Invocation["padding"] = ""
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Invocation["padding"] = strings.Repeat("x", contract.MaxDocumentBytes-len(body))
+	body, err = json.Marshal(request)
+	if err != nil || len(body) != contract.MaxDocumentBytes {
+		t.Fatalf("protocol request bytes=%d err=%v", len(body), err)
+	}
+	if _, err := inputW.Write(append(body, '\n')); err != nil {
 		t.Fatal(err)
 	}
 	var response contractsv1.ProviderProtocolResponse
@@ -164,6 +176,14 @@ func TestBridgeAcceptsCoreSizedProtocolRequest(t *testing.T) {
 	inputW.Close()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+	request.Invocation["padding"] = request.Invocation["padding"].(string) + "x"
+	body, err = json.Marshal(request)
+	if err != nil || len(body) != contract.MaxDocumentBytes+1 {
+		t.Fatalf("oversized protocol request bytes=%d err=%v", len(body), err)
+	}
+	if err := Run(Config{Provider: contractsv1.ProviderIDCodex, Upstream: script, WorkspaceRoot: root}, bytes.NewReader(append(body, '\n')), io.Discard); err == nil {
+		t.Fatal("oversized protocol request was accepted")
 	}
 }
 

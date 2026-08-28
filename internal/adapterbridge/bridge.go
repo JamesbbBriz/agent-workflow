@@ -61,7 +61,7 @@ func Run(config Config, stdin io.Reader, stdout io.Writer) error {
 	}
 	b := &bridge{config: config}
 	scanner := bufio.NewScanner(stdin)
-	scanner.Buffer(make([]byte, 64<<10), contract.MaxDocumentBytes)
+	scanner.Buffer(make([]byte, 64<<10), contract.MaxDocumentBytes+1)
 	encoder := json.NewEncoder(stdout)
 	for scanner.Scan() {
 		var request contractsv1.ProviderProtocolRequest
