@@ -98,9 +98,23 @@ go run ./cmd/agent-workflow provider doctor --id openclaw --staged-root ./staged
 ```
 
 Each available adapter is checked through the same admitted fixture with
-`provider conformance`. The Core speaks the versioned NDJSON protocol, binds
+`provider conformance` (default `conformance/fixtures/generic.json`). The Core speaks the versioned NDJSON protocol, binds
 the exact executor profile and staged isolation evidence into Replay, and
 fails closed instead of selecting another provider.
+
+Run the public conformance contract without a GUI, browser, production data, or
+network access:
+
+```bash
+npm run conformance
+# or consume an external vertical fixture
+go run ./cmd/agent-workflow conformance --file path/to/fixture.json
+```
+
+Both committed fixtures use the same command. The JSON report identifies the
+contract/tool versions and fixture hash; bundled providers are either typed
+unavailable/skipped or left for the explicit credentialed `provider
+conformance` command. See [ADR 0007](docs/adr/0007-public-conformance-contract.md).
 
 ## Architecture boundary
 

@@ -30,8 +30,13 @@ jobs:
       - run: npm ci
       - run: npm run check:generated
       - run: npm run check:types
+      - run: |
+          npm run fixture:conformance
+          git diff --exit-code -- conformance/fixtures
+          npm run conformance
       - run: go test ./... -count=1
       - run: go vet ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
       - run: go build ./...
       - run: npx playwright install --with-deps chromium
       - run: npm run web:e2e

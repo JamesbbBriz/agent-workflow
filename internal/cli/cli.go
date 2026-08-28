@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime/debug"
 	"sort"
 	"time"
 
@@ -32,7 +33,7 @@ type response struct {
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder|provider> [options]")
+		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder|provider|conformance> [options]")
 		return 2
 	}
 	switch args[0] {
@@ -46,10 +47,51 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runBuilder(args[1:], stdout, stderr)
 	case "provider":
 		return runProvider(args[1:], stdout, stderr)
+	case "conformance":
+		return runConformance(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder|provider> [options]")
+		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder|provider|conformance> [options]")
 		return 2
 	}
+}
+
+func runConformance(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("conformance", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	file := flags.String("file", "", "conformance fixture JSON")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *file == "" || flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "conformance requires exactly one --file")
+		return 2
+	}
+	body, err := os.ReadFile(*file)
+	if err != nil {
+		return writeError(stdout, stderr, true, "input_unavailable", errors.New("conformance fixture is unavailable"))
+	}
+	var fixture contractsv1.ConformanceFixture
+	if err := contract.DecodeDefinition("ConformanceFixture", body, &fixture); err != nil {
+		return writeError(stdout, stderr, true, "invalid_fixture", err)
+	}
+	report, err := workflow.RunConformance(context.Background(), fixture, toolVersion())
+	if err != nil {
+		return writeError(stdout, stderr, true, "conformance_failed", err)
+	}
+	if err := json.NewEncoder(stdout).Encode(report); err != nil {
+		return writeError(stdout, stderr, true, "output_failed", errors.New("conformance report could not be written"))
+	}
+	if !report.Passed {
+		return 1
+	}
+	return 0
+}
+
+func toolVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "development"
 }
 
 func runBuilder(args []string, stdout, stderr io.Writer) int {
@@ -605,7 +647,7 @@ func runProviderConformance(args []string, stdout, stderr io.Writer) int {
 	providerVersion := flags.String("provider-version", "", "provider version")
 	configRef := flags.String("config-ref", "default", "non-secret provider configuration reference")
 	allowNetwork := flags.Bool("allow-network", false, "allow the isolated adapter to reach its provider API")
-	file := flags.String("file", "examples/research-review.workflow.json", "admitted workflow fixture")
+	file := flags.String("file", "conformance/fixtures/generic.json", "admitted conformance fixture or legacy Workflow definition")
 	at := flags.String("at", "", "pinned evidence cutoff in RFC3339")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return 2
@@ -648,6 +690,25 @@ func runProviderConformance(args []string, stdout, stderr io.Writer) int {
 	body, err := os.ReadFile(*file)
 	if err != nil {
 		return writeError(stdout, stderr, true, "input_unavailable", errors.New("workflow fixture is unavailable"))
+	}
+	var fixture contractsv1.ConformanceFixture
+	if err := contract.DecodeDefinition("ConformanceFixture", body, &fixture); err == nil {
+		if fixture.Profile != contractsv1.ConformanceFixtureProfileGeneric {
+			return writeError(stdout, stderr, true, "invalid_fixture", errors.New("provider conformance requires the generic fixture"))
+		}
+		report, err := workflow.RunConformanceWithProvider(context.Background(), fixture, toolVersion(), descriptor.Id, provider)
+		stopAt := time.Now().Add(5 * time.Minute)
+		for errors.Is(err, workflow.ErrProviderNotReady) && time.Now().Before(stopAt) {
+			time.Sleep(50 * time.Millisecond)
+			report, err = workflow.RunConformanceWithProvider(context.Background(), fixture, toolVersion(), descriptor.Id, provider)
+		}
+		if err != nil {
+			return writeError(stdout, stderr, true, "conformance_failed", err)
+		}
+		if err := json.NewEncoder(stdout).Encode(report); err != nil {
+			return writeError(stdout, stderr, true, "output_failed", errors.New("conformance report could not be written"))
+		}
+		return 0
 	}
 	var definition contractsv1.WorkflowDefinition
 	if _, err := contract.ValidateWorkflow(body); err != nil {

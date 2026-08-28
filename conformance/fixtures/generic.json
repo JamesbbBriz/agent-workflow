@@ -1,0 +1,300 @@
+{
+  "approval_policies": [
+    "human-confirm"
+  ],
+  "blocker_codes": [
+    "context-missing",
+    "provider-timeout",
+    "approval-required",
+    "approval-stale"
+  ],
+  "campaigns": [
+    {
+      "archetype": "research",
+      "budget": {
+        "max_actions": 3,
+        "max_attempts": 3,
+        "max_candidates": 6
+      },
+      "evidence_frontier": {
+        "cutoff": "2026-01-01T00:00:00Z",
+        "source_hashes": []
+      },
+      "id": "research-campaign",
+      "intent": {
+        "completion": [
+          "terminal receipt exists"
+        ],
+        "consumers": [
+          "fixture-consumer"
+        ],
+        "kind": "campaign",
+        "no_action_when": [
+          "fixture has no work"
+        ],
+        "non_goals": [
+          "production mutation"
+        ],
+        "objective": "Fixture research Campaign",
+        "schema_version": 1,
+        "success_signals": [
+          "fixture completes"
+        ],
+        "summary": "Fixture research Campaign",
+        "title": "Fixture research Campaign"
+      },
+      "job_id": "generic-project-job",
+      "kind": "campaign_definition",
+      "schema_version": 1,
+      "scope": {
+        "labels": {
+          "tenant": "fixture"
+        },
+        "subject_ids": [
+          "generic-project"
+        ],
+        "subject_type": "project"
+      },
+      "workflow_plan": [
+        "discover-review@1"
+      ]
+    }
+  ],
+  "capability_manifests": [
+    {
+      "capabilities": [
+        {
+          "authority": "read",
+          "name": "read-evidence"
+        }
+      ],
+      "id": "capability-a805787baebbaaddf443",
+      "kind": "capability_manifest",
+      "manifest_hash": "sha256:1fece0aef50883d604e3ccb8a689372409c95acf2331f7a6c2154fbf418d5b97",
+      "schema_version": 1
+    }
+  ],
+  "context_packs": [
+    {
+      "authority": "canonical",
+      "captured_at": "2025-12-31T23:00:00Z",
+      "content": {
+        "brief": "Use only deterministic fixture evidence."
+      },
+      "content_sha256": "sha256:ad5091b34a80a9d54f34844f6bcdd4ef0c9a93d72dee30529aec0c1aeb7866bd",
+      "coverage": "complete",
+      "expires_at": "2026-01-02T00:00:00Z",
+      "id": "fixture-project-brief",
+      "kind": "context_pack_edition",
+      "pack_schema_version": 1,
+      "pack_type": "project-brief",
+      "provenance": [
+        {
+          "artifact_type": "fixture",
+          "id": "fixture-source",
+          "kind": "receipt",
+          "media_type": "application/json",
+          "schema_version": 1,
+          "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "schema_version": 1,
+      "scope": {
+        "labels": {
+          "tenant": "fixture"
+        },
+        "subject_ids": [
+          "generic-project"
+        ],
+        "subject_type": "project"
+      }
+    }
+  ],
+  "job": {
+    "budget": {
+      "max_actions": 8,
+      "max_attempts": 8,
+      "max_candidates": 12
+    },
+    "campaign_archetypes": [
+      "research",
+      "comparison"
+    ],
+    "id": "generic-project-job",
+    "intent": {
+      "completion": [
+        "terminal receipt exists"
+      ],
+      "consumers": [
+        "fixture-consumer"
+      ],
+      "kind": "job",
+      "no_action_when": [
+        "fixture has no work"
+      ],
+      "non_goals": [
+        "production mutation"
+      ],
+      "objective": "Fixture growth job",
+      "schema_version": 1,
+      "success_signals": [
+        "fixture completes"
+      ],
+      "summary": "Fixture growth job",
+      "title": "Fixture growth job"
+    },
+    "kind": "job_definition",
+    "schema_version": 1,
+    "scope": {
+      "labels": {
+        "tenant": "fixture"
+      },
+      "subject_ids": [
+        "generic-project"
+      ],
+      "subject_type": "project"
+    }
+  },
+  "kind": "conformance_fixture",
+  "profile": "generic",
+  "schema_version": 1,
+  "workflows": [
+    {
+      "blockers": [
+        "context-missing",
+        "provider-timeout",
+        "approval-required",
+        "approval-stale"
+      ],
+      "completion": [
+        "review approved"
+      ],
+      "default_context": [
+        {
+          "allow_partial": false,
+          "id": "project-brief",
+          "pack_type": "project-brief",
+          "required": true,
+          "schema_version": 1,
+          "selector": "project-brief"
+        }
+      ],
+      "id": "discover-review",
+      "intent": {
+        "completion": [
+          "terminal receipt exists"
+        ],
+        "consumers": [
+          "fixture-consumer"
+        ],
+        "kind": "workflow",
+        "no_action_when": [
+          "fixture has no work"
+        ],
+        "non_goals": [
+          "production mutation"
+        ],
+        "objective": "Fixture discover-review",
+        "schema_version": 1,
+        "success_signals": [
+          "fixture completes"
+        ],
+        "summary": "Fixture discover-review",
+        "title": "Fixture discover-review"
+      },
+      "kind": "workflow_definition",
+      "nodes": [
+        {
+          "blocker_codes": [
+            "context-missing",
+            "provider-timeout"
+          ],
+          "budget": {
+            "max_actions": 1,
+            "max_attempts": 2,
+            "max_candidates": 2
+          },
+          "capabilities": [
+            "read-evidence"
+          ],
+          "context": [],
+          "deadline_seconds": 600,
+          "depends_on": [],
+          "executor": "bounded-agent@1",
+          "id": "research",
+          "input_slots": [],
+          "kind": "agent",
+          "output_slots": [
+            {
+              "artifact_kind": "action_artifact",
+              "artifact_type": "recommendation",
+              "consumers": [
+                "review"
+              ],
+              "content_schema": "recommendation@1",
+              "id": "recommendation",
+              "max_items": 1,
+              "min_items": 1
+            }
+          ]
+        },
+        {
+          "approval_policy": "human-confirm",
+          "blocker_codes": [
+            "approval-required",
+            "approval-stale"
+          ],
+          "budget": {
+            "max_actions": 1,
+            "max_attempts": 1,
+            "max_candidates": 1
+          },
+          "capabilities": [],
+          "context": [],
+          "deadline_seconds": 600,
+          "depends_on": [
+            "research"
+          ],
+          "executor": "human-approval@1",
+          "id": "review",
+          "input_slots": [
+            {
+              "artifact_kind": "action_artifact",
+              "artifact_type": "recommendation",
+              "content_schema": "recommendation@1",
+              "id": "recommendation",
+              "max_items": 1,
+              "min_items": 1
+            }
+          ],
+          "kind": "approval",
+          "output_slots": [
+            {
+              "artifact_kind": "action_artifact",
+              "artifact_type": "review-decision",
+              "content_schema": "review-decision@1",
+              "id": "review-decision",
+              "max_items": 1,
+              "min_items": 1
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "artifact_kind": "action_artifact",
+          "artifact_type": "review-decision",
+          "consumers": [
+            "fixture-consumer"
+          ],
+          "content_schema": "review-decision@1",
+          "id": "review-decision",
+          "max_items": 1,
+          "min_items": 1
+        }
+      ],
+      "schema_version": 1,
+      "version": 1
+    }
+  ]
+}

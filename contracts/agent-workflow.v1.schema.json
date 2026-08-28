@@ -1312,6 +1312,56 @@
         "selected_campaign_id": { "$ref": "#/$defs/Identifier" },
         "campaigns": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/CanvasPortfolioCampaign" } }
       }
+    },
+    "ConformanceFixtureProfile": {
+      "type": "string",
+      "enum": ["generic", "seo-shaped"]
+    },
+    "ConformanceFixture": {
+      "title": "ConformanceFixture",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "profile", "job", "campaigns", "workflows", "context_packs", "capability_manifests", "blocker_codes", "approval_policies"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["conformance_fixture"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "profile": { "$ref": "#/$defs/ConformanceFixtureProfile" },
+        "job": { "$ref": "#/$defs/JobDefinition" },
+        "campaigns": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/CampaignDefinition" } },
+        "workflows": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/WorkflowDefinition" } },
+        "context_packs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ContextPackEdition" } },
+        "capability_manifests": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/CapabilityManifest" } },
+        "blocker_codes": { "$ref": "#/$defs/NonEmptyStrings" },
+        "approval_policies": { "$ref": "#/$defs/NonEmptyStrings" }
+      }
+    },
+    "ConformanceCheck": {
+      "title": "ConformanceCheck",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "code", "evidence_hashes"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" },
+        "status": { "type": "string", "enum": ["pass", "skipped", "fail"] },
+        "code": { "$ref": "#/$defs/Identifier" },
+        "evidence_hashes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/SHA256" } }
+      }
+    },
+    "ConformanceReport": {
+      "title": "ConformanceReport",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "contract_version", "tool_version", "profile", "fixture_sha256", "checks", "passed"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["conformance_report"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "contract_version": { "type": "string", "enum": ["agent-workflow.v1"] },
+        "tool_version": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "profile": { "$ref": "#/$defs/ConformanceFixtureProfile" },
+        "fixture_sha256": { "$ref": "#/$defs/SHA256" },
+        "checks": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ConformanceCheck" } },
+        "passed": { "type": "boolean" }
+      }
     }
   }
 }

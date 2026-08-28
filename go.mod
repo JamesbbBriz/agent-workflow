@@ -1,6 +1,6 @@
 module github.com/JamesbbBriz/agent-workflow
 
-go 1.26.0
+go 1.26.6
 
 require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
