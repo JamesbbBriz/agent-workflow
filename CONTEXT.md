@@ -1,0 +1,24 @@
+# Domain language
+
+- **Job** — a human-owned, long-lived mission, coverage, budget policy, success signals, and non-goals. A Job is not an execution.
+- **Campaign** — one independently admitted, bounded hypothesis owned by a Job. It freezes scope, evidence frontier, budget, and a pinned Workflow plan.
+- **Workflow** — an immutable, versioned directed acyclic graph of Nodes. It is a reusable definition, not a running instance.
+- **Campaign execution** — the canonical runtime aggregate that advances one admitted Campaign through its pinned Workflow plan.
+- **Node** — the smallest context, capability, budget, execution, and acceptance authority.
+- **Context Pack** — an immutable evidence edition with authority, scope, provenance, freshness, and a content hash.
+- **Context Bundle** — the exact set of Context Pack editions resolved for one Node at one Campaign evidence frontier.
+- **Action Artifact** — a decision or proposed mutation. It has no mutation authority until the Core accepts the required review or approval.
+- **Resource Ref** — the stable type, identity, generation, and baseline revision/hash of a mutation target.
+- **Change Proposal** — an immutable proposed delta from one Campaign, bound to its source Node result, Resource Ref, inputs, and evidence.
+- **Change Case** — the cross-Campaign aggregate that coordinates every accepted Change Proposal for one Resource Ref and baseline.
+- **Conflict Set** — a hash-bound description of incompatible proposal fields, preconditions, or authority claims inside a Change Case.
+- **Resolution Artifact** — a resolver or human proposal that addresses one exact Conflict Set. It is not mutation authority until reviewed and accepted by the Core.
+- **Mutation Lease** — the short-lived exclusive right to prepare or apply one accepted Change Case against an exact Resource generation and baseline.
+- **Capability Manifest** — the exact side-effect authority available to one Node invocation.
+- **Receipt** — append-only proof that the Core accepted one canonical transition.
+- **Replay** — a verified projection of an exact canonical receipt prefix. A redacted Replay is a view of that prefix, not a rewritten history.
+- **Canvas** — a read-only projection of definitions and canonical runtime state. It never creates business truth.
+- **Adapter** — a storage, producer, provider, CLI, GUI, MCP, or WebMCP implementation at a Core seam. An Adapter cannot become workflow authority.
+- **Agent Runner Provider** — an adapter that executes one already-authorized Agent Node and reports normalized events and receipts. It cannot choose Core transitions.
+- **Executor Profile** — the immutable provider, version, model/config, capability, isolation, and configuration-hash binding used for one invocation attempt.
+- **Provider Run Ref** — an opaque provider-owned execution/session reference. It is diagnostic and resumable adapter state, never Campaign or Node identity.

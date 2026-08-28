@@ -21,5 +21,13 @@
     "workflow_admission": { "$ref": "agent-workflow.v1.schema.json#/$defs/WorkflowAdmission" },
     "approval_brief": { "$ref": "agent-workflow.v1.schema.json#/$defs/ApprovalBrief" },
     "approval_preview": { "$ref": "agent-workflow.v1.schema.json#/$defs/ApprovalPreview" }
+    ,"campaign_execution_state": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignExecutionState" }
+    ,"campaign_drive_preview": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignDrivePreview" }
+    ,"campaign_drive_receipt": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignDriveReceipt" }
+    ,"campaign_admission_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignAdmissionEventPayload" }
+    ,"attempt_reserved_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/AttemptReservedEventPayload" }
+    ,"node_completed_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/NodeCompletedEventPayload" }
+    ,"budget_exhausted_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/BudgetExhaustedEventPayload" }
+    ,"campaign_terminal_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignTerminalEventPayload" }
   }
 }

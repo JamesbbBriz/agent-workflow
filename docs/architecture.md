@@ -1,16 +1,6 @@
 # Architecture
 
-## Domain glossary
-
-- **Job** — long-lived intent, coverage, budget, and non-goals created by a human.
-- **Campaign** — one bounded hypothesis admitted against a frozen scope and evidence frontier.
-- **Workflow** — an immutable, versioned DAG with completion, no-action, blocker, input, and output contracts.
-- **Node** — the smallest context, capability, budget, execution, and acceptance boundary.
-- **Context Pack** — immutable evidence with authority, scope, provenance, freshness, and a content hash.
-- **Context Bundle** — the exact set of Pack editions resolved for one Node at one evidence cutoff.
-- **Action Artifact** — a decision or proposed mutation bound to its Campaign, Workflow, inputs, output hash, and approval state.
-- **Receipt** — an append-only proof of one accepted transition.
-- **Replay** — an exact canonical prefix reconstructed at a chosen receipt cutoff.
+The canonical domain language is defined in [CONTEXT.md](../CONTEXT.md).
 
 ## Authority
 
@@ -56,3 +46,5 @@ The included file ledger is deliberately single-writer. It syncs each JSONL rece
 - CLI, GUI, MCP, and WebMCP expose Core operations without becoming state authorities.
 
 The first implementation uses static Go registries. Dynamic code loading and plugin marketplaces require separate threat models and are intentionally absent.
+
+The runtime closure and SEO Ops extraction boundary are specified in [Runtime closure and SEO Ops extraction plan](runtime-closure-plan.md) and [ADR 0004](adr/0004-canonical-campaign-execution.md). The provider-neutral process protocol and bundled Codex, Claude Code, Pi, OpenClaw, and Hermes adapters are specified in [ADR 0005](adr/0005-bundled-agent-runner-providers.md).

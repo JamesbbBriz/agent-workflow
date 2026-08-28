@@ -57,10 +57,15 @@ func OpenFileLedger(path string) (*FileLedger, error) {
 			return nil, fmt.Errorf("close ledger directory: %w", err)
 		}
 	}
+	ledger := &FileLedger{path: path}
+	lock, err := lockLedger(path, true)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockLedger(lock)
 	if err := recoverTornTail(path); err != nil {
 		return nil, err
 	}
-	ledger := &FileLedger{path: path}
 	if _, err := ledger.load(); err != nil {
 		return nil, err
 	}
@@ -107,14 +112,20 @@ func recoverTornTail(path string) error {
 	return file.Close()
 }
 
-// ponytail: this is a single-writer crash-durable ledger; use a database or OS
-// lock when multiple Core processes need to append to the same aggregate.
 func (l *FileLedger) Append(receipt contractsv1.Receipt) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	lock, err := lockLedger(l.path, true)
+	if err != nil {
+		return err
+	}
+	defer unlockLedger(lock)
 	all, err := l.load()
 	if err != nil {
 		return err
+	}
+	if receipt.AggregateVersion < 1 {
+		return errors.New("receipt aggregate version must be positive")
 	}
 	current := all[receipt.AggregateId]
 	index := receipt.AggregateVersion - 1
@@ -151,6 +162,11 @@ func (l *FileLedger) Append(receipt contractsv1.Receipt) error {
 func (l *FileLedger) Replay(aggregateID string) (contractsv1.ReplayBundle, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	lock, err := lockLedger(l.path, false)
+	if err != nil {
+		return contractsv1.ReplayBundle{}, err
+	}
+	defer unlockLedger(lock)
 	all, err := l.load()
 	if err != nil {
 		return contractsv1.ReplayBundle{}, err
@@ -161,6 +177,11 @@ func (l *FileLedger) Replay(aggregateID string) (contractsv1.ReplayBundle, error
 func (l *FileLedger) ReplaysByReceiptType(receiptType contractsv1.ReceiptReceiptType) ([]contractsv1.ReplayBundle, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	lock, err := lockLedger(l.path, false)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockLedger(lock)
 	all, err := l.load()
 	if err != nil {
 		return nil, err
