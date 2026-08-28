@@ -110,7 +110,7 @@ See [Architecture](docs/architecture.md), [Security](SECURITY.md), [Compatibilit
 
 ## Status
 
-The v1 public contract is under active development. WebMCP support is an optional experimental browser adapter and is not a Core dependency.
+The v1 contract, Context compiler, single-Node execution, Canvas, Builder, and optional WebMCP adapter are implemented. Whole-DAG execution, enforced aggregate budgets, multi-Campaign authoring, exact-cutoff redacted Replay, bundled Agent Runner providers, and the SEO Ops conformance consumer remain release work; see the [runtime closure plan](docs/runtime-closure-plan.md). WebMCP is not a Core dependency.
 
 ## License
 
