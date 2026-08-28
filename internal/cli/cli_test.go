@@ -141,6 +141,31 @@ func TestDemoRunsOneContextBoundNodeAndReturnsReplay(t *testing.T) {
 	}
 }
 
+func TestProviderListAndDoctorExposeReadinessWithoutSecrets(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"provider", "list"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("provider list code=%d stderr=%s", code, stderr.String())
+	}
+	var listed struct {
+		OK   bool `json:"ok"`
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &listed); err != nil || !listed.OK || len(listed.Data) != 5 {
+		t.Fatalf("provider list=%s err=%v", stdout.String(), err)
+	}
+
+	t.Setenv("OPENAI_API_KEY", "never-print-this-secret")
+	stdout.Reset()
+	if code := cli.Run([]string{"provider", "doctor", "--id", "codex"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("provider doctor code=%d stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "never-print-this-secret") || !strings.Contains(stdout.String(), `"descriptor"`) {
+		t.Fatalf("provider doctor leaked or omitted readiness: %s", stdout.String())
+	}
+}
+
 func TestBuilderRejectsRemoteListenAddress(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := cli.Run([]string{"builder", "--listen", "0.0.0.0:4321"}, &stdout, &stderr); code == 0 {

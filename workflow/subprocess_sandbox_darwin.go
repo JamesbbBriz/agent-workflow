@@ -12,6 +12,6 @@ func sandboxDriver() (contractsv1.ProviderIsolationEvidenceDriver, error) {
 	return "", errors.New("staged subprocess isolation requires Linux Bubblewrap process containment")
 }
 
-func sandboxCommand(string, []string, string, int) (string, []string, error) {
+func sandboxCommand(string, []string, string, int, bool) (string, []string, error) {
 	return "", nil, errors.New("staged subprocess isolation requires Linux Bubblewrap process containment")
 }

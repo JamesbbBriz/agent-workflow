@@ -1,6 +1,6 @@
 # ADR 0005: Bundled Agent Runner providers
 
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -63,6 +63,12 @@ The repository contains:
   provider without changing Job, Campaign, Workflow, Context, or output
   contracts.
 
+The five thin profiles are compiled into the static Go registry. Their
+executables are deliberately separate distributables named
+`agent-workflow-codex`, `agent-workflow-claude-code`, `agent-workflow-pi`,
+`agent-workflow-openclaw`, and `agent-workflow-hermes`. The Core discovers no
+plugins and never falls back between them.
+
 Provider dependencies remain inside their adapter directories. The default Go
 build does not require Node, Python, provider credentials, or every provider
 binary. An unavailable adapter reports a typed readiness error; it does not
@@ -92,4 +98,3 @@ capability, and isolation fields use versioned v2 contracts.
 - Framework integrations and a provider marketplace are not part of the first
   release. They can implement the public process protocol without being named
   or depended on by the Core.
-
