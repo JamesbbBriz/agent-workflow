@@ -20,7 +20,7 @@ func RunConformance(ctx context.Context, fixture contractsv1.ConformanceFixture,
 
 // RunConformanceWithProvider runs the generic fixture with one explicitly
 // selected bundled provider. It never falls back to the in-process provider.
-func RunConformanceWithProvider(ctx context.Context, fixture contractsv1.ConformanceFixture, toolVersion string, providerID contractsv1.ProviderID, provider Provider) (contractsv1.ConformanceReport, error) {
+func RunConformanceWithProvider(ctx context.Context, fixture contractsv1.ConformanceFixture, toolVersion string, providerID contractsv1.ProviderID, provider *AgentRunnerProvider) (contractsv1.ConformanceReport, error) {
 	if fixture.Profile != contractsv1.ConformanceFixtureProfileGeneric {
 		return contractsv1.ConformanceReport{}, errors.New("explicit provider conformance requires the generic fixture")
 	}
@@ -28,6 +28,16 @@ func RunConformanceWithProvider(ctx context.Context, fixture contractsv1.Conform
 		return contractsv1.ConformanceReport{}, errors.New("explicit conformance provider is required")
 	}
 	if _, err := ProviderDescriptor(providerID); err != nil {
+		return contractsv1.ConformanceReport{}, err
+	}
+	profile, isolation := provider.ExecutorProfile(), provider.IsolationEvidence()
+	if profile.ProviderId != providerID || profile.IsolationProfile != contractsv1.ProviderIsolationProfileStagedSubprocess || isolation.Profile != contractsv1.ProviderIsolationProfileStagedSubprocess {
+		return contractsv1.ConformanceReport{}, errors.New("explicit conformance provider does not match the bundled staged profile")
+	}
+	if err := VerifyExecutorProfile(profile); err != nil {
+		return contractsv1.ConformanceReport{}, err
+	}
+	if err := verifyProviderIsolation(isolation); err != nil {
 		return contractsv1.ConformanceReport{}, err
 	}
 	return runConformance(ctx, fixture, toolVersion, providerID, provider)
@@ -76,14 +86,13 @@ func runConformance(ctx context.Context, fixture contractsv1.ConformanceFixture,
 			return contractsv1.ConformanceReport{}, err
 		}
 		if descriptor.Id == providerID {
-			if runner, ok := provider.(*AgentRunnerProvider); ok {
-				readinessHash, err = Digest(struct {
-					Profile   contractsv1.ExecutorProfile
-					Isolation contractsv1.ProviderIsolationEvidence
-				}{runner.ExecutorProfile(), runner.IsolationEvidence()})
-				if err != nil {
-					return contractsv1.ConformanceReport{}, err
-				}
+			runner := provider.(*AgentRunnerProvider)
+			readinessHash, err = Digest(struct {
+				Profile   contractsv1.ExecutorProfile
+				Isolation contractsv1.ProviderIsolationEvidence
+			}{runner.ExecutorProfile(), runner.IsolationEvidence()})
+			if err != nil {
+				return contractsv1.ConformanceReport{}, err
 			}
 		}
 		providerChecks = append(providerChecks, contractsv1.ConformanceCheck{

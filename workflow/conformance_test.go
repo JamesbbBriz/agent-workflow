@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 	"github.com/JamesbbBriz/agent-workflow/workflow"
@@ -67,54 +66,12 @@ func TestOfflineConformanceReportIsDeterministicAndHashBound(t *testing.T) {
 	}
 }
 
-func TestGenericConformanceRunsAnExplicitBundledProvider(t *testing.T) {
+func TestGenericConformanceRequiresAnAgentRunnerProvider(t *testing.T) {
 	fixture := loadConformanceFixture(t, "generic")
-	provider := &fixtureProvider{results: map[string]workflow.ProviderResult{}}
-	report, err := workflow.RunConformanceWithProvider(context.Background(), fixture, "test", "codex", provider)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := workflow.RunConformanceWithProvider(context.Background(), fixture, "test", "codex", nil); err == nil {
+		t.Fatal("bundled provider conformance accepted no AgentRunner provider")
 	}
-	for _, check := range report.Checks {
-		if check.Id == "provider-codex" && check.Status == contractsv1.ConformanceCheckStatusPass && len(check.EvidenceHashes) > 1 && provider.starts > 0 {
-			return
-		}
-	}
-	t.Fatalf("explicit provider was not proven by normalized receipts: %+v", report.Checks)
 }
-
-type fixtureProvider struct {
-	starts  int
-	results map[string]workflow.ProviderResult
-}
-
-func (p *fixtureProvider) Start(_ context.Context, invocation workflow.Invocation) error {
-	if _, ok := p.results[invocation.IdempotencyKey]; ok {
-		return nil
-	}
-	p.starts++
-	artifacts := make([]contractsv1.ActionArtifact, 0, len(invocation.Node.OutputSlots))
-	for _, slot := range invocation.Node.OutputSlots {
-		content := map[string]any{"fixture": string(slot.Id)}
-		hash, err := workflow.Digest(content)
-		if err != nil {
-			return err
-		}
-		artifacts = append(artifacts, contractsv1.ActionArtifact{
-			Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: "artifact-" + string(slot.Id), ArtifactType: slot.ArtifactType,
-			JobId: invocation.JobID, CampaignId: invocation.CampaignID, WorkflowRef: invocation.WorkflowRef, NodeId: invocation.Node.Id,
-			InputHashes: invocation.InputHashes, Content: content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: contractsv1.ActionArtifactApprovalStatePending,
-		})
-	}
-	p.results[invocation.IdempotencyKey] = workflow.ProviderResult{IdempotencyKey: invocation.IdempotencyKey, CompletedAt: invocation.Deadline.Add(-time.Second), Artifacts: artifacts}
-	return nil
-}
-
-func (p *fixtureProvider) Poll(_ context.Context, key string) (workflow.ProviderResult, bool, error) {
-	result, ok := p.results[key]
-	return result, ok, nil
-}
-
-func (*fixtureProvider) Cancel(context.Context, string) error { return nil }
 
 func loadConformanceFixture(t *testing.T, name string) contractsv1.ConformanceFixture {
 	t.Helper()
