@@ -226,6 +226,101 @@ func TestCampaignRuntimeDurationSurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestCampaignRuntimeDoesNotResetDeadlineAfterReservationCrash(t *testing.T) {
+	cutoff := time.Now().UTC().Add(-time.Hour)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := loadExample(t)
+	definition.Nodes = definition.Nodes[:1]
+	definition.Nodes[0].OutputSlots[0].Consumers = []string{"workflow-output"}
+	definition.Outputs = append([]contractsv1.Slot(nil), definition.Nodes[0].OutputSlots...)
+	definition.Outputs[0].Consumers = append([]string(nil), definition.Intent.Consumers...)
+	one := 1
+	definition.Nodes[0].DeadlineSeconds = &one
+	job := jobFixture(scope)
+	campaign := campaignFixture(scope, cutoff)
+	campaign.Budget.MaxDurationSeconds = &one
+	canonical := workflow.NewMemoryLedger()
+	admit(t, canonical, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
+	ledger := &failOnceLedger{Ledger: canonical, failType: contractsv1.ReceiptReceiptTypeCompile}
+	provider := &dagProvider{results: map[string]workflow.ProviderResult{}}
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger)
+	request := workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}}
+	if _, err := engine.Drive(context.Background(), request); err == nil {
+		t.Fatal("injected crash window was ignored")
+	}
+	time.Sleep(1100 * time.Millisecond)
+	receipt, err := engine.Drive(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.State.BlockerCode == nil || *receipt.State.BlockerCode != "duration-budget-exhausted" || provider.starts != 0 {
+		t.Fatalf("reservation deadline reset after crash: state=%+v starts=%d", receipt.State, provider.starts)
+	}
+}
+
+func TestRunNodeNeverAppendsToIncompleteLegacyV1History(t *testing.T) {
+	t.Parallel()
+	cutoff := time.Now().UTC().Add(-time.Hour)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := loadExample(t)
+	definition.Nodes = definition.Nodes[:1]
+	definition.Nodes[0].OutputSlots[0].Consumers = []string{"workflow-output"}
+	definition.Outputs = append([]contractsv1.Slot(nil), definition.Nodes[0].OutputSlots...)
+	definition.Outputs[0].Consumers = append([]string(nil), definition.Intent.Consumers...)
+	job := jobFixture(scope)
+	campaign := campaignFixture(scope, cutoff)
+	source := workflow.NewMemoryLedger()
+	admission := admit(t, source, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
+	provider := &dagProvider{results: map[string]workflow.ProviderResult{}}
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, source)
+	driven, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for index, receipt := range driven.NodeReplay.Receipts {
+		if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeInvocation {
+			count = index + 1
+			break
+		}
+	}
+	partial, err := workflow.ReplayPrefix(*driven.NodeReplay, count)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := workflow.NewMemoryLedger()
+	admissionReplay, err := source.Replay(admission.Receipt.AggregateId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, receipt := range append(admissionReplay.Receipts, partial.Receipts...) {
+		if err := target.Append(receipt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restartedProvider := &dagProvider{results: map[string]workflow.ProviderResult{}}
+	restarted := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), restartedProvider, target)
+	request := workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"}
+	if _, err := restarted.RunNode(context.Background(), request); err == nil || !strings.Contains(err.Error(), "legacy v1 execution is read-only") {
+		t.Fatalf("incomplete v1 history was resumed: %v", err)
+	}
+	after, err := target.Replay(partial.AggregateId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Receipts) != len(partial.Receipts) || restartedProvider.starts != 0 {
+		t.Fatalf("legacy history changed: receipts=%d want=%d starts=%d", len(after.Receipts), len(partial.Receipts), restartedProvider.starts)
+	}
+}
+
 type dagProvider struct {
 	starts           int
 	artifactsPerNode int

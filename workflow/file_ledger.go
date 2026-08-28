@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
-	"syscall"
 
 	"github.com/JamesbbBriz/agent-workflow/internal/contract"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
@@ -59,7 +58,7 @@ func OpenFileLedger(path string) (*FileLedger, error) {
 		}
 	}
 	ledger := &FileLedger{path: path}
-	lock, err := lockLedger(path, syscall.LOCK_EX)
+	lock, err := lockLedger(path, true)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +115,7 @@ func recoverTornTail(path string) error {
 func (l *FileLedger) Append(receipt contractsv1.Receipt) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	lock, err := lockLedger(l.path, syscall.LOCK_EX)
+	lock, err := lockLedger(l.path, true)
 	if err != nil {
 		return err
 	}
@@ -163,7 +162,7 @@ func (l *FileLedger) Append(receipt contractsv1.Receipt) error {
 func (l *FileLedger) Replay(aggregateID string) (contractsv1.ReplayBundle, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	lock, err := lockLedger(l.path, syscall.LOCK_SH)
+	lock, err := lockLedger(l.path, false)
 	if err != nil {
 		return contractsv1.ReplayBundle{}, err
 	}
@@ -178,7 +177,7 @@ func (l *FileLedger) Replay(aggregateID string) (contractsv1.ReplayBundle, error
 func (l *FileLedger) ReplaysByReceiptType(receiptType contractsv1.ReceiptReceiptType) ([]contractsv1.ReplayBundle, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	lock, err := lockLedger(l.path, syscall.LOCK_SH)
+	lock, err := lockLedger(l.path, false)
 	if err != nil {
 		return nil, err
 	}
@@ -207,27 +206,6 @@ func (l *FileLedger) ReplaysByReceiptType(receiptType contractsv1.ReceiptReceipt
 		replays = append(replays, replay)
 	}
 	return replays, nil
-}
-
-func lockLedger(path string, mode int) (*os.File, error) {
-	file, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("open ledger lock: %w", err)
-	}
-	if err := file.Chmod(0o600); err != nil {
-		file.Close()
-		return nil, fmt.Errorf("secure ledger lock: %w", err)
-	}
-	if err := syscall.Flock(int(file.Fd()), mode); err != nil {
-		file.Close()
-		return nil, fmt.Errorf("lock ledger: %w", err)
-	}
-	return file, nil
-}
-
-func unlockLedger(file *os.File) {
-	_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-	_ = file.Close()
 }
 
 func (l *FileLedger) load() (map[string][]contractsv1.Receipt, error) {

@@ -44,7 +44,7 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 	if err != nil {
 		return RunResult{}, err
 	}
-	_, childErr := e.ledger.Replay(aggregateID)
+	childReplay, childErr := e.ledger.Replay(aggregateID)
 	if childErr != nil && !errors.Is(childErr, ErrReplayEmpty) {
 		return RunResult{}, childErr
 	}
@@ -59,6 +59,9 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 	if childErr == nil && errors.Is(campaignErr, ErrReplayEmpty) {
 		// A child-only aggregate predates the Campaign driver. Keep it readable
 		// without manufacturing a v2 parent history around it.
+		if !nodeCompletedReplay(childReplay) {
+			return RunResult{}, errors.New("incomplete legacy v1 execution is read-only and cannot be resumed")
+		}
 		return e.runAgentNode(ctx, request)
 	}
 	preview, err := e.Preview(ctx, CampaignRunRequest{Job: request.Job, Campaign: request.Campaign, Workflow: request.Workflow})
@@ -219,8 +222,17 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 			if err != nil {
 				return contractsv1.CampaignDriveReceipt{}, err
 			}
+			remaining, blocker = remainingBudget(state, prepared.request.Campaign.Budget, workflowRef, node.Definition)
+			if blocker != "" {
+				if err := e.exhaustCampaignNode(&state, *replay, workflowRef, nodeID, blocker); err != nil {
+					return contractsv1.CampaignDriveReceipt{}, err
+				}
+				transitions++
+				break
+			}
 		}
-		run, runErr := e.runAgentNode(ctx, RunRequest{Job: prepared.request.Job, Campaign: prepared.request.Campaign, Workflow: workflow.definition, NodeID: nodeID, BudgetOverride: &remaining})
+		startedAt := nodeState(state, workflowRef, nodeID).StartedAt
+		run, runErr := e.runAgentNodeAt(ctx, RunRequest{Job: prepared.request.Job, Campaign: prepared.request.Campaign, Workflow: workflow.definition, NodeID: nodeID, BudgetOverride: &remaining}, startedAt)
 		if runErr != nil {
 			var exceeded budgetExceededError
 			if errors.As(runErr, &exceeded) {
@@ -246,6 +258,13 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 		material, err := MaterializeReplay(run.Replay, e.outputs)
 		if err != nil {
 			return contractsv1.CampaignDriveReceipt{}, err
+		}
+		if blocker := campaignResultBudgetBlocker(material.Artifacts, node.Definition.OutputSlots, remaining); blocker != "" {
+			if err := e.exhaustCampaignNode(&state, *replay, workflowRef, nodeID, blocker); err != nil {
+				return contractsv1.CampaignDriveReceipt{}, err
+			}
+			transitions++
+			break
 		}
 		if _, blocker := remainingBudget(state, prepared.request.Campaign.Budget, workflowRef, node.Definition); blocker != "" {
 			if err := e.exhaustCampaignNode(&state, *replay, workflowRef, nodeID, blocker); err != nil {
@@ -474,6 +493,9 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 	for _, receipt := range replay.Receipts[1:] {
 		if receipt.SchemaVersion != 2 {
 			return state, errors.New("Campaign Replay contains a non-v2 receipt")
+		}
+		if receipt.OccurredAt.Before(state.UpdatedAt) {
+			return state, errors.New("Campaign Replay receipt predates canonical state")
 		}
 		switch receipt.ReceiptType {
 		case contractsv1.ReceiptReceiptTypeAttemptReserved:
@@ -763,17 +785,30 @@ func remainingBudget(state contractsv1.CampaignExecutionState, campaign contract
 	}
 	var duration *int
 	if campaign.MaxDurationSeconds != nil {
-		elapsed := int(time.Since(state.StartedAt).Seconds())
-		if elapsed < 0 {
-			elapsed = 0
-		}
-		remaining := *campaign.MaxDurationSeconds - elapsed
-		if remaining < 1 {
+		campaignStartedAt, started := firstCampaignReservation(state)
+		if started && !time.Now().Before(campaignStartedAt.Add(time.Duration(*campaign.MaxDurationSeconds)*time.Second)) {
 			return contractsv1.Budget{}, "duration-budget-exhausted"
 		}
-		duration = &remaining
+		allocated := *campaign.MaxDurationSeconds
+		if started && current.StartedAt != nil {
+			allocated = int(math.Floor(campaignStartedAt.Add(time.Duration(*campaign.MaxDurationSeconds) * time.Second).Sub(*current.StartedAt).Seconds()))
+		}
+		if allocated < 1 {
+			return contractsv1.Budget{}, "duration-budget-exhausted"
+		}
+		duration = &allocated
 	}
 	return contractsv1.Budget{MaxAttempts: attempts, MaxActions: actions, MaxCandidates: candidates, MaxDurationSeconds: duration}, ""
+}
+
+func firstCampaignReservation(state contractsv1.CampaignExecutionState) (time.Time, bool) {
+	var first time.Time
+	for _, node := range state.Nodes {
+		if node.StartedAt != nil && (first.IsZero() || node.StartedAt.Before(first)) {
+			first = *node.StartedAt
+		}
+	}
+	return first, !first.IsZero()
 }
 
 func requiredOutputCount(slots []contractsv1.Slot, candidatesOnly bool) int {
@@ -785,6 +820,16 @@ func requiredOutputCount(slots []contractsv1.Slot, candidatesOnly bool) int {
 		total += slot.MinItems
 	}
 	return total
+}
+
+func campaignResultBudgetBlocker(artifacts []contractsv1.ActionArtifact, slots []contractsv1.Slot, budget contractsv1.Budget) contractsv1.Identifier {
+	if len(artifacts) > budget.MaxActions {
+		return "action-budget-exhausted"
+	}
+	if artifactCandidateCount(artifacts, slots) > budget.MaxCandidates {
+		return "candidate-budget-exhausted"
+	}
+	return ""
 }
 
 func minInt(a, b int) int {

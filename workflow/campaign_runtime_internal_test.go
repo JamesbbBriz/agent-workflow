@@ -9,48 +9,43 @@ import (
 )
 
 func TestCampaignReducerRejectsAttemptBeforeDependencies(t *testing.T) {
-	at := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
-	workflowRef := contractsv1.WorkflowRef("ordered-workflow@1")
-	jobHash, campaignHash := repeatedSHA('1'), repeatedSHA('2')
-	definitionHash, compileHash, admissionHash := repeatedSHA('3'), repeatedSHA('4'), repeatedSHA('5')
-	state := contractsv1.CampaignExecutionState{
-		Kind: contractsv1.CampaignExecutionStateKindCampaignExecutionState, SchemaVersion: 2,
-		AggregateId: "campaign-run-a", JobId: "job-a", CampaignId: "campaign-a", JobHash: jobHash, CampaignHash: campaignHash,
-		WorkflowHashes: contractsv1.CampaignExecutionStateWorkflowHashes{string(workflowRef): definitionHash}, Status: contractsv1.CampaignExecutionStateStatusAdmitted,
-		Nodes: []contractsv1.CampaignNodeExecution{
-			{WorkflowRef: workflowRef, NodeId: "dependent", Status: contractsv1.CampaignNodeExecutionStatusPending},
-			{WorkflowRef: workflowRef, NodeId: "root", Status: contractsv1.CampaignNodeExecutionStatusPending},
-		},
-		StartedAt: at, UpdatedAt: at,
-	}
-	prepared := preparedCampaign{
-		request: CampaignRunRequest{}, initial: state,
-		workflows: []preparedWorkflow{{
-			compiled: CompiledWorkflow{WorkflowRef: workflowRef, DefinitionHash: definitionHash, CompileHash: compileHash, Nodes: []CompiledNode{
-				{Definition: contractsv1.NodeDefinition{Id: "dependent", DependsOn: []string{"root"}}},
-				{Definition: contractsv1.NodeDefinition{Id: "root"}},
-			}},
-			admission: contractsv1.WorkflowAdmission{Receipt: contractsv1.Receipt{ReceiptHash: admissionHash}},
-		}},
-	}
-	ledger := NewMemoryLedger()
-	engine := &Engine{ledger: ledger}
-	if err := engine.admitCampaign(prepared, state); err != nil {
-		t.Fatal(err)
-	}
-	replay, err := ledger.Replay(state.AggregateId)
-	if err != nil {
-		t.Fatal(err)
-	}
+	engine, prepared, state, replay := campaignReducerFixture(t)
+	at, workflowRef, campaignHash := state.StartedAt, prepared.workflows[0].compiled.WorkflowRef, state.CampaignHash
 	if err := engine.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeAttemptReserved, at.Add(time.Second), []contractsv1.SHA256{campaignHash}, nil, map[string]any{"workflow_ref": workflowRef, "node_id": "dependent", "started_at": at.Add(time.Second)}); err != nil {
 		t.Fatal(err)
 	}
-	replay, err = ledger.Replay(state.AggregateId)
+	replay, err := engine.ledger.Replay(state.AggregateId)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := engine.reduceCampaignReplay(replay, prepared); err == nil || !strings.Contains(err.Error(), "not eligible") {
 		t.Fatalf("dependent attempt was accepted before its root: %v", err)
+	}
+}
+
+func TestCampaignReducerRejectsReceiptBeforeCanonicalTime(t *testing.T) {
+	engine, prepared, state, replay := campaignReducerFixture(t)
+	at, workflowRef := state.StartedAt.Add(-time.Second), prepared.workflows[0].compiled.WorkflowRef
+	if err := engine.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeAttemptReserved, at, []contractsv1.SHA256{state.CampaignHash}, nil, map[string]any{"workflow_ref": workflowRef, "node_id": "root", "started_at": at}); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := engine.ledger.Replay(state.AggregateId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.reduceCampaignReplay(replay, prepared); err == nil || !strings.Contains(err.Error(), "predates canonical state") {
+		t.Fatalf("pre-admission receipt was accepted: %v", err)
+	}
+}
+
+func TestCampaignResultRechecksLegacyArtifactsAgainstCurrentBudget(t *testing.T) {
+	slot := contractsv1.Slot{ArtifactType: "candidate", CountsAsCandidates: true}
+	artifacts := []contractsv1.ActionArtifact{{ArtifactType: "candidate"}, {ArtifactType: "candidate"}}
+	if blocker := campaignResultBudgetBlocker(artifacts, []contractsv1.Slot{slot}, contractsv1.Budget{MaxActions: 1, MaxCandidates: 2}); blocker != "action-budget-exhausted" {
+		t.Fatalf("legacy actions bypassed current Campaign budget: %q", blocker)
+	}
+	if blocker := campaignResultBudgetBlocker(artifacts, []contractsv1.Slot{slot}, contractsv1.Budget{MaxActions: 2, MaxCandidates: 1}); blocker != "candidate-budget-exhausted" {
+		t.Fatalf("legacy candidates bypassed current Campaign budget: %q", blocker)
 	}
 }
 
@@ -82,4 +77,42 @@ func TestCampaignCompletionRequiresChildTerminalReceipt(t *testing.T) {
 
 func repeatedSHA(value byte) contractsv1.SHA256 {
 	return contractsv1.SHA256("sha256:" + strings.Repeat(string(value), 64))
+}
+
+func campaignReducerFixture(t *testing.T) (*Engine, preparedCampaign, contractsv1.CampaignExecutionState, contractsv1.ReplayBundle) {
+	t.Helper()
+	at := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	workflowRef := contractsv1.WorkflowRef("ordered-workflow@1")
+	jobHash, campaignHash := repeatedSHA('1'), repeatedSHA('2')
+	definitionHash, compileHash, admissionHash := repeatedSHA('3'), repeatedSHA('4'), repeatedSHA('5')
+	state := contractsv1.CampaignExecutionState{
+		Kind: contractsv1.CampaignExecutionStateKindCampaignExecutionState, SchemaVersion: 2,
+		AggregateId: "campaign-run-a", JobId: "job-a", CampaignId: "campaign-a", JobHash: jobHash, CampaignHash: campaignHash,
+		WorkflowHashes: contractsv1.CampaignExecutionStateWorkflowHashes{string(workflowRef): definitionHash}, Status: contractsv1.CampaignExecutionStateStatusAdmitted,
+		Nodes: []contractsv1.CampaignNodeExecution{
+			{WorkflowRef: workflowRef, NodeId: "dependent", Status: contractsv1.CampaignNodeExecutionStatusPending},
+			{WorkflowRef: workflowRef, NodeId: "root", Status: contractsv1.CampaignNodeExecutionStatusPending},
+		},
+		StartedAt: at, UpdatedAt: at,
+	}
+	prepared := preparedCampaign{
+		initial: state,
+		workflows: []preparedWorkflow{{
+			compiled: CompiledWorkflow{WorkflowRef: workflowRef, DefinitionHash: definitionHash, CompileHash: compileHash, Nodes: []CompiledNode{
+				{Definition: contractsv1.NodeDefinition{Id: "dependent", DependsOn: []string{"root"}}},
+				{Definition: contractsv1.NodeDefinition{Id: "root"}},
+			}},
+			admission: contractsv1.WorkflowAdmission{Receipt: contractsv1.Receipt{ReceiptHash: admissionHash}},
+		}},
+	}
+	ledger := NewMemoryLedger()
+	engine := &Engine{ledger: ledger}
+	if err := engine.admitCampaign(prepared, state); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := ledger.Replay(state.AggregateId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return engine, prepared, state, replay
 }

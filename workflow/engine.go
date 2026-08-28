@@ -99,6 +99,10 @@ func NewEngine(registry *Registry, capabilities CapabilityCatalog, outputs Outpu
 }
 
 func (e *Engine) runAgentNode(ctx context.Context, request RunRequest) (RunResult, error) {
+	return e.runAgentNodeAt(ctx, request, nil)
+}
+
+func (e *Engine) runAgentNodeAt(ctx context.Context, request RunRequest, reservedAt *time.Time) (RunResult, error) {
 	if e == nil || e.provider == nil || e.ledger == nil {
 		return RunResult{}, errors.New("provider and ledger are required")
 	}
@@ -113,6 +117,9 @@ func (e *Engine) runAgentNode(ctx context.Context, request RunRequest) (RunResul
 		return RunResult{}, err
 	}
 	transitionAt := time.Now().UTC()
+	if reservedAt != nil {
+		transitionAt = reservedAt.UTC()
+	}
 	existingReplay, replayErr := e.ledger.Replay(aggregateID)
 	if replayErr == nil {
 		transitionAt = existingReplay.Receipts[0].OccurredAt
