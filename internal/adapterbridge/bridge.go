@@ -23,7 +23,7 @@ import (
 	"github.com/JamesbbBriz/agent-workflow/workflow"
 )
 
-const maxUpstreamOutput = 1 << 20
+const maxUpstreamOutput = contract.MaxDocumentBytes
 
 type Config struct {
 	Provider      contractsv1.ProviderID
@@ -61,7 +61,7 @@ func Run(config Config, stdin io.Reader, stdout io.Writer) error {
 	}
 	b := &bridge{config: config}
 	scanner := bufio.NewScanner(stdin)
-	scanner.Buffer(make([]byte, 64<<10), 1<<20)
+	scanner.Buffer(make([]byte, 64<<10), contract.MaxDocumentBytes)
 	encoder := json.NewEncoder(stdout)
 	for scanner.Scan() {
 		var request contractsv1.ProviderProtocolRequest
@@ -131,7 +131,7 @@ func (b *bridge) start(request contractsv1.ProviderProtocolRequest) (contractsv1
 	if err != nil {
 		return contractsv1.ProviderRunRef{}, err
 	}
-	if err := verifyToolBinding(b.config, *request.ExecutorProfile); err != nil {
+	if err := workflow.ValidateBundledProviderProfile(*request.ExecutorProfile, b.config.WorkspaceRoot); err != nil {
 		return contractsv1.ProviderRunRef{}, err
 	}
 	args, err := upstreamArgs(b.config.Provider, *request.ExecutorProfile, *request.IdempotencyKey, prompt)
@@ -346,42 +346,6 @@ func upstreamArgs(provider contractsv1.ProviderID, profile contractsv1.ExecutorP
 	default:
 		return nil, errors.New("unknown provider")
 	}
-}
-
-func verifyToolBinding(config Config, profile contractsv1.ExecutorProfile) error {
-	if len(profile.ToolAllowlist) != 1 || profile.ToolAllowlist[0] != "read-evidence" {
-		return errors.New("bundled bridges support only the read-evidence tool authority")
-	}
-	if config.Provider != contractsv1.ProviderIDOpenclaw {
-		return nil
-	}
-	if filepath.Base(profile.ConfigRef) != profile.ConfigRef || profile.ConfigRef == "." || profile.ConfigRef == ".." {
-		return errors.New("OpenClaw isolated agent profile reference is invalid")
-	}
-	path := filepath.Join(config.WorkspaceRoot, "input", "providers", profile.ConfigRef+".json")
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return errors.New("OpenClaw isolated agent profile is unavailable")
-	}
-	var document struct {
-		Agents struct {
-			Entries map[string]struct {
-				Workspace string `json:"workspace"`
-				Tools     struct {
-					Allow []string `json:"allow"`
-				} `json:"tools"`
-			} `json:"entries"`
-		} `json:"agents"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	if err := decoder.Decode(&document); err != nil {
-		return errors.New("OpenClaw isolated agent profile is invalid")
-	}
-	agent, ok := document.Agents.Entries[profile.ConfigRef]
-	if ok && agent.Workspace == "/workspace" && reflect.DeepEqual(agent.Tools.Allow, []string{"read"}) {
-		return nil
-	}
-	return errors.New("OpenClaw isolated agent profile does not enforce read-evidence")
 }
 
 func tokenEnvironment(model string) (string, error) {

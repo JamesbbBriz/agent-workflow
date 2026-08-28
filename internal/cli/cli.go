@@ -569,11 +569,13 @@ func runProvider(args []string, stdout, stderr io.Writer) int {
 		flags := flag.NewFlagSet("provider doctor", flag.ContinueOnError)
 		flags.SetOutput(stderr)
 		id := flags.String("id", "", "bundled provider id")
+		stagedRoot := flags.String("staged-root", "", "staged input/output workspace")
+		configRef := flags.String("config-ref", "default", "non-secret provider configuration reference")
 		if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
 			return 2
 		}
 		if *id != "" {
-			result, err := workflow.InspectProviderReadiness(contractsv1.ProviderID(*id))
+			result, err := workflow.InspectProviderReadinessAt(contractsv1.ProviderID(*id), *stagedRoot, *configRef)
 			if err != nil {
 				return writeError(stdout, stderr, true, "unknown_provider", err)
 			}
@@ -581,7 +583,7 @@ func runProvider(args []string, stdout, stderr io.Writer) int {
 		}
 		results := make([]workflow.ProviderReadiness, 0, 5)
 		for _, descriptor := range workflow.BundledProviderDescriptors() {
-			result, _ := workflow.InspectProviderReadiness(descriptor.Id)
+			result, _ := workflow.InspectProviderReadinessAt(descriptor.Id, *stagedRoot, *configRef)
 			results = append(results, result)
 		}
 		return writeProviderData(stdout, results)

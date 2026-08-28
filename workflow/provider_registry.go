@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -74,6 +75,10 @@ func providerIndex(id contractsv1.ProviderID) int {
 }
 
 func InspectProviderReadiness(id contractsv1.ProviderID) (ProviderReadiness, error) {
+	return InspectProviderReadinessAt(id, "", "")
+}
+
+func InspectProviderReadinessAt(id contractsv1.ProviderID, stagedRoot, configRef string) (ProviderReadiness, error) {
 	descriptor, err := ProviderDescriptor(id)
 	if err != nil {
 		return ProviderReadiness{}, err
@@ -90,6 +95,11 @@ func InspectProviderReadiness(id contractsv1.ProviderID) (ProviderReadiness, err
 	if _, err := sandboxDriver(); err != nil {
 		missing = append(missing, "isolation:staged_subprocess")
 	}
+	if id == contractsv1.ProviderIDOpenclaw {
+		if err := validateOpenClawProfile(stagedRoot, configRef); err != nil {
+			missing = append(missing, "config:openclaw-agent-profile")
+		}
+	}
 	for _, name := range descriptor.AuthEnvironment {
 		if strings.TrimSpace(os.Getenv(name)) == "" {
 			missing = append(missing, "env:"+name)
@@ -103,6 +113,44 @@ func InspectProviderReadiness(id contractsv1.ProviderID) (ProviderReadiness, err
 		readiness.Code = "unavailable"
 	}
 	return readiness, nil
+}
+
+func ValidateBundledProviderProfile(profile contractsv1.ExecutorProfile, stagedRoot string) error {
+	if len(profile.ToolAllowlist) != 1 || profile.ToolAllowlist[0] != "read-evidence" {
+		return errors.New("bundled bridges support only the read-evidence tool authority")
+	}
+	if profile.ProviderId == contractsv1.ProviderIDOpenclaw {
+		return validateOpenClawProfile(stagedRoot, profile.ConfigRef)
+	}
+	return nil
+}
+
+func validateOpenClawProfile(stagedRoot, configRef string) error {
+	if stagedRoot == "" || filepath.Base(configRef) != configRef || configRef == "" || configRef == "." || configRef == ".." {
+		return errors.New("OpenClaw isolated agent profile reference is invalid")
+	}
+	body, err := os.ReadFile(filepath.Join(stagedRoot, "input", "providers", configRef+".json"))
+	if err != nil {
+		return errors.New("OpenClaw isolated agent profile is unavailable")
+	}
+	var document struct {
+		Agents struct {
+			Entries map[string]struct {
+				Workspace string `json:"workspace"`
+				Tools     struct {
+					Allow []string `json:"allow"`
+				} `json:"tools"`
+			} `json:"entries"`
+		} `json:"agents"`
+	}
+	if json.Unmarshal(body, &document) != nil {
+		return errors.New("OpenClaw isolated agent profile is invalid")
+	}
+	agent, ok := document.Agents.Entries[configRef]
+	if !ok || agent.Workspace != "/workspace" || len(agent.Tools.Allow) != 1 || agent.Tools.Allow[0] != "read" {
+		return errors.New("OpenClaw isolated agent profile does not enforce read-evidence")
+	}
+	return nil
 }
 
 // ResolveBundledProviderUpstream uses exactly the paths visible in the Linux

@@ -134,6 +134,39 @@ func TestOpenClawBridgeRejectsProfileWithoutExactToolAuthority(t *testing.T) {
 	}
 }
 
+func TestBridgeAcceptsCoreSizedProtocolRequest(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "input"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "output"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(root, "upstream")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' '{\"outputs\":{\"recommendation\":{\"recommendation\":\"bounded\"}}}'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	inputR, inputW := ioPipe(t)
+	outputR, outputW := ioPipe(t)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(Config{Provider: contractsv1.ProviderIDCodex, Upstream: script, WorkspaceRoot: root}, inputR, outputW)
+	}()
+	request := providerStartRequest(t, contractsv1.ProviderIDCodex)
+	request.Invocation["padding"] = strings.Repeat("x", 1100<<10)
+	if err := json.NewEncoder(inputW).Encode(request); err != nil {
+		t.Fatal(err)
+	}
+	var response contractsv1.ProviderProtocolResponse
+	if err := json.NewDecoder(bufio.NewReader(outputR)).Decode(&response); err != nil || response.Run == nil {
+		t.Fatalf("core-sized start response=%#v err=%v", response, err)
+	}
+	inputW.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func providerStartRequest(t *testing.T, id contractsv1.ProviderID) contractsv1.ProviderProtocolRequest {
 	t.Helper()
 	descriptor, err := workflow.ProviderDescriptor(id)

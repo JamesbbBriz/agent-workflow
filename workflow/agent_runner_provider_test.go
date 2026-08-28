@@ -80,6 +80,55 @@ func TestProviderAttemptReservationBlocksUncertainRestart(t *testing.T) {
 	}
 }
 
+func TestProviderActiveLeaseSerializesAcrossInstances(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "output"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	first := &AgentRunnerProvider{sandbox: &SubprocessProvider{config: SubprocessProviderConfig{StagedRoot: root}}}
+	second := &AgentRunnerProvider{sandbox: &SubprocessProvider{config: SubprocessProviderConfig{StagedRoot: root}}}
+	if err := first.acquireActiveLease("attempt-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.acquireActiveLease("attempt-2"); err == nil {
+		t.Fatal("another provider instance acquired the same staged root")
+	}
+	if err := first.releaseActiveLease("attempt-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.acquireActiveLease("attempt-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.releaseActiveLease("attempt-2"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenClawReadinessRequiresExactStagedProfile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "input", "providers"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	readiness, err := InspectProviderReadinessAt(contractsv1.ProviderIDOpenclaw, root, "tenant-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(readiness.Missing, "config:openclaw-agent-profile") {
+		t.Fatalf("missing=%v want staged profile failure", readiness.Missing)
+	}
+	profile := `{"agents":{"entries":{"tenant-a":{"workspace":"/workspace","tools":{"allow":["read"]}}}}}`
+	if err := os.WriteFile(filepath.Join(root, "input", "providers", "tenant-a.json"), []byte(profile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	readiness, err = InspectProviderReadinessAt(contractsv1.ProviderIDOpenclaw, root, "tenant-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsString(readiness.Missing, "config:openclaw-agent-profile") {
+		t.Fatalf("exact staged profile remained unavailable: %v", readiness.Missing)
+	}
+}
+
 func TestProviderProtocolFailsClosed(t *testing.T) {
 	request := contractsv1.ProviderProtocolRequest{ProtocolVersion: 1, RequestId: "r1", Operation: contractsv1.ProviderProtocolRequestOperationStart}
 	if validateProtocolRequest(request) == nil {
@@ -156,6 +205,14 @@ func TestAgentRunnerProviderUsesBoundedProtocolAndExactResult(t *testing.T) {
 	}
 	isolation := provider.IsolationEvidence()
 	invocation := Invocation{IdempotencyKey: "runner-attempt", Deadline: time.Now().Add(10 * time.Second), Node: contractsv1.NodeDefinition{Id: "research", OutputSlots: []contractsv1.Slot{}}, InputHashes: []contractsv1.SHA256{repeatedSHA('1')}, ExecutorProfile: &profile, Isolation: &isolation}
+	cancelled := invocation
+	cancelled.IdempotencyKey = "runner-cancelled"
+	if err := provider.Start(context.Background(), cancelled); err != nil {
+		t.Fatal(err)
+	}
+	if cancellation, err := provider.CancelRun(context.Background(), cancelled.IdempotencyKey); err != nil || cancellation.Status != contractsv1.ProviderCancellationStatusAccepted {
+		t.Fatalf("active cancellation=%#v err=%v", cancellation, err)
+	}
 	if err := provider.Start(context.Background(), invocation); err != nil {
 		t.Fatal(err)
 	}

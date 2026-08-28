@@ -94,6 +94,7 @@ requirements:
 ./adapters/install.sh
 go run ./cmd/agent-workflow provider list
 go run ./cmd/agent-workflow provider doctor --id codex
+go run ./cmd/agent-workflow provider doctor --id openclaw --staged-root ./staged --config-ref tenant-a
 ```
 
 Each available adapter is checked through the same admitted fixture with

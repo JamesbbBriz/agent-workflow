@@ -17,6 +17,8 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
+const MaxDocumentBytes = 2 * 1024 * 1024
+
 const schemaID = "https://agent-workflow.dev/contracts/agent-workflow.v1.schema.json"
 
 var (
@@ -178,7 +180,7 @@ func compiledWorkflowSchema() (*jsonschema.Schema, error) {
 }
 
 func decodeOne(raw []byte) (any, error) {
-	if len(raw) == 0 || len(raw) > 2*1024*1024 {
+	if len(raw) == 0 || len(raw) > MaxDocumentBytes {
 		return nil, errors.New("workflow document size is invalid")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))

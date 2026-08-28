@@ -22,7 +22,7 @@ import (
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
 
-const providerProtocolMaxLine = 1 << 20
+const providerProtocolMaxLine = contract.MaxDocumentBytes
 
 type providerAttemptReservation struct {
 	IdempotencyKey string             `json:"idempotency_key"`
@@ -37,7 +37,6 @@ type AgentRunnerProvider struct {
 	runs       map[string]*agentRunnerRun
 	starting   map[string]bool
 	results    map[string]ProviderResult
-	active     string
 }
 
 type agentRunnerRun struct {
@@ -126,12 +125,7 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 		p.mu.Unlock()
 		return nil
 	}
-	if p.active != "" {
-		p.mu.Unlock()
-		return errors.New("provider staged root already has an active attempt")
-	}
 	p.starting[invocation.IdempotencyKey] = true
-	p.active = invocation.IdempotencyKey
 	p.mu.Unlock()
 	started := false
 	defer func() {
@@ -140,9 +134,6 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 		}
 		p.mu.Lock()
 		delete(p.starting, invocation.IdempotencyKey)
-		if p.active == invocation.IdempotencyKey {
-			p.active = ""
-		}
 		p.mu.Unlock()
 	}()
 	reserved, recovered, err := p.reserveAttempt(invocation)
@@ -150,9 +141,11 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 		return err
 	}
 	if recovered != nil {
+		if err := p.releaseActiveLease(invocation.IdempotencyKey); err != nil {
+			return err
+		}
 		p.mu.Lock()
 		delete(p.starting, invocation.IdempotencyKey)
-		p.active = ""
 		p.results[invocation.IdempotencyKey] = *recovered
 		started = true
 		p.mu.Unlock()
@@ -162,6 +155,16 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 	defer func() {
 		if removeReservation {
 			_ = os.Remove(p.attemptReservationPath(invocation.IdempotencyKey))
+		}
+	}()
+	leaseHeld := false
+	if err := p.acquireActiveLease(invocation.IdempotencyKey); err != nil {
+		return err
+	}
+	leaseHeld = true
+	defer func() {
+		if leaseHeld {
+			_ = p.releaseActiveLease(invocation.IdempotencyKey)
 		}
 	}()
 	if err := p.sandbox.verifyInputs(); err != nil {
@@ -195,6 +198,7 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 		cancel()
 		return err
 	}
+	leaseHeld = false
 	removeReservation = false
 	run := &agentRunnerRun{cmd: cmd, stdin: stdin, scanner: bufio.NewScanner(stdout), cancel: cancel}
 	run.scanner.Buffer(make([]byte, 64<<10), providerProtocolMaxLine)
@@ -221,6 +225,56 @@ func (p *AgentRunnerProvider) attemptReservationPath(key string) string {
 	return p.attemptPath("attempt", key)
 }
 
+func (p *AgentRunnerProvider) activeLeasePath() string {
+	return filepath.Join(p.sandbox.config.StagedRoot, "output", ".agent-workflow-active.json")
+}
+
+func (p *AgentRunnerProvider) acquireActiveLease(key string) error {
+	body, err := json.Marshal(struct {
+		IdempotencyKey string `json:"idempotency_key"`
+	}{IdempotencyKey: key})
+	if err != nil {
+		return err
+	}
+	created, err := linkDurableFile(p.activeLeasePath(), body)
+	if err != nil {
+		return err
+	}
+	if !created {
+		return errors.New("provider staged root already has an active attempt")
+	}
+	return nil
+}
+
+func (p *AgentRunnerProvider) releaseActiveLease(key string) error {
+	path := p.activeLeasePath()
+	body, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var lease struct {
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if json.Unmarshal(body, &lease) != nil || lease.IdempotencyKey != key {
+		return errors.New("provider active attempt belongs to another invocation")
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	if err := directory.Sync(); err != nil {
+		directory.Close()
+		return err
+	}
+	return directory.Close()
+}
+
 func (p *AgentRunnerProvider) reserveAttempt(invocation Invocation) (bool, *ProviderResult, error) {
 	hash, err := Digest(invocation)
 	if err != nil {
@@ -232,39 +286,12 @@ func (p *AgentRunnerProvider) reserveAttempt(invocation Invocation) (bool, *Prov
 	if err != nil {
 		return false, nil, err
 	}
-	temp, err := os.CreateTemp(filepath.Dir(path), ".agent-workflow-attempt-")
+	created, err := linkDurableFile(path, body)
 	if err != nil {
 		return false, nil, err
 	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if err := temp.Chmod(0600); err == nil {
-		_, err = temp.Write(body)
-	}
-	if err == nil {
-		err = temp.Sync()
-	}
-	if closeErr := temp.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return false, nil, err
-	}
-	if err := os.Link(tempPath, path); err == nil {
-		directory, openErr := os.Open(filepath.Dir(path))
-		if openErr == nil {
-			openErr = directory.Sync()
-			if closeErr := directory.Close(); openErr == nil {
-				openErr = closeErr
-			}
-		}
-		if openErr != nil {
-			_ = os.Remove(path)
-			return false, nil, openErr
-		}
+	if created {
 		return true, nil, nil
-	} else if !errors.Is(err, os.ErrExist) {
-		return false, nil, err
 	}
 	body, err = os.ReadFile(path)
 	if err != nil {
@@ -288,6 +315,47 @@ func (p *AgentRunnerProvider) reserveAttempt(invocation Invocation) (bool, *Prov
 		}
 	}
 	return false, nil, errors.New("provider attempt is already reserved without a recoverable result")
+}
+
+func linkDurableFile(path string, body []byte) (bool, error) {
+	temp, err := os.CreateTemp(filepath.Dir(path), ".agent-workflow-link-")
+	if err != nil {
+		return false, err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(0600); err == nil {
+		_, err = temp.Write(body)
+	}
+	if err == nil {
+		err = temp.Sync()
+	}
+	if closeErr := temp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := os.Link(tempPath, path); errors.Is(err, os.ErrExist) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		_ = os.Remove(path)
+		return false, err
+	}
+	if err := directory.Sync(); err != nil {
+		directory.Close()
+		_ = os.Remove(path)
+		return false, err
+	}
+	if err := directory.Close(); err != nil {
+		_ = os.Remove(path)
+		return false, err
+	}
+	return true, nil
 }
 
 func (p *AgentRunnerProvider) handshake(ctx context.Context, run *agentRunnerRun, invocation Invocation) error {
@@ -396,11 +464,15 @@ func (p *AgentRunnerProvider) Poll(ctx context.Context, key string) (ProviderRes
 	case contractsv1.ProviderObservationStatusQueued, contractsv1.ProviderObservationStatusRunning:
 		return ProviderResult{}, false, nil
 	case contractsv1.ProviderObservationStatusFailed:
-		p.clearActive(key)
+		if err := p.releaseActiveLease(key); err != nil {
+			return ProviderResult{}, false, run.fail(err)
+		}
 		return ProviderResult{}, false, run.fail(errors.New("provider run failed"))
 	case contractsv1.ProviderObservationStatusCancelled:
 		run.terminal = true
-		p.clearActive(key)
+		if err := p.releaseActiveLease(key); err != nil {
+			return ProviderResult{}, false, run.fail(err)
+		}
 		return ProviderResult{}, false, nil
 	case contractsv1.ProviderObservationStatusSucceeded:
 		result, err := p.acceptResult(key, run)
@@ -408,24 +480,16 @@ func (p *AgentRunnerProvider) Poll(ctx context.Context, key string) (ProviderRes
 			return ProviderResult{}, false, run.fail(err)
 		}
 		run.terminal = true
+		if err := p.releaseActiveLease(key); err != nil {
+			return ProviderResult{}, false, run.fail(err)
+		}
 		p.mu.Lock()
 		p.results[key] = result
-		if p.active == key {
-			p.active = ""
-		}
 		p.mu.Unlock()
 		return result, true, nil
 	default:
 		return ProviderResult{}, false, run.fail(errors.New("unknown provider terminal state"))
 	}
-}
-
-func (p *AgentRunnerProvider) clearActive(key string) {
-	p.mu.Lock()
-	if p.active == key {
-		p.active = ""
-	}
-	p.mu.Unlock()
 }
 
 func (p *AgentRunnerProvider) acceptResult(key string, run *agentRunnerRun) (ProviderResult, error) {
@@ -551,6 +615,11 @@ func (p *AgentRunnerProvider) CancelRun(ctx context.Context, key string) (contra
 	if cancellation.Status == contractsv1.ProviderCancellationStatusAccepted || cancellation.Status == contractsv1.ProviderCancellationStatusAlreadyTerminal {
 		run.terminal = true
 		run.stop()
+	}
+	if cancellation.Status == contractsv1.ProviderCancellationStatusAccepted || cancellation.Status == contractsv1.ProviderCancellationStatusAlreadyTerminal {
+		if err := p.releaseActiveLease(key); err != nil {
+			return contractsv1.ProviderCancellation{}, err
+		}
 	}
 	return cancellation, nil
 }

@@ -92,9 +92,11 @@ granting Hermes' write-capable file toolset.
 
 Readiness and execution resolve upstream CLIs from the same system roots exposed
 inside Bubblewrap (`/usr/local/bin`, `/usr/bin`, and `/bin`) and include the
-isolation probe. User-local PATH entries are not reported ready. Before launching
+isolation probe. OpenClaw readiness also validates the exact staged agent profile
+selected by `config_ref`. User-local PATH entries are not reported ready. Before launching
 an upstream, the subprocess adapter durably reserves the exact invocation in the
-staged output directory. A restarted Core may recover an exact hash-bound result;
+staged output directory and holds a root-wide durable active lease while the
+shared result path is writable. A restarted Core may recover an exact hash-bound result;
 if the external attempt is uncertain, it blocks instead of launching it again.
 
 ## Compatibility

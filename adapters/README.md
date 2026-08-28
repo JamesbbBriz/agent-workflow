@@ -39,7 +39,9 @@ allowlist to `read`. The bridge selects that agent and passes the same
 file as `OPENCLAW_CONFIG_PATH`; it rejects a broader or missing profile before
 starting OpenClaw.
 
-Use `agent-workflow provider doctor` before execution and
+For OpenClaw, pass the same `--staged-root` and `--config-ref` used by the
+executor so doctor validates the exact agent profile. Use `agent-workflow
+provider doctor` before execution and
 `agent-workflow provider conformance` to run the shared admitted fixture. An
 adapter is never discovered dynamically and an unavailable profile never
 falls back to another provider.
