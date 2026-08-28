@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -94,6 +95,9 @@ func TestSubprocessProviderSandboxHidesAmbientEnvironmentAndOutsideFiles(t *test
 		Environment: map[string]string{"LC_ALL": "C"},
 	})
 	if err != nil {
+		if runtime.GOOS == "darwin" {
+			t.Skip("macOS has no supported production process-containment sandbox")
+		}
 		t.Fatal(err)
 	}
 	invocation := Invocation{IdempotencyKey: "sandbox-attempt", Deadline: time.Now().Add(10 * time.Second)}
@@ -116,6 +120,9 @@ func TestSubprocessProviderSandboxHidesAmbientEnvironmentAndOutsideFiles(t *test
 }
 
 func TestSubprocessProviderEnforcesCancellationAndOutputLimit(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("macOS has no supported production process-containment sandbox")
+	}
 	newProvider := func(script string, limit int) *SubprocessProvider {
 		root := t.TempDir()
 		for _, child := range []string{"input", "output"} {

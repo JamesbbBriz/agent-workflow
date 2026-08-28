@@ -11,7 +11,7 @@ Report vulnerabilities privately through GitHub Security Advisories for this rep
 ## Trust boundary
 
 - The Go Core is the only canonical mutation authority.
-- Provider Agents receive exact staged inputs and a Capability Manifest. Arbitrary in-process Go implementations of `Provider` are recorded as `trusted_in_process` and are never described as sandboxed. Production execution can require `staged_subprocess`: the reference adapter passes an empty-by-default environment, mounts `input/` read-only, permits one size-limited `output/result` file, disables network access, binds executable and staged-input hashes, enforces deadline/cancellation, and bounds stdout/stderr. It fails closed when the platform sandbox (`sandbox-exec` on macOS or Bubblewrap on Linux) is unavailable.
+- Provider Agents receive exact staged inputs and a Capability Manifest. Arbitrary in-process Go implementations of `Provider` are recorded as `trusted_in_process` and are never described as sandboxed. Production execution can require `staged_subprocess`: the Linux reference adapter passes an empty-by-default environment, mounts `input/` read-only, permits one size-limited `output/result` file, disables network access, binds executable and staged-input hashes, enforces deadline/cancellation through Bubblewrap PID-namespace containment, and bounds stdout/stderr. Platforms without that containment, including macOS, fail closed rather than claim sandboxing.
 - Context and artifact bytes are size-bounded, strictly decoded, root-confined where applicable, and SHA-256 verified before use.
 - Unknown schema versions and fields fail closed.
 - Consequential actions require explicit preview/confirm or human approval bound to exact hashes and revisions.
