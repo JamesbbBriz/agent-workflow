@@ -238,6 +238,9 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 			}
 			continue
 		}
+		if _, ok := e.ledger.(AtomicLedger); !ok {
+			return contractsv1.CampaignDriveReceipt{}, errors.New("provider execution requires an AtomicLedger")
+		}
 		currentNode := nodeState(state, workflowRef, nodeID)
 		resolved := resolvedContext{}
 		if currentNode.ContextBundleHash != nil && currentNode.Status != contractsv1.CampaignNodeExecutionStatusNeedsContext {
@@ -800,12 +803,18 @@ func verifiedApprovalDecision(replay, source contractsv1.ReplayBundle, action co
 		return "", contractsv1.Receipt{}, errors.New("approval decision receipt is invalid")
 	}
 	var brief contractsv1.ApprovalBrief
-	var preview contractsv1.ApprovalPreview
-	if err := decodePayload(receipt.Payload["brief"], &brief); err != nil {
+	if err := decodePayload(receipt.Payload["brief"], &brief); err != nil || !reflect.DeepEqual(brief.Action, action) || !containsEvidenceReceipt(brief.Evidence, result) || approvalPolicy == nil || !approvalActorAllowed(approvalActors, approvalPolicy, *receipt.Actor) {
 		return "", contractsv1.Receipt{}, errors.New("approval decision brief is invalid")
 	}
 	terminal, _ := receiptByType(source, contractsv1.ReceiptReceiptTypeTerminal)
-	if err := decodePayload(receipt.Payload["preview"], &preview); err != nil || !reflect.DeepEqual(preview.Brief, brief) || !reflect.DeepEqual(brief.Action, action) || !containsEvidenceReceipt(brief.Evidence, result) || approvalPolicy == nil || brief.ApprovalPolicy == nil || *brief.ApprovalPolicy != *approvalPolicy || !approvalActorAllowed(approvalActors, approvalPolicy, *receipt.Actor) || preview.Actor != *receipt.Actor || preview.SourceAggregateId != source.AggregateId || preview.BaseRevision != 0 || preview.ExpiresAt == nil || receipt.OccurredAt.Before(terminal.OccurredAt) || receipt.OccurredAt.After(*preview.ExpiresAt) {
+	if _, current := receipt.Payload["preview"]; !current {
+		if brief.ApprovalPolicy != nil || !validLegacyApprovalReceipt(receipt, brief, source.AggregateId, terminal.OccurredAt, action) {
+			return "", contractsv1.Receipt{}, errors.New("legacy approval decision authority is invalid")
+		}
+		return selectedApprovalDecision(brief, receipt)
+	}
+	var preview contractsv1.ApprovalPreview
+	if err := decodePayload(receipt.Payload["preview"], &preview); err != nil || !reflect.DeepEqual(preview.Brief, brief) || brief.ApprovalPolicy == nil || *brief.ApprovalPolicy != *approvalPolicy || preview.Actor != *receipt.Actor || preview.SourceAggregateId != source.AggregateId || preview.BaseRevision != 0 || preview.ExpiresAt == nil || receipt.OccurredAt.Before(terminal.OccurredAt) || receipt.OccurredAt.After(*preview.ExpiresAt) {
 		return "", contractsv1.Receipt{}, errors.New("approval decision is not bound to the exact action and result")
 	}
 	if err := contract.ValidateDefinition("ApprovalPreview", preview); err != nil {
@@ -825,6 +834,18 @@ func verifiedApprovalDecision(replay, source contractsv1.ReplayBundle, action co
 	if err != nil || briefErr != nil || contractsv1.SHA256(token) != preview.CommitToken || preview.BriefHash != contractsv1.SHA256(briefHash) || receipt.AggregateId != approvalAggregate(string(brief.Id)) || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{preview.BriefHash, action.ContentSha256}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{preview.PreviewHash}) {
 		return "", contractsv1.Receipt{}, errors.New("approval decision authority is invalid")
 	}
+	return selectedApprovalDecision(brief, receipt)
+}
+
+func validLegacyApprovalReceipt(receipt contractsv1.Receipt, brief contractsv1.ApprovalBrief, sourceAggregateID string, terminalAt time.Time, action contractsv1.ActionArtifact) bool {
+	briefHash, err := Digest(brief)
+	expiresAt := terminalAt.Add(30 * 24 * time.Hour).UTC()
+	preview := contractsv1.ApprovalPreview{Kind: contractsv1.ApprovalPreviewKindApprovalPreview, SchemaVersion: 1, Actor: *receipt.Actor, BaseRevision: 0, SourceAggregateId: sourceAggregateID, Brief: brief, BriefHash: contractsv1.SHA256(briefHash), ExpiresAt: &expiresAt}
+	previewHash, hashErr := Digest(preview)
+	return err == nil && hashErr == nil && fmt.Sprint(receipt.Payload["preview_hash"]) == previewHash && receipt.AggregateId == approvalAggregate(string(brief.Id)) && !receipt.OccurredAt.Before(terminalAt) && !receipt.OccurredAt.After(expiresAt) && reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{contractsv1.SHA256(briefHash), action.ContentSha256}) && reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{contractsv1.SHA256(previewHash)})
+}
+
+func selectedApprovalDecision(brief contractsv1.ApprovalBrief, receipt contractsv1.Receipt) (contractsv1.ApprovalOptionDecision, contractsv1.Receipt, error) {
 	selected := fmt.Sprint(receipt.Payload["selected_option_id"])
 	for _, option := range brief.Options {
 		if string(option.Id) == selected {
@@ -901,10 +922,9 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 				return state, err
 			}
 			node := nodeStatePtr(&state, payload.WorkflowRef, string(payload.NodeId))
-			workflow, definition, exists := preparedNode(prepared, payload.WorkflowRef, string(payload.NodeId))
+			_, definition, exists := preparedNode(prepared, payload.WorkflowRef, string(payload.NodeId))
 			resolved := resolvedContext{Bundle: payload.Bundle, Packs: payload.Packs}
-			request := RunRequest{Job: prepared.request.Job, Campaign: prepared.request.Campaign, Workflow: workflow.definition, NodeID: string(payload.NodeId)}
-			if node == nil || !exists || !campaignNodeReadyForContext(state, prepared, payload.WorkflowRef, string(payload.NodeId)) || definition.Definition.Kind != contractsv1.NodeDefinitionKindAgent || validateResolvedContextForNode(resolved, e.registry, request, workflow.compiled, definition, workflow.compileReceipt) != nil || payload.Bundle.JobId != state.JobId || payload.Bundle.CampaignId != state.CampaignId || payload.Bundle.WorkflowRef != payload.WorkflowRef || payload.Bundle.NodeId != payload.NodeId || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) {
+			if node == nil || !exists || !campaignNodeReadyForContext(state, prepared, payload.WorkflowRef, string(payload.NodeId)) || definition.Definition.Kind != contractsv1.NodeDefinitionKindAgent || validateRecordedContextForNode(resolved, definition, prepared.request.Campaign.Scope, prepared.request.Campaign.EvidenceFrontier.Cutoff) != nil || payload.Bundle.JobId != state.JobId || payload.Bundle.CampaignId != state.CampaignId || payload.Bundle.WorkflowRef != payload.WorkflowRef || payload.Bundle.NodeId != payload.NodeId || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) {
 				return state, errors.New("Campaign Context transition binding is invalid")
 			}
 			if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeContextBound {

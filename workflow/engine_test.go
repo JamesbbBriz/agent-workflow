@@ -100,6 +100,31 @@ func TestEngineRejectsNonAtomicLedgerBeforeProviderExecution(t *testing.T) {
 	}
 }
 
+func TestCampaignDriveRejectsNonAtomicLedgerBeforeReservation(t *testing.T) {
+	definition := loadExample(t)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical := workflow.NewMemoryLedger()
+	request := workflow.CampaignRunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition}
+	admit(t, canonical, registry, workflow.RunRequest{Job: request.Job, Campaign: request.Campaign, Workflow: definition, NodeID: "research"})
+	provider := &memoProvider{results: make(map[string]workflow.ProviderResult)}
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledgerWithoutBatch{canonical})
+	if _, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: request}); err == nil || !strings.Contains(err.Error(), "AtomicLedger") {
+		t.Fatalf("Campaign Drive accepted a non-atomic Ledger: %v", err)
+	}
+	preview, err := engine.Preview(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.State.Usage.Attempts != 0 || preview.State.Nodes[0].Status != contractsv1.CampaignNodeExecutionStatusPending || preview.State.Nodes[0].ContextBundleHash != nil || provider.work != 0 {
+		t.Fatalf("non-atomic Drive mutated provider state: state=%+v work=%d", preview.State, provider.work)
+	}
+}
+
 type ledgerWithoutBatch struct{ workflow.Ledger }
 
 func TestProviderResultRecoveryConvergesAfterLedgerFailure(t *testing.T) {

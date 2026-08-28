@@ -285,6 +285,21 @@ func resolveContext(ctx context.Context, registry *Registry, request RunRequest,
 }
 
 func validateResolvedContextForNode(resolved resolvedContext, registry *Registry, request RunRequest, compiled CompiledWorkflow, node CompiledNode, compileReceipt contractsv1.Receipt) error {
+	if err := validateRecordedContextForNode(resolved, node, request.Campaign.Scope, request.Campaign.EvidenceFrontier.Cutoff); err != nil {
+		return err
+	}
+	for index, entry := range resolved.Bundle.Entries {
+		requirement := contextRequirement(node, *entry.RequirementId)
+		producer, _ := registry.lookup(string(requirement.Selector))
+		producerRequest := ProducerRequest{Requirement: requirement, Job: request.Job, Campaign: request.Campaign, Workflow: request.Workflow, WorkflowRef: compiled.WorkflowRef, CompileReceipt: compileReceipt, EvidenceCutoff: request.Campaign.EvidenceFrontier.Cutoff}
+		if err := verifyProducerContext(producer, producerRequest, resolved.Packs[index]); err != nil {
+			return fmt.Errorf("context %q has no producer authority: %w", requirement.Id, err)
+		}
+	}
+	return nil
+}
+
+func validateRecordedContextForNode(resolved resolvedContext, node CompiledNode, scope contractsv1.Scope, cutoff time.Time) error {
 	if err := VerifyContextBundle(resolved.Bundle, resolved.Packs); err != nil {
 		return err
 	}
@@ -301,15 +316,7 @@ func validateResolvedContextForNode(resolved resolvedContext, registry *Registry
 		if !ok || present[*entry.RequirementId] {
 			return errors.New("context bundle contains an unknown or duplicate requirement")
 		}
-		producer, ok := registry.lookup(string(requirement.Selector))
-		if !ok {
-			return errors.New("context bundle producer is not registered")
-		}
-		producerRequest := ProducerRequest{Requirement: requirement, Job: request.Job, Campaign: request.Campaign, Workflow: request.Workflow, WorkflowRef: compiled.WorkflowRef, CompileReceipt: compileReceipt, EvidenceCutoff: request.Campaign.EvidenceFrontier.Cutoff}
-		if err := verifyProducerContext(producer, producerRequest, resolved.Packs[index]); err != nil {
-			return fmt.Errorf("context %q has no producer authority: %w", requirement.Id, err)
-		}
-		if err := validatePack(resolved.Packs[index], requirement, request.Campaign.Scope, request.Campaign.EvidenceFrontier.Cutoff); err != nil {
+		if err := validatePack(resolved.Packs[index], requirement, scope, cutoff); err != nil {
 			return err
 		}
 		present[*entry.RequirementId] = true
@@ -331,6 +338,15 @@ func validateResolvedContextForNode(resolved resolvedContext, registry *Registry
 		return errors.New("context bundle optional coverage does not match")
 	}
 	return nil
+}
+
+func contextRequirement(node CompiledNode, id contractsv1.Identifier) contractsv1.ContextRequirement {
+	for _, requirement := range node.Definition.Context {
+		if requirement.Id == id {
+			return requirement
+		}
+	}
+	return contractsv1.ContextRequirement{}
 }
 
 func VerifyContextBundle(bundle contractsv1.ContextBundle, packs []contractsv1.ContextPackEdition) error {

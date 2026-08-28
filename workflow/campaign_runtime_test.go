@@ -362,6 +362,43 @@ func TestCampaignRuntimeDurationSurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestCampaignReplayDoesNotDependOnCurrentContextEdition(t *testing.T) {
+	cutoff := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	firstPack := packFixture(t, scope, cutoff)
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, firstPack), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := loadExample(t)
+	job, campaign := jobFixture(scope), campaignFixture(scope, cutoff)
+	ledger := workflow.NewMemoryLedger()
+	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
+	provider := &runtimePendingProvider{keys: map[string]struct{}{}}
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger)
+	if _, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}}); err != nil {
+		t.Fatal(err)
+	}
+	newPack := firstPack
+	newPack.Id = "pack-project-brief-2"
+	newPack.CapturedAt = cutoff.Add(-30 * time.Minute)
+	newPack.Content = map[string]any{"brief": "newer canonical edition"}
+	hash, err := workflow.Digest(newPack.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPack.ContentSha256 = contractsv1.SHA256(hash)
+	restartedRegistry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, newPack), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := workflow.NewEngine(restartedRegistry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger)
+	preview, err := restarted.Preview(context.Background(), workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition})
+	if err != nil || preview.State.Nodes[0].ContextBundleHash == nil {
+		t.Fatalf("historical Context stopped replaying after producer advanced: state=%+v err=%v", preview.State, err)
+	}
+}
+
 func TestCampaignRuntimeDoesNotResetDeadlineAfterReservationCrash(t *testing.T) {
 	cutoff := time.Now().UTC().Add(-time.Hour)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
