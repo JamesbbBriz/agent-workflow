@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/JamesbbBriz/agent-workflow/internal/cli"
+	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
 
 func TestValidateReportsStableWorkflowIdentity(t *testing.T) {
@@ -138,6 +139,18 @@ func TestDemoRunsOneContextBoundNodeAndReturnsReplay(t *testing.T) {
 	}
 	if !response.OK || len(response.Data.Artifacts) != 1 || len(response.Data.Replay.Receipts) != 7 {
 		t.Fatalf("unexpected demo response: %s", stdout.String())
+	}
+}
+
+func TestConformanceCommandEmitsMachineReadableReport(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"conformance", "--file", "../../conformance/fixtures/generic.json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("conformance failed: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report contractsv1.ConformanceReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil || !report.Passed || report.ToolVersion != "development" {
+		t.Fatalf("invalid conformance report: %+v err=%v", report, err)
 	}
 }
 

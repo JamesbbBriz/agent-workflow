@@ -138,6 +138,15 @@ type AgentWorkflowContractCatalog struct {
 	// ConflictSet corresponds to the JSON schema field "conflict_set".
 	ConflictSet *ConflictSet `json:"conflict_set,omitempty,omitzero"`
 
+	// ConformanceCheck corresponds to the JSON schema field "conformance_check".
+	ConformanceCheck *ConformanceCheck `json:"conformance_check,omitempty,omitzero"`
+
+	// ConformanceFixture corresponds to the JSON schema field "conformance_fixture".
+	ConformanceFixture *ConformanceFixture `json:"conformance_fixture,omitempty,omitzero"`
+
+	// ConformanceReport corresponds to the JSON schema field "conformance_report".
+	ConformanceReport *ConformanceReport `json:"conformance_report,omitempty,omitzero"`
+
 	// ContextBundle corresponds to the JSON schema field "context_bundle".
 	ContextBundle *ContextBundle `json:"context_bundle,omitempty,omitzero"`
 
@@ -1307,6 +1316,106 @@ type ConflictSetKind string
 const ConflictSetKindConflictSet ConflictSetKind = "conflict_set"
 
 type ConflictSetSchemaVersion int
+
+type ConformanceCheck struct {
+	// Code corresponds to the JSON schema field "code".
+	Code Identifier `json:"code"`
+
+	// EvidenceHashes corresponds to the JSON schema field "evidence_hashes".
+	EvidenceHashes []SHA256 `json:"evidence_hashes"`
+
+	// Id corresponds to the JSON schema field "id".
+	Id Identifier `json:"id"`
+
+	// Status corresponds to the JSON schema field "status".
+	Status ConformanceCheckStatus `json:"status"`
+}
+
+type ConformanceCheckStatus string
+
+const ConformanceCheckStatusFail ConformanceCheckStatus = "fail"
+const ConformanceCheckStatusPass ConformanceCheckStatus = "pass"
+const ConformanceCheckStatusSkipped ConformanceCheckStatus = "skipped"
+
+type ConformanceFixture struct {
+	// ApprovalPolicies corresponds to the JSON schema field "approval_policies".
+	ApprovalPolicies NonEmptyStrings `json:"approval_policies"`
+
+	// BlockerCodes corresponds to the JSON schema field "blocker_codes".
+	BlockerCodes NonEmptyStrings `json:"blocker_codes"`
+
+	// Campaigns corresponds to the JSON schema field "campaigns".
+	Campaigns []CampaignDefinition `json:"campaigns"`
+
+	// CapabilityManifests corresponds to the JSON schema field
+	// "capability_manifests".
+	CapabilityManifests []CapabilityManifest `json:"capability_manifests"`
+
+	// ContextPacks corresponds to the JSON schema field "context_packs".
+	ContextPacks []ContextPackEdition `json:"context_packs"`
+
+	// Job corresponds to the JSON schema field "job".
+	Job JobDefinition `json:"job"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ConformanceFixtureKind `json:"kind"`
+
+	// Profile corresponds to the JSON schema field "profile".
+	Profile ConformanceFixtureProfile `json:"profile"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ConformanceFixtureSchemaVersion `json:"schema_version"`
+
+	// Workflows corresponds to the JSON schema field "workflows".
+	Workflows []WorkflowDefinition `json:"workflows"`
+}
+
+type ConformanceFixtureKind string
+
+const ConformanceFixtureKindConformanceFixture ConformanceFixtureKind = "conformance_fixture"
+
+type ConformanceFixtureProfile string
+
+const ConformanceFixtureProfileGeneric ConformanceFixtureProfile = "generic"
+const ConformanceFixtureProfileSeoShaped ConformanceFixtureProfile = "seo-shaped"
+
+type ConformanceFixtureSchemaVersion int
+
+type ConformanceReport struct {
+	// Checks corresponds to the JSON schema field "checks".
+	Checks []ConformanceCheck `json:"checks"`
+
+	// ContractVersion corresponds to the JSON schema field "contract_version".
+	ContractVersion ConformanceReportContractVersion `json:"contract_version"`
+
+	// FixtureSha256 corresponds to the JSON schema field "fixture_sha256".
+	FixtureSha256 SHA256 `json:"fixture_sha256"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind ConformanceReportKind `json:"kind"`
+
+	// Passed corresponds to the JSON schema field "passed".
+	Passed bool `json:"passed"`
+
+	// Profile corresponds to the JSON schema field "profile".
+	Profile ConformanceFixtureProfile `json:"profile"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion ConformanceReportSchemaVersion `json:"schema_version"`
+
+	// ToolVersion corresponds to the JSON schema field "tool_version".
+	ToolVersion string `json:"tool_version"`
+}
+
+type ConformanceReportContractVersion string
+
+const ConformanceReportContractVersionAgentWorkflowV1 ConformanceReportContractVersion = "agent-workflow.v1"
+
+type ConformanceReportKind string
+
+const ConformanceReportKindConformanceReport ConformanceReportKind = "conformance_report"
+
+type ConformanceReportSchemaVersion int
 
 type ContextBundle struct {
 	// BundleHash corresponds to the JSON schema field "bundle_hash".
@@ -2798,6 +2907,10 @@ type WorkflowLintIssueSeverity string
 const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
 const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
 
+type ReceiptPreviousReceiptHash_0 = SHA256
+
+type RedactedReceiptPreviousReceiptHash_0 = SHA256
+
 type WorkflowLintReport struct {
 	// Issues corresponds to the JSON schema field "issues".
 	Issues []WorkflowLintIssue `json:"issues"`
@@ -2816,10 +2929,6 @@ type WorkflowLintReportKind string
 
 const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflow_lint_report"
 
-type RedactedReceiptPreviousReceiptHash_0 = SHA256
-
 type WorkflowLintReportSchemaVersion int
 
 type WorkflowRef string
-
-type ReceiptPreviousReceiptHash_0 = SHA256

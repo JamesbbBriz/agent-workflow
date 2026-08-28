@@ -44,6 +44,9 @@
     "workflow_admission": { "$ref": "agent-workflow.v1.schema.json#/$defs/WorkflowAdmission" },
     "approval_brief": { "$ref": "agent-workflow.v1.schema.json#/$defs/ApprovalBrief" },
     "approval_preview": { "$ref": "agent-workflow.v1.schema.json#/$defs/ApprovalPreview" }
+    ,"conformance_fixture": { "$ref": "agent-workflow.v1.schema.json#/$defs/ConformanceFixture" }
+    ,"conformance_check": { "$ref": "agent-workflow.v1.schema.json#/$defs/ConformanceCheck" }
+    ,"conformance_report": { "$ref": "agent-workflow.v1.schema.json#/$defs/ConformanceReport" }
     ,"campaign_execution_state": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignExecutionState" }
     ,"campaign_drive_preview": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignDrivePreview" }
     ,"campaign_drive_receipt": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignDriveReceipt" }

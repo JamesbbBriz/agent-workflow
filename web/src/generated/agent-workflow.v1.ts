@@ -22,6 +22,9 @@ export interface AgentWorkflowV1 {
     change_case_state?:                ChangeCaseStateClass;
     change_proposal?:                  ChangeProposalElement;
     conflict_set?:                     Conflicts;
+    conformance_check?:                ConformanceCheck;
+    conformance_fixture?:              ConformanceFixture;
+    conformance_report?:               ConformanceReport;
     context_bundle?:                   Bundle;
     context_pack_edition?:             Edition;
     context_transition_event_payload?: ContextTransitionEventPayload;
@@ -249,7 +252,7 @@ export interface ProviderIsolation {
     executable_sha256?:   string;
     kind:                 ProviderIsolationEvidenceKind;
     network_access?:      boolean;
-    profile:              Profile;
+    profile:              IsolationProfileEnum;
     schema_version:       number;
     staged_root_sha256?:  string;
 }
@@ -258,7 +261,7 @@ export type Driver = "in_process" | "sandbox_exec" | "bubblewrap";
 
 export type ProviderIsolationEvidenceKind = "provider_isolation_evidence";
 
-export type Profile = "trusted_in_process" | "staged_subprocess";
+export type IsolationProfileEnum = "trusted_in_process" | "staged_subprocess";
 
 export type CampaignExecutionStateStatus = "admitted" | "running" | "blocked" | "completed" | "terminal";
 
@@ -755,6 +758,47 @@ export interface ChangeCaseEventPayload {
     state: ChangeCaseStateClass;
 }
 
+export interface ConformanceCheck {
+    code:            string;
+    evidence_hashes: string[];
+    id:              string;
+    status:          ConformanceCheckStatus;
+}
+
+export type ConformanceCheckStatus = "pass" | "skipped" | "fail";
+
+export interface ConformanceFixture {
+    approval_policies:    [string, ...string[]];
+    blocker_codes:        [string, ...string[]];
+    campaigns:            [CampaignDefinition, ...CampaignDefinition[]];
+    capability_manifests: [CapabilityManifest, ...CapabilityManifest[]];
+    context_packs:        [Edition, ...Edition[]];
+    job:                  Job;
+    kind:                 ConformanceFixtureKind;
+    profile:              ConformanceFixtureProfile;
+    schema_version:       number;
+    workflows:            [WorkflowDefinitionElement, ...WorkflowDefinitionElement[]];
+}
+
+export type ConformanceFixtureKind = "conformance_fixture";
+
+export type ConformanceFixtureProfile = "generic" | "seo-shaped";
+
+export interface ConformanceReport {
+    checks:           [ConformanceCheck, ...ConformanceCheck[]];
+    contract_version: ContractVersion;
+    fixture_sha256:   string;
+    kind:             ConformanceReportKind;
+    passed:           boolean;
+    profile:          ConformanceFixtureProfile;
+    schema_version:   number;
+    tool_version:     string;
+}
+
+export type ContractVersion = "agent-workflow.v1";
+
+export type ConformanceReportKind = "conformance_report";
+
 export interface ContextTransitionEventPayload {
     bundle:                        Bundle;
     node_id:                       string;
@@ -777,7 +821,7 @@ export interface ExecutorProfile {
     capabilities:      [CapabilityEnum, ...CapabilityEnum[]];
     config_hash:       string;
     config_ref:        string;
-    isolation_profile: Profile;
+    isolation_profile: IsolationProfileEnum;
     kind:              ExecutorProfileKind;
     model_ref:         string;
     network_access:    boolean;
