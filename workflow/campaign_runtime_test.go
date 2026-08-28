@@ -82,6 +82,131 @@ func TestCampaignRuntimeDerivesDependenciesAndCompletesTheDAG(t *testing.T) {
 	}
 }
 
+func TestCampaignRuntimeWaitsForExactHumanApprovalAndResumes(t *testing.T) {
+	t.Parallel()
+	cutoff := time.Now().UTC().Add(-time.Hour)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := loadExample(t)
+	job := jobFixture(scope)
+	campaign := campaignFixture(scope, cutoff)
+	campaign.Budget = contractsv1.Budget{MaxAttempts: 2, MaxActions: 3, MaxCandidates: 4}
+	ledger := workflow.NewMemoryLedger()
+	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
+	provider := &dagProvider{results: map[string]workflow.ProviderResult{}}
+	outputs := dagOutputCatalog()
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputs, provider, ledger)
+
+	waiting, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}, MaxTransitions: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if waiting.State.Nodes[1].Status != contractsv1.CampaignNodeExecutionStatusAwaitingApproval || waiting.State.Nodes[1].ApprovalId == nil || provider.starts != 1 || waiting.NodeReplay == nil {
+		t.Fatalf("approval Node did not stop at the human gate: state=%+v starts=%d", waiting.State, provider.starts)
+	}
+	material, err := workflow.MaterializeReplay(*waiting.NodeReplay, outputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result contractsv1.Receipt
+	for _, receipt := range waiting.NodeReplay.Receipts {
+		if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeResult {
+			result = receipt
+		}
+	}
+	brief := contractsv1.ApprovalBrief{Kind: contractsv1.ApprovalBriefKindApprovalBrief, SchemaVersion: 1, Title: "Accept the recommendation?", Evidence: []contractsv1.ArtifactRef{{Id: result.Id, Kind: contractsv1.ArtifactRefKindReceipt, ArtifactType: "result", SchemaVersion: 1, Sha256: result.ReceiptHash, MediaType: "application/json"}}, Options: []contractsv1.ApprovalOption{{Id: "approve", Label: "Approve", Decision: contractsv1.ApprovalOptionDecisionApprove, Tradeoffs: []string{"Accept exact result"}}, {Id: "reject", Label: "Reject", Decision: contractsv1.ApprovalOptionDecisionReject, Tradeoffs: []string{"Do not proceed"}}, {Id: "revise", Label: "Revise", Decision: contractsv1.ApprovalOptionDecisionRevise, Tradeoffs: []string{"Request another revision"}}}, RecommendedOptionId: "approve", Recommendation: "Approve the exact result.", Risks: []string{"Human remains authoritative."}, Action: material.Artifacts[0]}
+	core := workflow.NewAuthoringCore(registry, workflow.ExecutorCatalog{"bounded-agent@1": contractsv1.NodeDefinitionKindAgent, "human-approval@1": contractsv1.NodeDefinitionKindApproval}, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputs, []string{"provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger)
+	preview, err := core.PreviewApproval(brief, "human@example.com", waiting.NodeReplay.AggregateId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.ConfirmApproval(preview, "human@example.com", "approve", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}, MaxTransitions: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.State.Status != contractsv1.CampaignExecutionStateStatusCompleted || completed.State.Nodes[1].Status != contractsv1.CampaignNodeExecutionStatusCompleted || provider.starts != 1 {
+		t.Fatalf("approval did not resume the same Campaign without another provider effect: state=%+v starts=%d", completed.State, provider.starts)
+	}
+}
+
+func TestCampaignRuntimeResumesTimeAndSignalWaitsExactlyOnce(t *testing.T) {
+	for _, mode := range []contractsv1.NodeDefinitionWaitMode{contractsv1.NodeDefinitionWaitModeTime, contractsv1.NodeDefinitionWaitModeSignal} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			cutoff := time.Now().UTC().Add(-time.Hour)
+			scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+			registry, err := workflow.NewRegistry(workflow.NewIntentProducer())
+			if err != nil {
+				t.Fatal(err)
+			}
+			definition := loadExample(t)
+			wait := definition.Nodes[0]
+			wait.Id, wait.Kind, wait.Executor = "wait", contractsv1.NodeDefinitionKindWait, "core-wait@1"
+			wait.Context, wait.Capabilities, wait.InputSlots, wait.OutputSlots, wait.DependsOn = []contractsv1.ContextRequirement{}, []string{}, []contractsv1.Slot{}, []contractsv1.Slot{}, []string{}
+			wait.WaitMode = &mode
+			if mode == contractsv1.NodeDefinitionWaitModeTime {
+				delay := 1
+				wait.WaitDelaySeconds = &delay
+			} else {
+				signal := contractsv1.Identifier("human-ready")
+				wait.WaitSignal = &signal
+			}
+			terminal := wait
+			terminal.Id, terminal.Kind, terminal.Executor = "finish", contractsv1.NodeDefinitionKindTerminal, "core-terminal@1"
+			terminal.DependsOn = []string{"wait"}
+			terminal.WaitMode, terminal.WaitDelaySeconds, terminal.WaitSignal = nil, nil, nil
+			definition.Nodes, definition.DefaultContext, definition.Outputs = []contractsv1.NodeDefinition{wait, terminal}, []contractsv1.ContextRequirement{}, []contractsv1.Slot{}
+			job := jobFixture(scope)
+			campaign := campaignFixture(scope, cutoff)
+			ledger := workflow.NewMemoryLedger()
+			core := workflow.NewAuthoringCore(registry, workflow.ExecutorCatalog{"core-wait@1": contractsv1.NodeDefinitionKindWait, "core-terminal@1": contractsv1.NodeDefinitionKindTerminal}, nil, nil, []string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, nil, ledger)
+			preview, lint, err := core.Preview(job, campaign, definition, "operator")
+			if err != nil {
+				t.Fatalf("%v: %+v", err, lint.Issues)
+			}
+			if _, err := core.Confirm(preview, "operator", cutoff); err != nil {
+				t.Fatal(err)
+			}
+			provider := &dagProvider{results: map[string]workflow.ProviderResult{}}
+			engine := workflow.NewEngine(registry, nil, nil, provider, ledger)
+			request := workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}
+			waiting, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: request, MaxTransitions: 10})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if waiting.State.Nodes[0].Status != contractsv1.CampaignNodeExecutionStatusWaiting || waiting.Transitions != 1 || provider.starts != 0 {
+				t.Fatalf("wait did not pause without provider work: %+v starts=%d", waiting, provider.starts)
+			}
+			command := workflow.CampaignDriveCommand{CampaignRunRequest: request, MaxTransitions: 10}
+			if mode == contractsv1.NodeDefinitionWaitModeTime {
+				time.Sleep(1100 * time.Millisecond)
+			} else {
+				wrong := workflow.CampaignSignal{Name: "wrong", PayloadHash: contractsv1.SHA256(zeroHash)}
+				command.Signal = &wrong
+				unchanged, err := engine.Drive(context.Background(), command)
+				if err != nil || unchanged.Transitions != 0 {
+					t.Fatalf("wrong signal resumed wait: receipt=%+v err=%v", unchanged, err)
+				}
+				right := workflow.CampaignSignal{Name: "human-ready", PayloadHash: contractsv1.SHA256(zeroHash)}
+				command.Signal = &right
+			}
+			completed, err := engine.Drive(context.Background(), command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if completed.State.Status != contractsv1.CampaignExecutionStateStatusCompleted || completed.State.Nodes[0].Status != contractsv1.CampaignNodeExecutionStatusCompletedNoAction || provider.starts != 0 {
+				t.Fatalf("wait did not resume exactly once: %+v starts=%d", completed, provider.starts)
+			}
+		})
+	}
+}
+
 func TestCampaignRuntimeExecutesEveryPinnedWorkflowInOrder(t *testing.T) {
 	t.Parallel()
 	cutoff := time.Now().UTC().Add(-time.Hour)

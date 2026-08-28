@@ -408,6 +408,14 @@ func TestRequiredContextFailsClosed(t *testing.T) {
 	if provider.work != 0 {
 		t.Fatal("provider ran without required context")
 	}
+	resumed, err := workflow.NewEngine(admissionRegistry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger).RunNode(context.Background(), request)
+	if err != nil || provider.work != 1 || len(resumed.Artifacts) != 1 {
+		t.Fatalf("new verified Context did not resume the same Node: result=%+v err=%v work=%d", resumed, err, provider.work)
+	}
+	preview, err := workflow.NewEngine(admissionRegistry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger).Preview(context.Background(), workflow.CampaignRunRequest{Job: request.Job, Campaign: request.Campaign, Workflow: request.Workflow})
+	if err != nil || preview.State.Nodes[0].ContextBundleHash == nil || preview.State.Nodes[0].Usage.Attempts != 1 {
+		t.Fatalf("Context recovery was not retained in canonical Campaign state: preview=%+v err=%v", preview, err)
+	}
 }
 
 func TestContextPackAuthorityFailsClosedBeforeProviderExecution(t *testing.T) {

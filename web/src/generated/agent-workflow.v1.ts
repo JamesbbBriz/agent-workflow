@@ -1,7 +1,9 @@
 export interface AgentWorkflowV1 {
     action_artifact?:                  ActionArtifact;
     approval_brief?:                   ApprovalBrief;
+    approval_decided_event_payload?:   ApprovalDecidedEventPayload;
     approval_preview?:                 ApprovalPreview;
+    approval_requested_event_payload?: ApprovalRequestedEventPayload;
     attempt_reserved_event_payload?:   AttemptReservedEventPayload;
     authoring_catalog?:                AuthoringCatalog;
     budget_exhausted_event_payload?:   BudgetExhaustedEventPayload;
@@ -15,10 +17,15 @@ export interface AgentWorkflowV1 {
     capability_manifest?:              CapabilityManifest;
     context_bundle?:                   Bundle;
     context_pack_edition?:             Edition;
+    context_transition_event_payload?: ContextTransitionEventPayload;
+    core_completed_event_payload?:     CoreCompletedEventPayload;
     job_definition?:                   Job;
+    needs_context_event_payload?:      NeedsContextEventPayload;
     node_completed_event_payload?:     NodeCompletedEventPayload;
     receipt?:                          ReplayBundleReceipt;
     replay_bundle?:                    CampaignReplay;
+    wait_resumed_event_payload?:       WaitResumedEventPayload;
+    wait_started_event_payload?:       WaitStartedEventPayload;
     workflow_admission?:               WorkflowAdmission;
     workflow_admission_preview?:       WorkflowAdmissionPreview;
     workflow_definition?:              WorkflowDefinitionElement;
@@ -77,7 +84,16 @@ export interface OptionElement {
     tradeoffs: [string, ...string[]];
 }
 
-export type Decision = "approve" | "reject";
+export type Decision = "approve" | "reject" | "revise";
+
+export interface ApprovalDecidedEventPayload {
+    approval_id:           string;
+    approval_receipt_hash: string;
+    artifact:              ActionArtifact;
+    decision:              Decision;
+    node_id:               string;
+    workflow_ref:          string;
+}
 
 export interface ApprovalPreview {
     actor:               string;
@@ -85,6 +101,7 @@ export interface ApprovalPreview {
     brief:               ApprovalBrief;
     brief_hash:          string;
     commit_token:        string;
+    expires_at?:         string;
     kind:                ApprovalPreviewKind;
     preview_hash:        string;
     schema_version:      number;
@@ -92,6 +109,14 @@ export interface ApprovalPreview {
 }
 
 export type ApprovalPreviewKind = "approval_preview";
+
+export interface ApprovalRequestedEventPayload {
+    action_hash:        string;
+    approval_id:        string;
+    node_id:            string;
+    source_replay_hash: string;
+    workflow_ref:       string;
+}
 
 export interface AttemptReservedEventPayload {
     node_id:      string;
@@ -166,17 +191,22 @@ export interface CampaignExecutionStateClass {
 export type CampaignExecutionStateKind = "campaign_execution_state";
 
 export interface CampaignExecutionStateNode {
-    blocker_code?:       string;
-    completed_at?:       string;
-    node_id:             string;
-    result_replay_hash?: string;
-    started_at?:         string;
-    status:              NodeStatus;
-    usage:               Usage;
-    workflow_ref:        string;
+    approval_id?:         string;
+    blocker_code?:        string;
+    blocker_fingerprint?: string;
+    completed_at?:        string;
+    context_bundle_hash?: string;
+    node_id:              string;
+    result_replay_hash?:  string;
+    signal?:              string;
+    started_at?:          string;
+    status:               NodeStatus;
+    usage:                Usage;
+    wake_at?:             string;
+    workflow_ref:         string;
 }
 
-export type NodeStatus = "pending" | "running" | "completed" | "completed_no_action" | "blocked" | "budget_exhausted";
+export type NodeStatus = "pending" | "needs_context" | "running" | "awaiting_approval" | "waiting" | "completed" | "completed_no_action" | "blocked" | "budget_exhausted";
 
 export interface Usage {
     actions:          number;
@@ -287,7 +317,7 @@ export interface ReplayBundleReceipt {
 
 export type ReceiptKind = "receipt";
 
-export type ReceiptType = "compile" | "admission" | "campaign_admission" | "attempt_reserved" | "pack_edition" | "invocation" | "provider_execution" | "result" | "node_completed" | "budget_exhausted" | "approval" | "terminal";
+export type ReceiptType = "compile" | "admission" | "campaign_admission" | "context_bound" | "needs_context" | "context_available" | "attempt_reserved" | "pack_edition" | "invocation" | "provider_execution" | "result" | "node_completed" | "budget_exhausted" | "approval_requested" | "approval_decided" | "wait_started" | "wait_resumed" | "core_completed" | "approval" | "terminal";
 
 export type CampaignDriveReceiptKind = "campaign_drive_receipt";
 
@@ -361,18 +391,21 @@ export interface DefaultContextElement {
 export type WorkflowDefinitionKind = "workflow_definition";
 
 export interface DefinitionElement {
-    approval_policy?:  string;
-    blocker_codes?:    string[];
-    budget:            Budget;
-    capabilities:      string[];
-    context:           DefaultContextElement[];
-    deadline_seconds?: number;
-    depends_on:        string[];
-    executor:          string;
-    id:                string;
-    input_slots:       OutputElement[];
-    kind:              NodeKindEnum;
-    output_slots:      OutputElement[];
+    approval_policy?:    string;
+    blocker_codes?:      string[];
+    budget:              Budget;
+    capabilities:        string[];
+    context:             DefaultContextElement[];
+    deadline_seconds?:   number;
+    depends_on:          string[];
+    executor:            string;
+    id:                  string;
+    input_slots:         OutputElement[];
+    kind:                NodeKindEnum;
+    output_slots:        OutputElement[];
+    wait_delay_seconds?: number;
+    wait_mode?:          Mode;
+    wait_signal?:        string;
 }
 
 export interface OutputElement {
@@ -387,6 +420,8 @@ export interface OutputElement {
 }
 
 export type ArtifactKind = "context_pack" | "action_artifact";
+
+export type Mode = "time" | "signal";
 
 export interface ExecutionElement {
     aggregate_id:     string;
@@ -504,16 +539,58 @@ export interface Capability {
 
 export type CapabilityManifestKind = "capability_manifest";
 
+export interface ContextTransitionEventPayload {
+    bundle:                        Bundle;
+    node_id:                       string;
+    packs:                         Edition[];
+    previous_blocker_fingerprint?: string;
+    workflow_ref:                  string;
+}
+
+export interface CoreCompletedEventPayload {
+    completed_at: string;
+    node_id:      string;
+    status:       CoreCompletedEventPayloadStatus;
+    workflow_ref: string;
+}
+
+export type CoreCompletedEventPayloadStatus = "completed" | "completed_no_action";
+
+export interface NeedsContextEventPayload {
+    blocker_fingerprint: string;
+    node_id:             string;
+    reasons:             { [key: string]: Reason };
+    requirements:        [string, ...string[]];
+    workflow_ref:        string;
+}
+
+export type Reason = "unavailable" | "unusable";
+
 export interface NodeCompletedEventPayload {
     completed_at:       string;
     node_id:            string;
     result_replay_hash: string;
-    status:             NodeCompletedEventPayloadStatus;
+    status:             CoreCompletedEventPayloadStatus;
     usage:              Usage;
     workflow_ref:       string;
 }
 
-export type NodeCompletedEventPayloadStatus = "completed" | "completed_no_action";
+export interface WaitResumedEventPayload {
+    node_id:      string;
+    resumed_at:   string;
+    signal?:      string;
+    signal_hash?: string;
+    workflow_ref: string;
+}
+
+export interface WaitStartedEventPayload {
+    mode:         Mode;
+    node_id:      string;
+    signal?:      string;
+    started_at:   string;
+    wake_at?:     string;
+    workflow_ref: string;
+}
 
 export interface WorkflowAdmission {
     campaign:        CampaignDefinition;

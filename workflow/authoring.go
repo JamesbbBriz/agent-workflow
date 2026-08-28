@@ -366,6 +366,9 @@ func (c *AuthoringCore) PreviewApproval(brief contractsv1.ApprovalBrief, actor, 
 	if brief.Action.ApprovalState != contractsv1.ActionArtifactApprovalStatePending {
 		return contractsv1.ApprovalPreview{}, errors.New("approval action must be pending")
 	}
+	if !nodeCompletedReplay(source) {
+		return contractsv1.ApprovalPreview{}, errors.New("approval source has not reached canonical node_completed terminal state")
+	}
 	material, err := MaterializeReplay(source, c.outputs)
 	if err != nil {
 		return contractsv1.ApprovalPreview{}, fmt.Errorf("approval source Replay: %w", err)
@@ -404,7 +407,9 @@ func (c *AuthoringCore) PreviewApproval(brief contractsv1.ApprovalBrief, actor, 
 	if err != nil {
 		return contractsv1.ApprovalPreview{}, err
 	}
-	preview := contractsv1.ApprovalPreview{Kind: contractsv1.ApprovalPreviewKindApprovalPreview, SchemaVersion: 1, Actor: actor, BaseRevision: base, SourceAggregateId: sourceAggregateID, Brief: brief, BriefHash: contractsv1.SHA256(briefHash)}
+	terminal, _ := receiptByType(source, contractsv1.ReceiptReceiptTypeTerminal)
+	expiresAt := terminal.OccurredAt.Add(30 * 24 * time.Hour).UTC()
+	preview := contractsv1.ApprovalPreview{Kind: contractsv1.ApprovalPreviewKindApprovalPreview, SchemaVersion: 1, Actor: actor, BaseRevision: base, SourceAggregateId: sourceAggregateID, Brief: brief, BriefHash: contractsv1.SHA256(briefHash), ExpiresAt: &expiresAt}
 	previewHash, err := Digest(preview)
 	if err != nil {
 		return contractsv1.ApprovalPreview{}, err
@@ -427,6 +432,9 @@ func (c *AuthoringCore) PreviewApproval(brief contractsv1.ApprovalBrief, actor, 
 func (c *AuthoringCore) ConfirmApproval(preview contractsv1.ApprovalPreview, actor, optionID string, occurredAt time.Time) (contractsv1.Receipt, error) {
 	if strings.TrimSpace(actor) != preview.Actor {
 		return contractsv1.Receipt{}, errors.New("confirmation actor does not match")
+	}
+	if preview.ExpiresAt != nil && occurredAt.After(*preview.ExpiresAt) {
+		return contractsv1.Receipt{}, errors.New("approval preview has expired")
 	}
 	if replay, err := c.ledger.Replay(approvalAggregate(string(preview.Brief.Id))); err == nil {
 		for _, receipt := range replay.Receipts {

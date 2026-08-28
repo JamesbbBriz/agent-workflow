@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,9 +141,24 @@ func TestApprovalBindsBriefActorOptionAndStaleToken(t *testing.T) {
 		RecommendedOptionId: "approve", Recommendation: "Approve because the independent review passed.", Risks: []string{"The public page changes immediately"},
 		Action: action,
 	}
+	partialLedger := workflow.NewMemoryLedger()
+	for _, receipt := range source.Replay.Receipts[:len(source.Replay.Receipts)-1] {
+		if err := partialLedger.Append(receipt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := authoringCoreWithLedger(t, partialLedger).PreviewApproval(brief, "human@example.com", source.Replay.AggregateId); err == nil || !strings.Contains(err.Error(), "node_completed") {
+		t.Fatalf("result-only partial Replay became approvable: %v", err)
+	}
 	preview, err := core.PreviewApproval(brief, "human@example.com", source.Replay.AggregateId)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if preview.ExpiresAt == nil {
+		t.Fatal("approval preview has no canonical expiry")
+	}
+	if _, err := core.ConfirmApproval(preview, "human@example.com", "approve", preview.ExpiresAt.Add(time.Second)); err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("expired approval token was accepted: %v", err)
 	}
 	receipt, err := core.ConfirmApproval(preview, "human@example.com", "approve", time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC))
 	if err != nil || receipt.ReceiptType != contractsv1.ReceiptReceiptTypeApproval {

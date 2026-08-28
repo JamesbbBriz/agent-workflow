@@ -103,6 +103,10 @@ func (e *Engine) runAgentNode(ctx context.Context, request RunRequest) (RunResul
 }
 
 func (e *Engine) runAgentNodeAt(ctx context.Context, request RunRequest, reservedAt *time.Time) (RunResult, error) {
+	return e.runAgentNodeResolvedAt(ctx, request, reservedAt, nil)
+}
+
+func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest, reservedAt *time.Time, preparedContext *resolvedContext) (RunResult, error) {
 	if e == nil || e.provider == nil || e.ledger == nil {
 		return RunResult{}, errors.New("provider and ledger are required")
 	}
@@ -187,9 +191,17 @@ func (e *Engine) runAgentNodeAt(ctx context.Context, request RunRequest, reserve
 			return e.resumeInvocation(ctx, aggregateID, transitionAt, compiled, invocation, admissionReplay, replay)
 		}
 	}
-	resolved, err := resolveContext(ctx, e.registry, request, compiled, node, compileReceipt)
-	if err != nil {
-		return RunResult{}, err
+	resolved := resolvedContext{}
+	if preparedContext == nil {
+		resolved, err = resolveContext(ctx, e.registry, request, compiled, node, compileReceipt)
+		if err != nil {
+			return RunResult{}, err
+		}
+	} else {
+		resolved = *preparedContext
+		if err := VerifyContextBundle(resolved.Bundle, resolved.Packs); err != nil {
+			return RunResult{}, err
+		}
 	}
 	manifest, err := e.capabilityManifest(node.Definition)
 	if err != nil {
