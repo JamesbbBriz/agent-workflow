@@ -808,7 +808,7 @@ func verifiedApprovalDecision(replay, source contractsv1.ReplayBundle, action co
 	}
 	terminal, _ := receiptByType(source, contractsv1.ReceiptReceiptTypeTerminal)
 	if _, current := receipt.Payload["preview"]; !current {
-		if brief.ApprovalPolicy != nil || !validLegacyApprovalReceipt(receipt, brief, source.AggregateId, terminal.OccurredAt, action) {
+		if contract.ValidateDefinition("ApprovalBrief", brief) != nil || brief.ApprovalPolicy != nil || !validLegacyApprovalReceipt(receipt, brief, source.AggregateId, terminal.OccurredAt, action) {
 			return "", contractsv1.Receipt{}, errors.New("legacy approval decision authority is invalid")
 		}
 		return selectedApprovalDecision(brief, receipt)

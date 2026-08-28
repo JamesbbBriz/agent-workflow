@@ -375,9 +375,11 @@ func TestCampaignReplayDoesNotDependOnCurrentContextEdition(t *testing.T) {
 	ledger := workflow.NewMemoryLedger()
 	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
 	provider := &runtimePendingProvider{keys: map[string]struct{}{}}
-	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger)
-	if _, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}}); err != nil {
-		t.Fatal(err)
+	crashingLedger := &failOnceLedger{Ledger: ledger, failType: contractsv1.ReceiptReceiptTypeAttemptReserved}
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, crashingLedger)
+	request := workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}}
+	if _, err := engine.Drive(context.Background(), request); err == nil {
+		t.Fatal("injected crash after Context binding was ignored")
 	}
 	newPack := firstPack
 	newPack.Id = "pack-project-brief-2"
@@ -393,9 +395,9 @@ func TestCampaignReplayDoesNotDependOnCurrentContextEdition(t *testing.T) {
 		t.Fatal(err)
 	}
 	restarted := workflow.NewEngine(restartedRegistry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger)
-	preview, err := restarted.Preview(context.Background(), workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition})
-	if err != nil || preview.State.Nodes[0].ContextBundleHash == nil {
-		t.Fatalf("historical Context stopped replaying after producer advanced: state=%+v err=%v", preview.State, err)
+	receipt, err := restarted.Drive(context.Background(), request)
+	if err != nil || receipt.State.Nodes[0].ContextBundleHash == nil || provider.starts != 1 {
+		t.Fatalf("historical Context stopped resuming after producer advanced: state=%+v starts=%d err=%v", receipt.State, provider.starts, err)
 	}
 }
 

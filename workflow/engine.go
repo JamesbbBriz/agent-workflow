@@ -226,7 +226,7 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 		}
 	} else {
 		resolved = *preparedContext
-		if err := validateResolvedContextForNode(resolved, e.registry, request, compiled, node, compileReceipt); err != nil {
+		if err := validateRecordedContextForNode(resolved, node, request.Campaign.Scope, request.Campaign.EvidenceFrontier.Cutoff); err != nil {
 			return RunResult{}, err
 		}
 	}
