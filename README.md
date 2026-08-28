@@ -106,13 +106,13 @@ Job -> Campaign -> Workflow@version -> Node Contract
 
 The Go Core is the only canonical mutation authority. Storage, provider Agents, CLI, GUI, MCP, and WebMCP are adapters. Context Packs contain evidence; Action Artifacts contain decisions or proposed mutations.
 
-`CampaignRuntime.ReplayAt` reads one exact receipt prefix as raw diagnostic data or as the `public_metadata@1` redacted projection. `NewSubprocessProvider` is the Linux reference production isolation seam; its staged root must contain read-only `input/` and the single bounded writable file `output/result`. Ordinary in-process providers remain explicitly trusted/testing adapters, and a production Engine can reject them with `RequireProviderIsolation(staged_subprocess)` before Campaign admission. Platforms without Bubblewrap PID-namespace containment fail closed.
+`CampaignRuntime.ReplayAt` reads one exact receipt prefix as raw diagnostic data or as the `public_metadata@1` redacted projection. `ChangeCaseCore` coordinates completed Campaign Node proposals against one exact Resource generation, then requires deterministic merge/conflict handling, exact approval, one Mutation Lease, apply evidence, and matching readback. `NewSubprocessProvider` is the Linux reference production isolation seam; its staged root must contain read-only `input/` and the single bounded writable file `output/result`. Ordinary in-process providers remain explicitly trusted/testing adapters, and a production Engine can reject them with `RequireProviderIsolation(staged_subprocess)` before Campaign admission. Platforms without Bubblewrap PID-namespace containment fail closed.
 
 See [Architecture](docs/architecture.md), [Security](SECURITY.md), [Compatibility](COMPATIBILITY.md), and [Contributing](CONTRIBUTING.md).
 
 ## Status
 
-The v1 definitions plus versioned Campaign execution, Context recovery, approvals/waits, multi-Campaign Builder/Canvas, exact-cutoff redacted Replay, and reference provider isolation are implemented. Change Case coordination, bundled Agent Runner profiles, and the SEO Ops conformance consumer remain release work; see the [runtime closure plan](docs/runtime-closure-plan.md). WebMCP is not a Core dependency.
+The v1 definitions plus versioned Campaign execution, Context recovery, approvals/waits, multi-Campaign Builder/Canvas, exact-cutoff redacted Replay, reference provider isolation, and domain-neutral Change Case coordination are implemented. Bundled Agent Runner profiles and the SEO Ops conformance consumer remain release work; see the [runtime closure plan](docs/runtime-closure-plan.md). WebMCP is not a Core dependency.
 
 ## License
 

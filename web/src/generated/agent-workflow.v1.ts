@@ -16,18 +16,28 @@ export interface AgentWorkflowV1 {
     canvas_portfolio_snapshot?:        CanvasPortfolioSnapshot;
     canvas_snapshot?:                  CanvasSnapshot;
     capability_manifest?:              CapabilityManifest;
+    change_case_canvas?:               ChangeCaseCanvas;
+    change_case_event_payload?:        ChangeCaseEventPayload;
+    change_case_state?:                ChangeCaseStateClass;
+    change_proposal?:                  ChangeProposalElement;
+    conflict_set?:                     Conflicts;
     context_bundle?:                   Bundle;
     context_pack_edition?:             Edition;
     context_transition_event_payload?: ContextTransitionEventPayload;
     core_completed_event_payload?:     CoreCompletedEventPayload;
     job_definition?:                   Job;
+    mutation_evidence?:                ApplyEvidence;
+    mutation_lease?:                   Lease;
     needs_context_event_payload?:      NeedsContextEventPayload;
     node_completed_event_payload?:     NodeCompletedEventPayload;
+    proposal_replacement?:             Replacement;
     provider_execution_event_payload?: ProviderExecutionEventPayload;
     provider_isolation_evidence?:      ProviderIsolation;
     receipt?:                          ReplayBundleReceipt;
     redacted_replay?:                  RedactedReplay;
     replay_bundle?:                    CampaignReplay;
+    resolution_artifact?:              Resolution;
+    resource_ref?:                     Resource;
     wait_resumed_event_payload?:       WaitResumedEventPayload;
     wait_started_event_payload?:       WaitStartedEventPayload;
     workflow_admission?:               WorkflowAdmission;
@@ -341,7 +351,7 @@ export interface ReplayBundleReceipt {
 
 export type ReceiptKind = "receipt";
 
-export type ReceiptType = "compile" | "admission" | "campaign_admission" | "context_bound" | "needs_context" | "context_available" | "attempt_reserved" | "pack_edition" | "invocation" | "provider_execution" | "result" | "node_completed" | "budget_exhausted" | "approval_requested" | "approval_decided" | "wait_started" | "wait_resumed" | "core_completed" | "approval" | "terminal";
+export type ReceiptType = "compile" | "admission" | "campaign_admission" | "context_bound" | "needs_context" | "context_available" | "attempt_reserved" | "pack_edition" | "invocation" | "provider_execution" | "result" | "node_completed" | "budget_exhausted" | "approval_requested" | "approval_decided" | "wait_started" | "wait_resumed" | "core_completed" | "approval" | "terminal" | "change_proposed" | "change_merged" | "conflict_detected" | "resolution_proposed" | "resolution_approved" | "mutation_lease_acquired" | "mutation_applied" | "mutation_readback" | "resource_generation_advanced";
 
 export type CampaignDriveReceiptKind = "campaign_drive_receipt";
 
@@ -580,6 +590,148 @@ export interface Capability {
 
 export type CapabilityManifestKind = "capability_manifest";
 
+export interface ChangeCaseCanvas {
+    generated_at:   string;
+    kind:           ChangeCaseCanvasKind;
+    receipts:       ExecutionReceipt[];
+    schema_version: number;
+    state:          ChangeCaseStateClass;
+}
+
+export type ChangeCaseCanvasKind = "change_case_canvas";
+
+export interface ChangeCaseStateClass {
+    apply_evidence?:           ApplyEvidence;
+    blocker_code?:             BlockerCode;
+    conflicts?:                Conflicts;
+    id:                        string;
+    kind:                      ChangeCaseStateKind;
+    lease?:                    Lease;
+    merged_change?:            unknown[] | { [key: string]: unknown };
+    merged_change_hash?:       string;
+    proposals:                 [ChangeProposalElement, ...ChangeProposalElement[]];
+    readback_evidence?:        ApplyEvidence;
+    resolution?:               Resolution;
+    resolution_approval_hash?: string;
+    resource:                  Resource;
+    schema_version:            number;
+    status:                    ChangeCaseStateStatus;
+    updated_at:                string;
+}
+
+export interface ApplyEvidence {
+    case_id:        string;
+    change_hash:    string;
+    evidence_hash:  string;
+    kind:           MutationEvidenceKind;
+    lease_hash:     string;
+    observed_hash:  string;
+    resource:       Resource;
+    schema_version: number;
+}
+
+export type MutationEvidenceKind = "mutation_apply_evidence" | "mutation_readback_evidence";
+
+export interface Resource {
+    baseline_hash:     string;
+    baseline_revision: string;
+    generation:        number;
+    kind:              ResourceRefKind;
+    resource_id:       string;
+    resource_type:     string;
+    schema_version:    number;
+}
+
+export type ResourceRefKind = "resource_ref";
+
+export type BlockerCode = "resource_generation_advanced" | "resolution_approval_required" | "mutation_lease_active";
+
+export interface Conflicts {
+    case_id:        string;
+    conflict_hash:  string;
+    items:          [ItemElement, ...ItemElement[]];
+    kind:           ConflictSetKind;
+    resource:       Resource;
+    schema_version: number;
+}
+
+export interface ItemElement {
+    path:         string;
+    proposal_ids: [string, string, ...string[]];
+    reason:       string;
+}
+
+export type ConflictSetKind = "conflict_set";
+
+export type ChangeCaseStateKind = "change_case_state";
+
+export interface Lease {
+    acquired_at:           string;
+    approval_receipt_hash: string;
+    case_id:               string;
+    change_hash:           string;
+    expires_at:            string;
+    id:                    string;
+    kind:                  MutationLeaseKind;
+    lease_hash:            string;
+    resource:              Resource;
+    schema_version:        number;
+}
+
+export type MutationLeaseKind = "mutation_lease";
+
+export interface ChangeProposalElement {
+    artifact_id:                  string;
+    campaign_id:                  string;
+    capability_hash:              string;
+    case_id:                      string;
+    change:                       unknown[] | { [key: string]: unknown };
+    change_hash:                  string;
+    evidence_hashes:              [string, ...string[]];
+    id:                           string;
+    job_id:                       string;
+    kind:                         ChangeProposalKind;
+    node_id:                      string;
+    proposal_hash:                string;
+    replacement?:                 Replacement;
+    resource:                     Resource;
+    schema_version:               number;
+    source_campaign_aggregate_id: string;
+    source_campaign_replay_hash:  string;
+    source_result_aggregate_id:   string;
+    source_result_replay_hash:    string;
+    workflow_ref:                 string;
+}
+
+export type ChangeProposalKind = "change_proposal";
+
+export interface Replacement {
+    proposal_id: string;
+    reason:      ProposalReplacementReason;
+}
+
+export type ProposalReplacementReason = "rebase" | "resolver" | "human_implementation";
+
+export interface Resolution {
+    case_id:              string;
+    conflict_hash:        string;
+    id:                   string;
+    kind:                 ResolutionArtifactKind;
+    resolution_hash:      string;
+    resolved_change:      unknown[] | { [key: string]: unknown };
+    resolved_change_hash: string;
+    schema_version:       number;
+    source_proposal_ids:  [string, string, ...string[]];
+}
+
+export type ResolutionArtifactKind = "resolution_artifact";
+
+export type ChangeCaseStateStatus = "proposed" | "ready" | "conflicted" | "awaiting_resolution_approval" | "leased" | "applied" | "completed" | "blocked";
+
+export interface ChangeCaseEventPayload {
+    state: ChangeCaseStateClass;
+}
+
 export interface ContextTransitionEventPayload {
     bundle:                        Bundle;
     node_id:                       string;
@@ -600,12 +752,12 @@ export type CoreCompletedEventPayloadStatus = "completed" | "completed_no_action
 export interface NeedsContextEventPayload {
     blocker_fingerprint: string;
     node_id:             string;
-    reasons:             { [key: string]: Reason };
+    reasons:             { [key: string]: ReasonValue };
     requirements:        [string, ...string[]];
     workflow_ref:        string;
 }
 
-export type Reason = "unavailable" | "unusable";
+export type ReasonValue = "unavailable" | "unusable";
 
 export interface NodeCompletedEventPayload {
     completed_at:       string;

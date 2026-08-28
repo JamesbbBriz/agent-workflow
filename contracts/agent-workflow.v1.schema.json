@@ -299,6 +299,168 @@
         "approval_state": { "enum": ["not_required", "pending", "approved", "rejected", "stale"] }
       }
     },
+    "ResourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "resource_type", "resource_id", "generation", "baseline_revision", "baseline_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["resource_ref"] },
+        "schema_version": { "type": "integer", "enum": [2] },
+        "resource_type": { "$ref": "#/$defs/Identifier" },
+        "resource_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "generation": { "type": "integer", "minimum": 1 },
+        "baseline_revision": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "baseline_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "ProposalReplacement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proposal_id", "reason"],
+      "properties": {
+        "proposal_id": { "$ref": "#/$defs/Identifier" },
+        "reason": { "enum": ["rebase", "resolver", "human_implementation"] }
+      }
+    },
+    "ChangeProposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "case_id", "resource", "job_id", "campaign_id", "workflow_ref", "node_id", "source_campaign_aggregate_id", "source_campaign_replay_hash", "source_result_aggregate_id", "source_result_replay_hash", "artifact_id", "change", "change_hash", "capability_hash", "evidence_hashes", "proposal_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["change_proposal"] },
+        "schema_version": { "type": "integer", "enum": [2] },
+        "id": { "$ref": "#/$defs/Identifier" },
+        "case_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "resource": { "$ref": "#/$defs/ResourceRef" },
+        "job_id": { "$ref": "#/$defs/Identifier" },
+        "campaign_id": { "$ref": "#/$defs/Identifier" },
+        "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
+        "node_id": { "$ref": "#/$defs/Identifier" },
+        "source_campaign_aggregate_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "source_campaign_replay_hash": { "$ref": "#/$defs/SHA256" },
+        "source_result_aggregate_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "source_result_replay_hash": { "$ref": "#/$defs/SHA256" },
+        "artifact_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "change": { "type": ["object", "array"] },
+        "change_hash": { "$ref": "#/$defs/SHA256" },
+        "capability_hash": { "$ref": "#/$defs/SHA256" },
+        "evidence_hashes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/SHA256" } },
+        "replacement": { "$ref": "#/$defs/ProposalReplacement" },
+        "proposal_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "ConflictItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "proposal_ids", "reason"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "proposal_ids": { "type": "array", "minItems": 2, "uniqueItems": true, "items": { "$ref": "#/$defs/Identifier" } },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "ConflictSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "case_id", "resource", "items", "conflict_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["conflict_set"] },
+        "schema_version": { "type": "integer", "enum": [2] },
+        "case_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "resource": { "$ref": "#/$defs/ResourceRef" },
+        "items": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ConflictItem" } },
+        "conflict_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "ResolutionArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "case_id", "conflict_hash", "resolved_change", "resolved_change_hash", "source_proposal_ids", "resolution_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["resolution_artifact"] },
+        "schema_version": { "type": "integer", "enum": [2] },
+        "id": { "$ref": "#/$defs/Identifier" },
+        "case_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "conflict_hash": { "$ref": "#/$defs/SHA256" },
+        "resolved_change": { "type": ["object", "array"] },
+        "resolved_change_hash": { "$ref": "#/$defs/SHA256" },
+        "source_proposal_ids": { "type": "array", "minItems": 2, "uniqueItems": true, "items": { "$ref": "#/$defs/Identifier" } },
+        "resolution_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "MutationLease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "case_id", "resource", "change_hash", "approval_receipt_hash", "acquired_at", "expires_at", "lease_hash"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["mutation_lease"] },
+        "schema_version": { "type": "integer", "enum": [2] },
+        "id": { "$ref": "#/$defs/Identifier" },
+        "case_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "resource": { "$ref": "#/$defs/ResourceRef" },
+        "change_hash": { "$ref": "#/$defs/SHA256" },
+        "approval_receipt_hash": { "$ref": "#/$defs/SHA256" },
+        "acquired_at": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "lease_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "MutationEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "case_id", "lease_hash", "resource", "change_hash", "observed_hash", "evidence_hash"],
+      "properties": {
+        "kind": { "enum": ["mutation_apply_evidence", "mutation_readback_evidence"] },
+        "schema_version": { "type": "integer", "enum": [2] },
+        "case_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "lease_hash": { "$ref": "#/$defs/SHA256" },
+        "resource": { "$ref": "#/$defs/ResourceRef" },
+        "change_hash": { "$ref": "#/$defs/SHA256" },
+        "observed_hash": { "$ref": "#/$defs/SHA256" },
+        "evidence_hash": { "$ref": "#/$defs/SHA256" }
+      }
+    },
+    "ChangeCaseState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "resource", "status", "proposals", "updated_at"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["change_case_state"] },
+        "schema_version": { "type": "integer", "enum": [2] },
+        "id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "resource": { "$ref": "#/$defs/ResourceRef" },
+        "status": { "enum": ["proposed", "ready", "conflicted", "awaiting_resolution_approval", "leased", "applied", "completed", "blocked"] },
+        "proposals": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ChangeProposal" } },
+        "merged_change": { "type": ["object", "array"] },
+        "merged_change_hash": { "$ref": "#/$defs/SHA256" },
+        "conflicts": { "$ref": "#/$defs/ConflictSet" },
+        "resolution": { "$ref": "#/$defs/ResolutionArtifact" },
+        "resolution_approval_hash": { "$ref": "#/$defs/SHA256" },
+        "lease": { "$ref": "#/$defs/MutationLease" },
+        "apply_evidence": { "$ref": "#/$defs/MutationEvidence" },
+        "readback_evidence": { "$ref": "#/$defs/MutationEvidence" },
+        "blocker_code": { "enum": ["resource_generation_advanced", "resolution_approval_required", "mutation_lease_active"] },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ChangeCaseEventPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": { "state": { "$ref": "#/$defs/ChangeCaseState" } }
+    },
+    "ChangeCaseCanvas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "generated_at", "state", "receipts"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["change_case_canvas"] },
+        "schema_version": { "type": "integer", "enum": [2] },
+        "generated_at": { "type": "string", "format": "date-time" },
+        "state": { "$ref": "#/$defs/ChangeCaseState" },
+        "receipts": { "type": "array", "items": { "$ref": "#/$defs/CanvasReceiptLink" } }
+      }
+    },
     "CampaignAdmissionEventPayload": {
       "type": "object",
       "additionalProperties": false,
@@ -448,9 +610,9 @@
       "required": ["kind", "schema_version", "id", "receipt_type", "aggregate_id", "aggregate_version", "occurred_at", "input_hashes", "output_hashes", "previous_receipt_hash", "receipt_hash"],
       "properties": {
         "kind": { "type": "string", "enum": ["receipt"] },
-        "schema_version": { "type": "integer", "enum": [1, 2, 3] },
+        "schema_version": { "type": "integer", "enum": [1, 2, 3, 4] },
         "id": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal"] },
+        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal", "change_proposed", "change_merged", "conflict_detected", "resolution_proposed", "resolution_approved", "mutation_lease_acquired", "mutation_applied", "mutation_readback", "resource_generation_advanced"] },
         "aggregate_id": { "type": "string", "minLength": 1, "maxLength": 160 },
         "aggregate_version": { "type": "integer", "minimum": 1 },
         "occurred_at": { "type": "string", "format": "date-time" },
@@ -489,6 +651,16 @@
             "properties": {
               "receipt_type": { "const": "campaign_admission" },
               "payload": { "$ref": "#/$defs/CampaignAdmissionEventPayload" }
+            },
+            "required": ["payload"]
+          }
+        },
+        {
+          "if": { "properties": { "schema_version": { "const": 4 } }, "required": ["schema_version"] },
+          "then": {
+            "properties": {
+              "receipt_type": { "enum": ["change_proposed", "change_merged", "conflict_detected", "resolution_proposed", "resolution_approved", "mutation_lease_acquired", "mutation_applied", "mutation_readback", "resource_generation_advanced"] },
+              "payload": { "$ref": "#/$defs/ChangeCaseEventPayload" }
             },
             "required": ["payload"]
           }
@@ -542,7 +714,7 @@
       "required": ["id", "receipt_type", "aggregate_version", "occurred_at", "input_hashes", "output_hashes", "previous_receipt_hash", "receipt_hash"],
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal"] },
+        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal", "change_proposed", "change_merged", "conflict_detected", "resolution_proposed", "resolution_approved", "mutation_lease_acquired", "mutation_applied", "mutation_readback", "resource_generation_advanced"] },
         "aggregate_version": { "type": "integer", "minimum": 1 },
         "occurred_at": { "type": "string", "format": "date-time" },
         "input_hashes": { "type": "array", "items": { "$ref": "#/$defs/SHA256" }, "uniqueItems": true },
@@ -848,7 +1020,7 @@
       "required": ["id", "receipt_type", "receipt_hash", "occurred_at"],
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal"] },
+        "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal", "change_proposed", "change_merged", "conflict_detected", "resolution_proposed", "resolution_approved", "mutation_lease_acquired", "mutation_applied", "mutation_readback", "resource_generation_advanced"] },
         "receipt_hash": { "$ref": "#/$defs/SHA256" },
         "occurred_at": { "type": "string", "format": "date-time" }
       }
