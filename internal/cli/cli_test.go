@@ -33,7 +33,7 @@ func TestValidateReportsStableWorkflowIdentity(t *testing.T) {
 	if !response.OK || response.WorkflowRef != "research-review@1" {
 		t.Fatalf("unexpected response: %+v", response)
 	}
-	if response.Hash != "sha256:e42a58fdf8f0d46dcfc303db89f6f70ae8a8d93b5c938bac2f2b0ddb4af79123" {
+	if response.Hash != "sha256:f9a457a90150f68644d041aa158c9ad8589bf70d7ad75ac8ffabecffd103bf3a" {
 		t.Fatalf("unexpected workflow hash: %s", response.Hash)
 	}
 }

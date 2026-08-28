@@ -72,6 +72,18 @@ type AgentWorkflowContractCatalog struct {
 	// CampaignDefinition corresponds to the JSON schema field "campaign_definition".
 	CampaignDefinition *CampaignDefinition `json:"campaign_definition,omitempty,omitzero"`
 
+	// CampaignDrivePreview corresponds to the JSON schema field
+	// "campaign_drive_preview".
+	CampaignDrivePreview *CampaignDrivePreview `json:"campaign_drive_preview,omitempty,omitzero"`
+
+	// CampaignDriveReceipt corresponds to the JSON schema field
+	// "campaign_drive_receipt".
+	CampaignDriveReceipt *CampaignDriveReceipt `json:"campaign_drive_receipt,omitempty,omitzero"`
+
+	// CampaignExecutionState corresponds to the JSON schema field
+	// "campaign_execution_state".
+	CampaignExecutionState *CampaignExecutionState `json:"campaign_execution_state,omitempty,omitzero"`
+
 	// CanvasSnapshot corresponds to the JSON schema field "canvas_snapshot".
 	CanvasSnapshot *CanvasSnapshot `json:"canvas_snapshot,omitempty,omitzero"`
 
@@ -316,6 +328,172 @@ const CampaignDefinitionKindCampaignDefinition CampaignDefinitionKind = "campaig
 
 type CampaignDefinitionSchemaVersion int
 
+type CampaignDrivePreview struct {
+	// Kind corresponds to the JSON schema field "kind".
+	Kind CampaignDrivePreviewKind `json:"kind"`
+
+	// NextAction corresponds to the JSON schema field "next_action".
+	NextAction CampaignDrivePreviewNextAction `json:"next_action"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion CampaignDrivePreviewSchemaVersion `json:"schema_version"`
+
+	// State corresponds to the JSON schema field "state".
+	State CampaignExecutionState `json:"state"`
+}
+
+type CampaignDrivePreviewKind string
+
+const CampaignDrivePreviewKindCampaignDrivePreview CampaignDrivePreviewKind = "campaign_drive_preview"
+
+type CampaignDrivePreviewNextAction string
+
+const CampaignDrivePreviewNextActionBlocked CampaignDrivePreviewNextAction = "blocked"
+const CampaignDrivePreviewNextActionComplete CampaignDrivePreviewNextAction = "complete"
+const CampaignDrivePreviewNextActionRunNode CampaignDrivePreviewNextAction = "run_node"
+const CampaignDrivePreviewNextActionWait CampaignDrivePreviewNextAction = "wait"
+
+type CampaignDrivePreviewSchemaVersion int
+
+type CampaignDriveReceipt struct {
+	// CampaignReplay corresponds to the JSON schema field "campaign_replay".
+	CampaignReplay *ReplayBundle `json:"campaign_replay,omitempty,omitzero"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind CampaignDriveReceiptKind `json:"kind"`
+
+	// NodeReplay corresponds to the JSON schema field "node_replay".
+	NodeReplay *ReplayBundle `json:"node_replay,omitempty,omitzero"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion CampaignDriveReceiptSchemaVersion `json:"schema_version"`
+
+	// State corresponds to the JSON schema field "state".
+	State CampaignExecutionState `json:"state"`
+
+	// Transitions corresponds to the JSON schema field "transitions".
+	Transitions int `json:"transitions"`
+}
+
+type CampaignDriveReceiptKind string
+
+const CampaignDriveReceiptKindCampaignDriveReceipt CampaignDriveReceiptKind = "campaign_drive_receipt"
+
+type CampaignDriveReceiptSchemaVersion int
+
+type CampaignExecutionState struct {
+	// AggregateId corresponds to the JSON schema field "aggregate_id".
+	AggregateId string `json:"aggregate_id"`
+
+	// BlockerCode corresponds to the JSON schema field "blocker_code".
+	BlockerCode *Identifier `json:"blocker_code,omitempty,omitzero"`
+
+	// CampaignHash corresponds to the JSON schema field "campaign_hash".
+	CampaignHash SHA256 `json:"campaign_hash"`
+
+	// CampaignId corresponds to the JSON schema field "campaign_id".
+	CampaignId Identifier `json:"campaign_id"`
+
+	// JobHash corresponds to the JSON schema field "job_hash".
+	JobHash SHA256 `json:"job_hash"`
+
+	// JobId corresponds to the JSON schema field "job_id".
+	JobId Identifier `json:"job_id"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind CampaignExecutionStateKind `json:"kind"`
+
+	// NextNodeId corresponds to the JSON schema field "next_node_id".
+	NextNodeId *Identifier `json:"next_node_id,omitempty,omitzero"`
+
+	// Nodes corresponds to the JSON schema field "nodes".
+	Nodes []CampaignNodeExecution `json:"nodes"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion CampaignExecutionStateSchemaVersion `json:"schema_version"`
+
+	// StartedAt corresponds to the JSON schema field "started_at".
+	StartedAt time.Time `json:"started_at"`
+
+	// Status corresponds to the JSON schema field "status".
+	Status CampaignExecutionStateStatus `json:"status"`
+
+	// UpdatedAt corresponds to the JSON schema field "updated_at".
+	UpdatedAt time.Time `json:"updated_at"`
+
+	// Usage corresponds to the JSON schema field "usage".
+	Usage CampaignExecutionUsage `json:"usage"`
+
+	// WorkflowHash corresponds to the JSON schema field "workflow_hash".
+	WorkflowHash SHA256 `json:"workflow_hash"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
+}
+
+type CampaignExecutionStateKind string
+
+const CampaignExecutionStateKindCampaignExecutionState CampaignExecutionStateKind = "campaign_execution_state"
+
+type CampaignExecutionStateSchemaVersion int
+
+type CampaignExecutionStateStatus string
+
+const CampaignExecutionStateStatusAdmitted CampaignExecutionStateStatus = "admitted"
+const CampaignExecutionStateStatusBlocked CampaignExecutionStateStatus = "blocked"
+const CampaignExecutionStateStatusCompleted CampaignExecutionStateStatus = "completed"
+const CampaignExecutionStateStatusRunning CampaignExecutionStateStatus = "running"
+const CampaignExecutionStateStatusTerminal CampaignExecutionStateStatus = "terminal"
+
+type CampaignExecutionUsage struct {
+	// Actions corresponds to the JSON schema field "actions".
+	Actions int `json:"actions"`
+
+	// Attempts corresponds to the JSON schema field "attempts".
+	Attempts int `json:"attempts"`
+
+	// Candidates corresponds to the JSON schema field "candidates".
+	Candidates int `json:"candidates"`
+
+	// DurationSeconds corresponds to the JSON schema field "duration_seconds".
+	DurationSeconds int `json:"duration_seconds"`
+}
+
+type CampaignNodeExecution struct {
+	// BlockerCode corresponds to the JSON schema field "blocker_code".
+	BlockerCode *Identifier `json:"blocker_code,omitempty,omitzero"`
+
+	// CompletedAt corresponds to the JSON schema field "completed_at".
+	CompletedAt *time.Time `json:"completed_at,omitempty,omitzero"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// ResultReplayHash corresponds to the JSON schema field "result_replay_hash".
+	ResultReplayHash *SHA256 `json:"result_replay_hash,omitempty,omitzero"`
+
+	// StartedAt corresponds to the JSON schema field "started_at".
+	StartedAt *time.Time `json:"started_at,omitempty,omitzero"`
+
+	// Status corresponds to the JSON schema field "status".
+	Status CampaignNodeExecutionStatus `json:"status"`
+
+	// Usage corresponds to the JSON schema field "usage".
+	Usage CampaignExecutionUsage `json:"usage"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
+}
+
+type CampaignNodeExecutionStatus string
+
+const CampaignNodeExecutionStatusBlocked CampaignNodeExecutionStatus = "blocked"
+const CampaignNodeExecutionStatusBudgetExhausted CampaignNodeExecutionStatus = "budget_exhausted"
+const CampaignNodeExecutionStatusCompleted CampaignNodeExecutionStatus = "completed"
+const CampaignNodeExecutionStatusCompletedNoAction CampaignNodeExecutionStatus = "completed_no_action"
+const CampaignNodeExecutionStatusPending CampaignNodeExecutionStatus = "pending"
+const CampaignNodeExecutionStatusRunning CampaignNodeExecutionStatus = "running"
+
 type CanvasContextPort struct {
 	// AllowPartial corresponds to the JSON schema field "allow_partial".
 	AllowPartial bool `json:"allow_partial"`
@@ -478,8 +656,12 @@ type CanvasReceiptLinkReceiptType string
 
 const CanvasReceiptLinkReceiptTypeAdmission CanvasReceiptLinkReceiptType = "admission"
 const CanvasReceiptLinkReceiptTypeApproval CanvasReceiptLinkReceiptType = "approval"
+const CanvasReceiptLinkReceiptTypeAttemptReserved CanvasReceiptLinkReceiptType = "attempt_reserved"
+const CanvasReceiptLinkReceiptTypeBudgetExhausted CanvasReceiptLinkReceiptType = "budget_exhausted"
+const CanvasReceiptLinkReceiptTypeCampaignAdmission CanvasReceiptLinkReceiptType = "campaign_admission"
 const CanvasReceiptLinkReceiptTypeCompile CanvasReceiptLinkReceiptType = "compile"
 const CanvasReceiptLinkReceiptTypeInvocation CanvasReceiptLinkReceiptType = "invocation"
+const CanvasReceiptLinkReceiptTypeNodeCompleted CanvasReceiptLinkReceiptType = "node_completed"
 const CanvasReceiptLinkReceiptTypePackEdition CanvasReceiptLinkReceiptType = "pack_edition"
 const CanvasReceiptLinkReceiptTypeProviderExecution CanvasReceiptLinkReceiptType = "provider_execution"
 const CanvasReceiptLinkReceiptTypeResult CanvasReceiptLinkReceiptType = "result"
@@ -966,8 +1148,12 @@ type ReceiptReceiptType string
 
 const ReceiptReceiptTypeAdmission ReceiptReceiptType = "admission"
 const ReceiptReceiptTypeApproval ReceiptReceiptType = "approval"
+const ReceiptReceiptTypeAttemptReserved ReceiptReceiptType = "attempt_reserved"
+const ReceiptReceiptTypeBudgetExhausted ReceiptReceiptType = "budget_exhausted"
+const ReceiptReceiptTypeCampaignAdmission ReceiptReceiptType = "campaign_admission"
 const ReceiptReceiptTypeCompile ReceiptReceiptType = "compile"
 const ReceiptReceiptTypeInvocation ReceiptReceiptType = "invocation"
+const ReceiptReceiptTypeNodeCompleted ReceiptReceiptType = "node_completed"
 const ReceiptReceiptTypePackEdition ReceiptReceiptType = "pack_edition"
 const ReceiptReceiptTypeProviderExecution ReceiptReceiptType = "provider_execution"
 const ReceiptReceiptTypeResult ReceiptReceiptType = "result"
@@ -1028,6 +1214,9 @@ type Slot struct {
 
 	// ContentSchema corresponds to the JSON schema field "content_schema".
 	ContentSchema *WorkflowRef `json:"content_schema,omitempty,omitzero"`
+
+	// CountsAsCandidates corresponds to the JSON schema field "counts_as_candidates".
+	CountsAsCandidates bool `json:"counts_as_candidates,omitempty,omitzero"`
 
 	// Id corresponds to the JSON schema field "id".
 	Id Identifier `json:"id"`

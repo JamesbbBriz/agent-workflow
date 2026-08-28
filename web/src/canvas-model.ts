@@ -7,7 +7,7 @@ import type {
   ContextPortElement,
   ExecutionElement,
   Intent,
-  NodeElement,
+  DefinitionElement as NodeElement,
 } from "./generated/agent-workflow.v1";
 
 export type CanvasMode = "definition" | "runtime";

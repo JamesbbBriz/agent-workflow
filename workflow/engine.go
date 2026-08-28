@@ -59,6 +59,9 @@ type RunRequest struct {
 	Campaign contractsv1.CampaignDefinition
 	Workflow contractsv1.WorkflowDefinition
 	NodeID   string
+	// BudgetOverride may only tighten the admitted Node budget. CampaignRuntime
+	// uses it to enforce the remaining aggregate allowance before result acceptance.
+	BudgetOverride *contractsv1.Budget
 }
 
 type RunResult struct {
@@ -94,7 +97,7 @@ func NewEngine(registry *Registry, capabilities CapabilityCatalog, outputs Outpu
 	return &Engine{registry: registry, capabilities: capabilityCopy, outputs: outputCopy, provider: provider, ledger: ledger}
 }
 
-func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, error) {
+func (e *Engine) runAgentNode(ctx context.Context, request RunRequest) (RunResult, error) {
 	if e == nil || e.provider == nil || e.ledger == nil {
 		return RunResult{}, errors.New("provider and ledger are required")
 	}
@@ -143,6 +146,13 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 	}
 	if node.Definition.Kind != contractsv1.NodeDefinitionKindAgent {
 		return RunResult{}, fmt.Errorf("node %q is not an agent node", request.NodeID)
+	}
+	if request.BudgetOverride != nil {
+		definition, err := tightenNodeBudget(node.Definition, *request.BudgetOverride)
+		if err != nil {
+			return RunResult{}, err
+		}
+		node.Definition = definition
 	}
 	if err := validateOutputCatalog(node.Definition, e.outputs); err != nil {
 		return RunResult{}, err
@@ -267,7 +277,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 	}
 	if !ready {
 		if time.Now().Before(invocation.Deadline) {
-			return RunResult{}, errors.New("provider result is not ready")
+			return RunResult{}, ErrProviderNotReady
 		}
 		cancelContext, cancel := context.WithTimeout(ctx, 5*time.Second)
 		_ = e.provider.Cancel(cancelContext, invocation.IdempotencyKey)
@@ -339,6 +349,7 @@ func validateProviderResult(result ProviderResult, invocation Invocation) error 
 }
 
 var ErrProviderDeadline = errors.New("provider result unavailable after node deadline")
+var ErrProviderNotReady = errors.New("provider result is not ready")
 
 func (e *Engine) appendDeadlineTerminal(aggregateID string, occurredAt time.Time, invocation Invocation, replay contractsv1.ReplayBundle) error {
 	previous := replay.Receipts[len(replay.Receipts)-1]
@@ -745,7 +756,58 @@ func validateArtifacts(artifacts []contractsv1.ActionArtifact, invocation Invoca
 	if len(counts) > 0 {
 		return errors.New("provider returned an undeclared artifact type")
 	}
+	if len(artifacts) > invocation.Budget.MaxActions {
+		return budgetExceededError{code: "action-budget-exhausted"}
+	}
+	if candidates := artifactCandidateCount(artifacts, invocation.Node.OutputSlots); candidates > invocation.Budget.MaxCandidates {
+		return budgetExceededError{code: "candidate-budget-exhausted"}
+	}
 	return nil
+}
+
+func artifactCandidateCount(artifacts []contractsv1.ActionArtifact, slots []contractsv1.Slot) int {
+	candidateTypes := make(map[contractsv1.Identifier]bool, len(slots))
+	for _, slot := range slots {
+		if slot.CountsAsCandidates {
+			candidateTypes[slot.ArtifactType] = true
+		}
+	}
+	total := 0
+	for _, artifact := range artifacts {
+		if !candidateTypes[artifact.ArtifactType] {
+			continue
+		}
+		value := reflect.ValueOf(artifact.Content)
+		if value.IsValid() && (value.Kind() == reflect.Array || value.Kind() == reflect.Slice) {
+			total += value.Len()
+			continue
+		}
+		total++
+	}
+	return total
+}
+
+func tightenNodeBudget(node contractsv1.NodeDefinition, remaining contractsv1.Budget) (contractsv1.NodeDefinition, error) {
+	originalBudget := node.Budget
+	if remaining.MaxAttempts < 1 || remaining.MaxAttempts > originalBudget.MaxAttempts || remaining.MaxActions < 0 || remaining.MaxActions > originalBudget.MaxActions || remaining.MaxCandidates < 0 || remaining.MaxCandidates > originalBudget.MaxCandidates {
+		return contractsv1.NodeDefinition{}, errors.New("budget override may only tighten the admitted Node budget")
+	}
+	var admittedDuration int
+	if node.DeadlineSeconds != nil {
+		admittedDuration = *node.DeadlineSeconds
+	} else if originalBudget.MaxDurationSeconds != nil {
+		admittedDuration = *originalBudget.MaxDurationSeconds
+	} else {
+		return contractsv1.NodeDefinition{}, errors.New("admitted Node duration budget is missing")
+	}
+	duration := admittedDuration
+	if remaining.MaxDurationSeconds != nil && *remaining.MaxDurationSeconds < duration {
+		duration = *remaining.MaxDurationSeconds
+	}
+	node.Budget = remaining
+	node.DeadlineSeconds = &duration
+	node.Budget.MaxDurationSeconds = &duration
+	return node, nil
 }
 
 func preExecutionReceipts(aggregateID string, occurredAt time.Time, compileReceipt contractsv1.Receipt, invocation Invocation) ([]contractsv1.Receipt, error) {

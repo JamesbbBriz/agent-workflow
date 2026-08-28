@@ -96,7 +96,7 @@ func TestProviderResultRecoveryConvergesAfterLedgerFailure(t *testing.T) {
 	definition.Nodes[0].DeadlineSeconds = &deadline
 	request := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
 	admit(t, canonical, registry, request)
-	ledger := &failOnceLedger{Ledger: canonical, failAt: 6}
+	ledger := &failOnceLedger{Ledger: canonical, failType: contractsv1.ReceiptReceiptTypeResult}
 	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger)
 	if _, err := engine.RunNode(context.Background(), request); err == nil {
 		t.Fatal("injected ledger failure was ignored")
@@ -180,7 +180,8 @@ func TestProviderResultCompletedAfterDeadlineIsRejected(t *testing.T) {
 type failOnceLedger struct {
 	workflow.Ledger
 	appendCount int
-	failAt      int
+	failType    contractsv1.ReceiptReceiptType
+	failed      bool
 }
 
 type pendingProvider struct{ cancelled int }
@@ -236,7 +237,8 @@ func executionIDForTest(t *testing.T, request workflow.RunRequest) string {
 
 func (l *failOnceLedger) Append(receipt contractsv1.Receipt) error {
 	l.appendCount++
-	if l.appendCount == l.failAt {
+	if !l.failed && receipt.ReceiptType == l.failType {
+		l.failed = true
 		return errors.New("injected append failure")
 	}
 	return l.Ledger.Append(receipt)

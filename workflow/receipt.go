@@ -11,6 +11,10 @@ import (
 )
 
 func sealReceipt(aggregateID string, version int, receiptType contractsv1.ReceiptReceiptType, occurredAt time.Time, previous *contractsv1.SHA256, inputs, outputs []contractsv1.SHA256, payload map[string]any) (contractsv1.Receipt, error) {
+	return sealReceiptVersion(1, aggregateID, version, receiptType, occurredAt, previous, inputs, outputs, payload)
+}
+
+func sealReceiptVersion(schemaVersion int, aggregateID string, version int, receiptType contractsv1.ReceiptReceiptType, occurredAt time.Time, previous *contractsv1.SHA256, inputs, outputs []contractsv1.SHA256, payload map[string]any) (contractsv1.Receipt, error) {
 	if inputs == nil {
 		inputs = []contractsv1.SHA256{}
 	}
@@ -26,7 +30,7 @@ func sealReceipt(aggregateID string, version int, receiptType contractsv1.Receip
 		return contractsv1.Receipt{}, err
 	}
 	receipt := contractsv1.Receipt{
-		Kind: contractsv1.ReceiptKindReceipt, SchemaVersion: 1,
+		Kind: contractsv1.ReceiptKindReceipt, SchemaVersion: contractsv1.ReceiptSchemaVersion(schemaVersion),
 		Id: shortID("receipt-", identityHash), AggregateId: aggregateID, AggregateVersion: version,
 		OccurredAt: occurredAt.UTC(), ReceiptType: receiptType, InputHashes: inputs, OutputHashes: outputs,
 		Payload: payload,
