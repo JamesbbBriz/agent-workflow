@@ -28,8 +28,9 @@ Upstream CLIs must be installed in `/usr/local/bin`, `/usr/bin`, or `/bin`.
 Those are the only executable roots exposed by the Linux Bubblewrap profile, so
 `provider doctor` deliberately does not report a user-local PATH install as
 ready. Codex, Claude Code, and Pi receive their native read-only tool flags.
-Hermes receives the `file` toolset inside the staged filesystem, where evidence
-is read-only and only `output/result` is writable.
+Hermes receives only its read-only `vision` toolset; structured Context evidence
+is already embedded in the invocation prompt, so its `file` toolset is rejected
+because it also grants write and patch tools.
 
 OpenClaw additionally requires a dedicated agent entry in
 `input/providers/<config_ref>.json`. The entry must use the admitted

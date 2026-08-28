@@ -336,13 +336,13 @@ func upstreamArgs(provider contractsv1.ProviderID, profile contractsv1.ExecutorP
 	case contractsv1.ProviderIDCodex:
 		return []string{"exec", "--model", model, "--sandbox", "read-only", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", prompt}, nil
 	case contractsv1.ProviderIDClaudeCode:
-		return []string{"-p", "--bare", "--disable-slash-commands", "--output-format", "text", "--model", model, "--no-session-persistence", "--allowedTools", "Read,Glob,Grep", prompt}, nil
+		return []string{"-p", "--bare", "--disable-slash-commands", "--output-format", "text", "--model", model, "--no-session-persistence", "--tools", "Read,Glob,Grep", "--allowedTools", "Read,Glob,Grep", prompt}, nil
 	case contractsv1.ProviderIDPi:
 		return []string{"-p", "--mode", "text", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--tools", "read,grep,find,ls", "--model", model, prompt}, nil
 	case contractsv1.ProviderIDOpenclaw:
-		return []string{"agent", "--agent", profile.ConfigRef, "--json", "--model", model, "--session-key", runRef, "--message", prompt}, nil
+		return []string{"agent", "--local", "--agent", profile.ConfigRef, "--json", "--model", model, "--session-key", runRef, "--message", prompt}, nil
 	case contractsv1.ProviderIDHermesAgent:
-		return []string{"-z", prompt, "--ignore-user-config", "--ignore-rules", "--toolsets", "file", "--model", model}, nil
+		return []string{"-z", prompt, "--ignore-user-config", "--ignore-rules", "--toolsets", "vision", "--model", model}, nil
 	default:
 		return nil, errors.New("unknown provider")
 	}

@@ -21,10 +21,10 @@ func TestBundledBridgesTranslateTheSameInvocation(t *testing.T) {
 		excludes []string
 	}{
 		{contractsv1.ProviderIDCodex, "exec", []string{"--sandbox\nread-only\n", "--ephemeral\n", "--ignore-user-config\n", "--ignore-rules\n"}, nil},
-		{contractsv1.ProviderIDClaudeCode, "-p", []string{"--bare\n", "--allowedTools\nRead,Glob,Grep\n"}, nil},
+		{contractsv1.ProviderIDClaudeCode, "-p", []string{"--bare\n", "--tools\nRead,Glob,Grep\n", "--allowedTools\nRead,Glob,Grep\n"}, nil},
 		{contractsv1.ProviderIDPi, "-p", []string{"--no-extensions\n", "--no-skills\n", "--tools\nread,grep,find,ls\n"}, nil},
-		{contractsv1.ProviderIDOpenclaw, "agent", []string{"--agent\ntest\n"}, []string{"--local\n"}},
-		{contractsv1.ProviderIDHermesAgent, "-z", []string{"--toolsets\nfile\n", "--ignore-user-config\n", "--ignore-rules\n"}, []string{"--safe-mode\n"}},
+		{contractsv1.ProviderIDOpenclaw, "agent", []string{"--local\n", "--agent\ntest\n"}, nil},
+		{contractsv1.ProviderIDHermesAgent, "-z", []string{"--toolsets\nvision\n", "--ignore-user-config\n", "--ignore-rules\n"}, []string{"--safe-mode\n", "--toolsets\nfile\n"}},
 	}
 	for _, test := range tests {
 		t.Run(string(test.id), func(t *testing.T) {

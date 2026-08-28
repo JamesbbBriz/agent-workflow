@@ -85,9 +85,10 @@ The bundled profiles initially support one exact Node authority:
 `read-evidence`. The bridge rejects any different Capability Manifest or tool
 allowlist, then maps that authority to each CLI's native read-only flags.
 OpenClaw additionally selects a dedicated staged agent profile whose workspace
-and tool allowlist are verified before launch. Hermes runs without user config
-or durable session state; its file toolset is contained by the read-only staged
-input mount and single writable result file.
+and tool allowlist are verified before embedded local launch. Hermes runs
+without user config or durable session state and receives only its read-only
+vision toolset; Context evidence is embedded in the invocation rather than
+granting Hermes' write-capable file toolset.
 
 Readiness and execution resolve upstream CLIs from the same system roots exposed
 inside Bubblewrap (`/usr/local/bin`, `/usr/bin`, and `/bin`) and include the

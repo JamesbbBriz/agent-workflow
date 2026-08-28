@@ -24,9 +24,6 @@ import (
 
 const providerProtocolMaxLine = 1 << 20
 
-const providerAttemptReservationFile = ".agent-workflow-attempt.json"
-const providerAcceptedResultFile = ".agent-workflow-result.json"
-
 type providerAttemptReservation struct {
 	IdempotencyKey string             `json:"idempotency_key"`
 	InvocationHash contractsv1.SHA256 `json:"invocation_hash"`
@@ -40,6 +37,7 @@ type AgentRunnerProvider struct {
 	runs       map[string]*agentRunnerRun
 	starting   map[string]bool
 	results    map[string]ProviderResult
+	active     string
 }
 
 type agentRunnerRun struct {
@@ -128,7 +126,12 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 		p.mu.Unlock()
 		return nil
 	}
+	if p.active != "" {
+		p.mu.Unlock()
+		return errors.New("provider staged root already has an active attempt")
+	}
 	p.starting[invocation.IdempotencyKey] = true
+	p.active = invocation.IdempotencyKey
 	p.mu.Unlock()
 	started := false
 	defer func() {
@@ -137,6 +140,9 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 		}
 		p.mu.Lock()
 		delete(p.starting, invocation.IdempotencyKey)
+		if p.active == invocation.IdempotencyKey {
+			p.active = ""
+		}
 		p.mu.Unlock()
 	}()
 	reserved, recovered, err := p.reserveAttempt(invocation)
@@ -146,6 +152,7 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 	if recovered != nil {
 		p.mu.Lock()
 		delete(p.starting, invocation.IdempotencyKey)
+		p.active = ""
 		p.results[invocation.IdempotencyKey] = *recovered
 		started = true
 		p.mu.Unlock()
@@ -154,7 +161,7 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 	removeReservation := reserved
 	defer func() {
 		if removeReservation {
-			_ = os.Remove(p.attemptReservationPath())
+			_ = os.Remove(p.attemptReservationPath(invocation.IdempotencyKey))
 		}
 	}()
 	if err := p.sandbox.verifyInputs(); err != nil {
@@ -205,8 +212,13 @@ func (p *AgentRunnerProvider) Start(ctx context.Context, invocation Invocation) 
 	return nil
 }
 
-func (p *AgentRunnerProvider) attemptReservationPath() string {
-	return filepath.Join(p.sandbox.config.StagedRoot, "output", providerAttemptReservationFile)
+func (p *AgentRunnerProvider) attemptPath(kind, key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return filepath.Join(p.sandbox.config.StagedRoot, "output", fmt.Sprintf(".agent-workflow-%s-%x.json", kind, sum))
+}
+
+func (p *AgentRunnerProvider) attemptReservationPath(key string) string {
+	return p.attemptPath("attempt", key)
 }
 
 func (p *AgentRunnerProvider) reserveAttempt(invocation Invocation) (bool, *ProviderResult, error) {
@@ -215,7 +227,7 @@ func (p *AgentRunnerProvider) reserveAttempt(invocation Invocation) (bool, *Prov
 		return false, nil, err
 	}
 	want := providerAttemptReservation{IdempotencyKey: invocation.IdempotencyKey, InvocationHash: contractsv1.SHA256(hash)}
-	path := p.attemptReservationPath()
+	path := p.attemptReservationPath(invocation.IdempotencyKey)
 	body, err := json.Marshal(want)
 	if err != nil {
 		return false, nil, err
@@ -262,14 +274,14 @@ func (p *AgentRunnerProvider) reserveAttempt(invocation Invocation) (bool, *Prov
 	if json.Unmarshal(body, &existing) != nil || existing != want {
 		return false, nil, errors.New("provider attempt reservation does not match the invocation")
 	}
-	resultBody, err := os.ReadFile(filepath.Join(p.sandbox.config.StagedRoot, "output", providerAcceptedResultFile))
+	resultBody, err := os.ReadFile(p.attemptPath("result", invocation.IdempotencyKey))
 	if err == nil && len(resultBody) > 0 {
 		var result ProviderResult
 		decoder := json.NewDecoder(bytes.NewReader(resultBody))
 		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		if decoder.Decode(&result) == nil && ensureJSONEOF(decoder) == nil && result.IdempotencyKey == invocation.IdempotencyKey && result.Observation != nil && result.Observation.OutputHash != nil {
-			_, rawHash, readErr := readBoundedResult(filepath.Join(p.sandbox.config.StagedRoot, "output", "result"), int64(p.sandbox.config.MaxOutputBytes))
+			_, rawHash, readErr := readBoundedResult(p.attemptPath("output", invocation.IdempotencyKey), int64(p.sandbox.config.MaxOutputBytes))
 			if readErr == nil && rawHash == *result.Observation.OutputHash {
 				return false, &result, nil
 			}
@@ -384,9 +396,11 @@ func (p *AgentRunnerProvider) Poll(ctx context.Context, key string) (ProviderRes
 	case contractsv1.ProviderObservationStatusQueued, contractsv1.ProviderObservationStatusRunning:
 		return ProviderResult{}, false, nil
 	case contractsv1.ProviderObservationStatusFailed:
+		p.clearActive(key)
 		return ProviderResult{}, false, run.fail(errors.New("provider run failed"))
 	case contractsv1.ProviderObservationStatusCancelled:
 		run.terminal = true
+		p.clearActive(key)
 		return ProviderResult{}, false, nil
 	case contractsv1.ProviderObservationStatusSucceeded:
 		result, err := p.acceptResult(key, run)
@@ -396,11 +410,22 @@ func (p *AgentRunnerProvider) Poll(ctx context.Context, key string) (ProviderRes
 		run.terminal = true
 		p.mu.Lock()
 		p.results[key] = result
+		if p.active == key {
+			p.active = ""
+		}
 		p.mu.Unlock()
 		return result, true, nil
 	default:
 		return ProviderResult{}, false, run.fail(errors.New("unknown provider terminal state"))
 	}
+}
+
+func (p *AgentRunnerProvider) clearActive(key string) {
+	p.mu.Lock()
+	if p.active == key {
+		p.active = ""
+	}
+	p.mu.Unlock()
 }
 
 func (p *AgentRunnerProvider) acceptResult(key string, run *agentRunnerRun) (ProviderResult, error) {
@@ -436,12 +461,23 @@ func (p *AgentRunnerProvider) acceptResult(key string, run *agentRunnerRun) (Pro
 }
 
 func (p *AgentRunnerProvider) persistAcceptedResult(result ProviderResult) error {
+	raw, _, err := readBoundedResult(filepath.Join(p.sandbox.config.StagedRoot, "output", "result"), int64(p.sandbox.config.MaxOutputBytes))
+	if err != nil {
+		return err
+	}
+	if err := p.writeDurableAttemptFile("output", result.IdempotencyKey, raw); err != nil {
+		return err
+	}
 	body, err := json.Marshal(result)
 	if err != nil {
 		return err
 	}
+	return p.writeDurableAttemptFile("result", result.IdempotencyKey, body)
+}
+
+func (p *AgentRunnerProvider) writeDurableAttemptFile(kind, key string, body []byte) error {
 	directoryPath := filepath.Join(p.sandbox.config.StagedRoot, "output")
-	temp, err := os.CreateTemp(directoryPath, ".agent-workflow-result-")
+	temp, err := os.CreateTemp(directoryPath, ".agent-workflow-"+kind+"-")
 	if err != nil {
 		return err
 	}
@@ -459,7 +495,7 @@ func (p *AgentRunnerProvider) persistAcceptedResult(result ProviderResult) error
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(directoryPath, providerAcceptedResultFile)
+	path := p.attemptPath(kind, key)
 	if err := os.Rename(tempPath, path); err != nil {
 		return err
 	}

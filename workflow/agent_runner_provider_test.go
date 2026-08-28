@@ -74,6 +74,10 @@ func TestProviderAttemptReservationBlocksUncertainRestart(t *testing.T) {
 	if _, _, err := provider.reserveAttempt(invocation); err == nil {
 		t.Fatal("uncertain provider attempt was started again after restart")
 	}
+	created, recovered, err = provider.reserveAttempt(Invocation{IdempotencyKey: "attempt-2"})
+	if err != nil || !created || recovered != nil {
+		t.Fatalf("second identity reservation created=%v recovered=%#v err=%v", created, recovered, err)
+	}
 }
 
 func TestProviderProtocolFailsClosed(t *testing.T) {
@@ -179,6 +183,14 @@ func TestAgentRunnerProviderUsesBoundedProtocolAndExactResult(t *testing.T) {
 	if err != nil || !ready || !recovered.CompletedAt.Equal(result.CompletedAt) || recovered.Run == nil || recovered.Observation == nil {
 		t.Fatalf("restart recovery=%#v ready=%v err=%v want same completed_at=%s", recovered, ready, err, result.CompletedAt)
 	}
+	second := invocation
+	second.IdempotencyKey = "runner-attempt-2"
+	if err := provider.Start(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+	if _, ready, err := provider.Poll(context.Background(), second.IdempotencyKey); err != nil || !ready {
+		t.Fatalf("second sequential attempt ready=%v err=%v", ready, err)
+	}
 	cancellation, err := provider.CancelRun(context.Background(), invocation.IdempotencyKey)
 	if err != nil || cancellation.Status != contractsv1.ProviderCancellationStatusAlreadyTerminal {
 		t.Fatalf("terminal cancellation=%#v err=%v", cancellation, err)
@@ -191,6 +203,7 @@ func TestAgentRunnerProtocolHelper(t *testing.T) {
 	}
 	descriptor, _ := ProviderDescriptor(contractsv1.ProviderIDCodex)
 	runRef := "opaque-provider-run"
+	invocationID := ""
 	cursor := 0
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
@@ -204,6 +217,7 @@ func TestAgentRunnerProtocolHelper(t *testing.T) {
 		case contractsv1.ProviderProtocolRequestOperationDescribe:
 			response.ResponseType, response.Descriptor = contractsv1.ProviderProtocolResponseResponseTypeDescriptor, &descriptor
 		case contractsv1.ProviderProtocolRequestOperationStart:
+			invocationID = *request.InvocationId
 			response.ResponseType = contractsv1.ProviderProtocolResponseResponseTypeRun
 			response.Run = &contractsv1.ProviderRunRef{Kind: contractsv1.ProviderRunRefKindProviderRunRef, SchemaVersion: 1, ProviderId: descriptor.Id, InvocationId: *request.InvocationId, RunRef: runRef, ExecutorConfigHash: request.ExecutorProfile.ConfigHash, StartedAt: time.Now().UTC()}
 		case contractsv1.ProviderProtocolRequestOperationEvents:
@@ -217,7 +231,7 @@ func TestAgentRunnerProtocolHelper(t *testing.T) {
 			}
 			response.Events = &page
 		case contractsv1.ProviderProtocolRequestOperationInspect:
-			result := ProviderResult{IdempotencyKey: "runner-attempt", CompletedAt: time.Now().UTC(), Artifacts: []contractsv1.ActionArtifact{}}
+			result := ProviderResult{IdempotencyKey: invocationID, CompletedAt: time.Now().UTC(), Artifacts: []contractsv1.ActionArtifact{}}
 			body, _ := json.Marshal(result)
 			if err := os.WriteFile("/workspace/output/result", body, 0600); err != nil {
 				os.Exit(21)
