@@ -760,7 +760,7 @@ export interface ChangeCaseEventPayload {
 
 export interface ConformanceCheck {
     code:            string;
-    evidence_hashes: string[];
+    evidence_hashes: [string, ...string[]];
     id:              string;
     status:          ConformanceCheckStatus;
 }

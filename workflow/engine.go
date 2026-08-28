@@ -87,6 +87,7 @@ type Engine struct {
 	ledger            Ledger
 	approvalActors    map[string]map[string]bool
 	requiredIsolation contractsv1.ProviderIsolationProfile
+	clock             func() time.Time
 }
 
 type Ledger interface {
@@ -111,8 +112,10 @@ func NewEngine(registry *Registry, capabilities CapabilityCatalog, outputs Outpu
 	for schema, validator := range outputs {
 		outputCopy[schema] = validator
 	}
-	return &Engine{registry: registry, capabilities: capabilityCopy, outputs: outputCopy, provider: provider, ledger: ledger, approvalActors: map[string]map[string]bool{}}
+	return &Engine{registry: registry, capabilities: capabilityCopy, outputs: outputCopy, provider: provider, ledger: ledger, approvalActors: map[string]map[string]bool{}, clock: func() time.Time { return time.Now().UTC() }}
 }
+
+func (e *Engine) now() time.Time { return e.clock().UTC() }
 
 func (e *Engine) WithApprovalAuthorities(authorities ApprovalAuthorityCatalog) *Engine {
 	for policy, actors := range authorities {
@@ -150,7 +153,7 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 	if err != nil {
 		return RunResult{}, err
 	}
-	transitionAt := time.Now().UTC()
+	transitionAt := e.now()
 	if reservedAt != nil {
 		transitionAt = reservedAt.UTC()
 	}
@@ -354,7 +357,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		}
 		return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: artifacts, AdmissionReplay: admissionReplay, Replay: completed}, nil
 	}
-	remaining := time.Until(invocation.Deadline)
+	remaining := invocation.Deadline.Sub(e.now())
 	if remaining > 0 {
 		providerContext, cancel := context.WithTimeout(ctx, remaining)
 		err := e.provider.Start(providerContext, invocation)
@@ -374,7 +377,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		return RunResult{}, fmt.Errorf("provider poll: %w", err)
 	}
 	if !ready {
-		if time.Now().Before(invocation.Deadline) {
+		if e.now().Before(invocation.Deadline) {
 			return RunResult{}, ErrProviderNotReady
 		}
 		cancelContext, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -388,7 +391,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 	if err := validateProviderResult(providerResult, invocation); err != nil {
 		return RunResult{}, err
 	}
-	deadlinePassed := !time.Now().Before(invocation.Deadline)
+	deadlinePassed := !e.now().Before(invocation.Deadline)
 	acknowledged := false
 	if deadlinePassed {
 		acknowledged, err = providerAcknowledged(replay, invocation, providerResult)

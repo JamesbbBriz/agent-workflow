@@ -11,7 +11,8 @@ redaction Core used by applications. `ConformanceReport@1` records the contract
 version, tool version, fixture hash, and hash-bound checks.
 
 Bundled provider readiness is reported without fallback. Real provider
-execution remains explicit through `provider conformance`, because offline CI
+execution remains explicit through `provider conformance`, which injects the
+selected adapter into the same committed generic fixture runner. Offline CI
 must not acquire credentials or network authority implicitly.
 
 The SEO-shaped fixture uses generic public fields only. SEO scheduling,

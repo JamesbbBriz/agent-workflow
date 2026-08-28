@@ -15,6 +15,25 @@ const ConformanceContractVersion = "agent-workflow.v1"
 // RunConformance executes a fixture through the same public Core seams used by
 // applications. It performs no network calls and never selects a real provider.
 func RunConformance(ctx context.Context, fixture contractsv1.ConformanceFixture, toolVersion string) (contractsv1.ConformanceReport, error) {
+	return runConformance(ctx, fixture, toolVersion, "", nil)
+}
+
+// RunConformanceWithProvider runs the generic fixture with one explicitly
+// selected bundled provider. It never falls back to the in-process provider.
+func RunConformanceWithProvider(ctx context.Context, fixture contractsv1.ConformanceFixture, toolVersion string, providerID contractsv1.ProviderID, provider Provider) (contractsv1.ConformanceReport, error) {
+	if fixture.Profile != contractsv1.ConformanceFixtureProfileGeneric {
+		return contractsv1.ConformanceReport{}, errors.New("explicit provider conformance requires the generic fixture")
+	}
+	if provider == nil {
+		return contractsv1.ConformanceReport{}, errors.New("explicit conformance provider is required")
+	}
+	if _, err := ProviderDescriptor(providerID); err != nil {
+		return contractsv1.ConformanceReport{}, err
+	}
+	return runConformance(ctx, fixture, toolVersion, providerID, provider)
+}
+
+func runConformance(ctx context.Context, fixture contractsv1.ConformanceFixture, toolVersion string, providerID contractsv1.ProviderID, provider Provider) (contractsv1.ConformanceReport, error) {
 	if toolVersion == "" {
 		return contractsv1.ConformanceReport{}, errors.New("conformance tool version is required")
 	}
@@ -25,7 +44,7 @@ func RunConformance(ctx context.Context, fixture contractsv1.ConformanceFixture,
 	if err != nil {
 		return contractsv1.ConformanceReport{}, err
 	}
-	runtime, err := newConformanceRuntime(fixture)
+	runtime, err := newConformanceRuntime(fixture, provider)
 	if err != nil {
 		return contractsv1.ConformanceReport{}, err
 	}
@@ -41,6 +60,8 @@ func RunConformance(ctx context.Context, fixture contractsv1.ConformanceFixture,
 		report.Checks = append(report.Checks, contractsv1.ConformanceCheck{Id: contractsv1.Identifier(id), Status: contractsv1.ConformanceCheckStatusPass, Code: contractsv1.Identifier(code), EvidenceHashes: hashes})
 	}
 	addCheck("definitions", "validated", contractsv1.SHA256(fixtureHash))
+	providerChecks := make([]contractsv1.ConformanceCheck, 0, len(BundledProviderDescriptors()))
+	selectedCheck := -1
 	for _, descriptor := range BundledProviderDescriptors() {
 		readiness, err := InspectProviderReadiness(descriptor.Id)
 		if err != nil {
@@ -54,10 +75,24 @@ func RunConformance(ctx context.Context, fixture contractsv1.ConformanceFixture,
 		if err != nil {
 			return contractsv1.ConformanceReport{}, err
 		}
-		report.Checks = append(report.Checks, contractsv1.ConformanceCheck{
+		if descriptor.Id == providerID {
+			if runner, ok := provider.(*AgentRunnerProvider); ok {
+				readinessHash, err = Digest(struct {
+					Profile   contractsv1.ExecutorProfile
+					Isolation contractsv1.ProviderIsolationEvidence
+				}{runner.ExecutorProfile(), runner.IsolationEvidence()})
+				if err != nil {
+					return contractsv1.ConformanceReport{}, err
+				}
+			}
+		}
+		providerChecks = append(providerChecks, contractsv1.ConformanceCheck{
 			Id: contractsv1.Identifier("provider-" + string(descriptor.Id)), Status: contractsv1.ConformanceCheckStatusSkipped,
 			Code: contractsv1.Identifier(code), EvidenceHashes: []contractsv1.SHA256{contractsv1.SHA256(readinessHash)},
 		})
+		if descriptor.Id == providerID {
+			selectedCheck = len(providerChecks) - 1
+		}
 	}
 
 	if err := runtime.admit(); err != nil {
@@ -66,6 +101,7 @@ func RunConformance(ctx context.Context, fixture contractsv1.ConformanceFixture,
 	addCheck("admission", "canonical", runtime.admissionHashes...)
 
 	var sources []ChangeProposalSource
+	var providerEvidence []contractsv1.SHA256
 	for index, campaign := range fixture.Campaigns {
 		workflows, err := workflowsForCampaign(campaign, runtime.workflows)
 		if err != nil {
@@ -80,10 +116,10 @@ func RunConformance(ctx context.Context, fixture contractsv1.ConformanceFixture,
 			if blocked.State.NextWorkflowRef == nil || blocked.State.NextNodeId == nil || nodeState(blocked.State, *blocked.State.NextWorkflowRef, string(*blocked.State.NextNodeId)).Status != contractsv1.CampaignNodeExecutionStatusNeedsContext {
 				return contractsv1.ConformanceReport{}, errors.New("SEO-shaped fixture did not produce typed needs_context")
 			}
-			addCheck("context-recovery", "needs-context")
+			addCheck("context-recovery", "needs-context", blocked.CampaignReplay.BundleHash)
 			runtime.setContextsAvailable(true)
 		}
-		approvalsBefore := runtime.approvals
+		approvalsBefore := len(runtime.approvalHashes)
 		result, err := runtime.driveCampaign(ctx, campaign, workflows)
 		if err != nil {
 			return contractsv1.ConformanceReport{}, err
@@ -92,10 +128,10 @@ func RunConformance(ctx context.Context, fixture contractsv1.ConformanceFixture,
 			return contractsv1.ConformanceReport{}, errors.New("Campaign did not complete within its admitted budget")
 		}
 		addCheck("campaign-"+string(campaign.Id), "terminal", result.CampaignReplay.BundleHash)
-		addCheck("dependency-order-"+string(campaign.Id), "core-derived")
-		addCheck("budget-"+string(campaign.Id), "bounded")
-		if runtime.approvals > approvalsBefore {
-			addCheck("approval-"+string(campaign.Id), "exact-human-confirmation")
+		addCheck("dependency-order-"+string(campaign.Id), "core-derived", result.CampaignReplay.BundleHash)
+		addCheck("budget-"+string(campaign.Id), "bounded", result.CampaignReplay.BundleHash)
+		if len(runtime.approvalHashes) > approvalsBefore {
+			addCheck("approval-"+string(campaign.Id), "exact-human-confirmation", runtime.approvalHashes[approvalsBefore:]...)
 		}
 		campaignSources, err := runtime.proposalSources(campaign, workflows)
 		if err != nil {
@@ -119,6 +155,7 @@ func RunConformance(ctx context.Context, fixture contractsv1.ConformanceFixture,
 			contextHashes = append(contextHashes, material.Invocation.Bundle.BundleHash)
 		}
 		addCheck("provider-receipts-"+string(campaign.Id), "normalized", resultHashes...)
+		providerEvidence = append(providerEvidence, resultHashes...)
 		addCheck("context-"+string(campaign.Id), "exact-bundle", contextHashes...)
 
 		cutoff := result.CampaignReplay.Receipts[len(result.CampaignReplay.Receipts)-1].Id
@@ -146,6 +183,12 @@ func RunConformance(ctx context.Context, fixture contractsv1.ConformanceFixture,
 		}
 		addCheck("change-case", "conflict-resolved-and-applied", changeHash)
 	}
+	if selectedCheck >= 0 {
+		providerChecks[selectedCheck].Status = contractsv1.ConformanceCheckStatusPass
+		providerChecks[selectedCheck].Code = "normalized-receipt-chain"
+		providerChecks[selectedCheck].EvidenceHashes = append(providerChecks[selectedCheck].EvidenceHashes, providerEvidence...)
+	}
+	report.Checks = append(report.Checks, providerChecks...)
 	if err := contract.ValidateDefinition("ConformanceReport", report); err != nil {
 		return contractsv1.ConformanceReport{}, err
 	}
@@ -161,11 +204,12 @@ type conformanceRuntime struct {
 	outputs         OutputCatalog
 	workflows       map[contractsv1.WorkflowRef]contractsv1.WorkflowDefinition
 	admissionHashes []contractsv1.SHA256
-	approvals       int
+	approvalHashes  []contractsv1.SHA256
 	manifestHashes  map[contractsv1.SHA256]bool
 }
 
-func newConformanceRuntime(fixture contractsv1.ConformanceFixture) (*conformanceRuntime, error) {
+func newConformanceRuntime(fixture contractsv1.ConformanceFixture, provider Provider) (*conformanceRuntime, error) {
+	deterministic := provider == nil
 	capabilities := CapabilityCatalog{}
 	manifestHashes := map[contractsv1.SHA256]bool{}
 	for _, manifest := range fixture.CapabilityManifests {
@@ -232,8 +276,17 @@ func newConformanceRuntime(fixture contractsv1.ConformanceFixture) (*conformance
 		actors[policy] = []string{"conformance-human"}
 	}
 	authoring := NewAuthoringCore(registry, executors, capabilities, outputs, fixture.BlockerCodes, fixture.ApprovalPolicies, ledger).WithApprovalAuthorities(actors)
-	provider := &conformanceProvider{results: map[string]ProviderResult{}}
+	if provider == nil {
+		provider = &conformanceProvider{results: map[string]ProviderResult{}}
+	}
 	engine := NewEngine(registry, capabilities, outputs, provider, ledger).WithApprovalAuthorities(actors)
+	if deterministic {
+		at := fixture.Campaigns[0].EvidenceFrontier.Cutoff.Add(time.Minute)
+		engine.clock = func() time.Time { return at }
+	}
+	if _, ok := provider.(*AgentRunnerProvider); ok {
+		engine.RequireProviderIsolation(contractsv1.ProviderIsolationProfileStagedSubprocess)
+	}
 	return &conformanceRuntime{fixture: fixture, producers: toggles, ledger: ledger, authoring: authoring, engine: engine, outputs: outputs, workflows: workflows, manifestHashes: manifestHashes}, nil
 }
 
@@ -279,7 +332,7 @@ func (r *conformanceRuntime) driveCampaign(ctx context.Context, campaign contrac
 			}
 		}
 		if awaiting == nil || result.NodeReplay == nil {
-			return result, errors.New("Campaign stopped without a resolvable approval gate")
+			return result, fmt.Errorf("Campaign stopped without a resolvable approval gate: status=%s nodes=%v", result.State.Status, result.State.Nodes)
 		}
 		if err := r.approve(*awaiting, *result.NodeReplay, campaign); err != nil {
 			return result, err
@@ -325,9 +378,9 @@ func (r *conformanceRuntime) approve(node contractsv1.CampaignNodeExecution, rep
 	if !ok {
 		return errors.New("approval source has no terminal receipt")
 	}
-	_, err = r.authoring.ConfirmApproval(preview, "conformance-human", "approve", terminal.OccurredAt.Add(time.Second))
+	receipt, err := r.authoring.ConfirmApproval(preview, "conformance-human", "approve", terminal.OccurredAt.Add(time.Second))
 	if err == nil {
-		r.approvals++
+		r.approvalHashes = append(r.approvalHashes, receipt.ReceiptHash)
 	}
 	return err
 }

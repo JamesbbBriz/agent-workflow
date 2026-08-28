@@ -293,7 +293,7 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 			}
 			continue
 		}
-		remaining, blocker := remainingBudget(state, prepared.request.Campaign.Budget, workflowRef, node.Definition)
+		remaining, blocker := e.remainingBudget(state, prepared.request.Campaign.Budget, workflowRef, node.Definition)
 		if blocker != "" {
 			if err := e.exhaustCampaignNode(&state, *replay, workflowRef, nodeID, blocker, nil); err != nil {
 				return contractsv1.CampaignDriveReceipt{}, err
@@ -323,7 +323,7 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 			if err != nil {
 				return contractsv1.CampaignDriveReceipt{}, err
 			}
-			remaining, blocker = remainingBudget(state, prepared.request.Campaign.Budget, workflowRef, node.Definition)
+			remaining, blocker = e.remainingBudget(state, prepared.request.Campaign.Budget, workflowRef, node.Definition)
 			if blocker != "" {
 				if err := e.exhaustCampaignNode(&state, *replay, workflowRef, nodeID, blocker, nil); err != nil {
 					return contractsv1.CampaignDriveReceipt{}, err
@@ -383,7 +383,7 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 			transitions++
 			break
 		}
-		if _, blocker := remainingBudget(state, prepared.request.Campaign.Budget, workflowRef, node.Definition); blocker != "" {
+		if _, blocker := e.remainingBudget(state, prepared.request.Campaign.Budget, workflowRef, node.Definition); blocker != "" {
 			if err := e.exhaustCampaignNode(&state, *replay, workflowRef, nodeID, blocker, nil); err != nil {
 				return contractsv1.CampaignDriveReceipt{}, err
 			}
@@ -456,7 +456,7 @@ func (e *Engine) prepareCampaign(request CampaignRunRequest) (preparedCampaign, 
 	if err != nil {
 		return preparedCampaign{}, err
 	}
-	now := time.Now().UTC()
+	now := e.now()
 	state := contractsv1.CampaignExecutionState{
 		Kind: contractsv1.CampaignExecutionStateKindCampaignExecutionState, SchemaVersion: 3,
 		AggregateId: aggregateID, JobId: request.Job.Id, CampaignId: request.Campaign.Id,
@@ -580,7 +580,7 @@ func campaignAdmissionInputs(prepared preparedCampaign, state contractsv1.Campai
 }
 
 func (e *Engine) reserveCampaignAttempt(state *contractsv1.CampaignExecutionState, replay contractsv1.ReplayBundle, workflowRef contractsv1.WorkflowRef, nodeID string) error {
-	now := time.Now().UTC()
+	now := e.now()
 	return e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeAttemptReserved, now, []contractsv1.SHA256{state.CampaignHash}, nil, map[string]any{"workflow_ref": workflowRef, "node_id": nodeID, "started_at": now})
 }
 
@@ -592,7 +592,7 @@ func (e *Engine) completeCampaignNode(state *contractsv1.CampaignExecutionState,
 	if !ok {
 		return errors.New("completed Node Replay has no provider result")
 	}
-	completedAt := time.Now().UTC()
+	completedAt := e.now()
 	startedAt := nodeState(*state, workflowRef, nodeID).StartedAt
 	duration := 0
 	if startedAt != nil && completedAt.After(*startedAt) {
@@ -618,11 +618,11 @@ func (e *Engine) exhaustCampaignNode(state *contractsv1.CampaignExecutionState, 
 		inputs, outputs = []contractsv1.SHA256{invocation.Bundle.BundleHash}, []contractsv1.SHA256{childReplay.BundleHash}
 		payload["result_replay_hash"] = childReplay.BundleHash
 	}
-	return e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeBudgetExhausted, time.Now().UTC(), inputs, outputs, payload)
+	return e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeBudgetExhausted, e.now(), inputs, outputs, payload)
 }
 
 func (e *Engine) completeCampaign(state *contractsv1.CampaignExecutionState, replay contractsv1.ReplayBundle) error {
-	return e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeTerminal, time.Now().UTC(), []contractsv1.SHA256{state.CampaignHash}, nil, map[string]any{"state": "completed"})
+	return e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeTerminal, e.now(), []contractsv1.SHA256{state.CampaignHash}, nil, map[string]any{"state": "completed"})
 }
 
 func (e *Engine) appendCampaignEvent(replay contractsv1.ReplayBundle, receiptType contractsv1.ReceiptReceiptType, at time.Time, inputs, outputs []contractsv1.SHA256, payload map[string]any) error {
@@ -649,7 +649,7 @@ func (e *Engine) recordNeedsContext(state contractsv1.CampaignExecutionState, re
 	if current.Status == contractsv1.CampaignNodeExecutionStatusNeedsContext && current.BlockerFingerprint != nil && *current.BlockerFingerprint == value {
 		return false, nil
 	}
-	return true, e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeNeedsContext, time.Now().UTC(), []contractsv1.SHA256{state.CampaignHash}, []contractsv1.SHA256{value}, map[string]any{
+	return true, e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeNeedsContext, e.now(), []contractsv1.SHA256{state.CampaignHash}, []contractsv1.SHA256{value}, map[string]any{
 		"workflow_ref": workflowRef, "node_id": nodeID, "requirements": missing.Requirements, "reasons": missing.Reasons, "blocker_fingerprint": value,
 	})
 }
@@ -659,7 +659,7 @@ func (e *Engine) recordContextTransition(replay contractsv1.ReplayBundle, receip
 	if previous != nil {
 		payload["previous_blocker_fingerprint"] = *previous
 	}
-	return e.appendCampaignEvent(replay, receiptType, time.Now().UTC(), []contractsv1.SHA256{resolved.Bundle.BundleHash}, []contractsv1.SHA256{resolved.Bundle.BundleHash}, payload)
+	return e.appendCampaignEvent(replay, receiptType, e.now(), []contractsv1.SHA256{resolved.Bundle.BundleHash}, []contractsv1.SHA256{resolved.Bundle.BundleHash}, payload)
 }
 
 func contextFromCampaignReplay(replay contractsv1.ReplayBundle, workflowRef contractsv1.WorkflowRef, nodeID string, bundleHash contractsv1.SHA256) (resolvedContext, error) {
@@ -685,7 +685,7 @@ func contextFromCampaignReplay(replay contractsv1.ReplayBundle, workflowRef cont
 func (e *Engine) driveCoreNode(command CampaignDriveCommand, state contractsv1.CampaignExecutionState, replay contractsv1.ReplayBundle, prepared preparedCampaign, workflow preparedWorkflow, node CompiledNode) (bool, error) {
 	ref, id := workflow.compiled.WorkflowRef, string(node.Definition.Id)
 	current := nodeState(state, ref, id)
-	now := time.Now().UTC()
+	now := e.now()
 	switch node.Definition.Kind {
 	case contractsv1.NodeDefinitionKindDeterministic, contractsv1.NodeDefinitionKindTerminal:
 		status := contractsv1.CampaignNodeExecutionStatusCompleted
@@ -1409,8 +1409,8 @@ func nextAction(state contractsv1.CampaignExecutionState) contractsv1.CampaignDr
 	return contractsv1.CampaignDrivePreviewNextActionWait
 }
 
-func remainingBudget(state contractsv1.CampaignExecutionState, campaign contractsv1.Budget, workflowRef contractsv1.WorkflowRef, node contractsv1.NodeDefinition) (contractsv1.Budget, contractsv1.Identifier) {
-	return remainingBudgetAt(state, campaign, workflowRef, node, time.Now())
+func (e *Engine) remainingBudget(state contractsv1.CampaignExecutionState, campaign contractsv1.Budget, workflowRef contractsv1.WorkflowRef, node contractsv1.NodeDefinition) (contractsv1.Budget, contractsv1.Identifier) {
+	return remainingBudgetAt(state, campaign, workflowRef, node, e.now())
 }
 
 func approvalActionBudgetBlocker(state contractsv1.CampaignExecutionState, campaign contractsv1.Budget, workflowRef contractsv1.WorkflowRef, node contractsv1.NodeDefinition) contractsv1.Identifier {

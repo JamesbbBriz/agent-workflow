@@ -98,7 +98,7 @@ go run ./cmd/agent-workflow provider doctor --id openclaw --staged-root ./staged
 ```
 
 Each available adapter is checked through the same admitted fixture with
-`provider conformance`. The Core speaks the versioned NDJSON protocol, binds
+`provider conformance` (default `conformance/fixtures/generic.json`). The Core speaks the versioned NDJSON protocol, binds
 the exact executor profile and staged isolation evidence into Replay, and
 fails closed instead of selecting another provider.
 

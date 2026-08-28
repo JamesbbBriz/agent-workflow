@@ -1344,7 +1344,7 @@
         "id": { "$ref": "#/$defs/Identifier" },
         "status": { "type": "string", "enum": ["pass", "skipped", "fail"] },
         "code": { "$ref": "#/$defs/Identifier" },
-        "evidence_hashes": { "type": "array", "items": { "$ref": "#/$defs/SHA256" } }
+        "evidence_hashes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/SHA256" } }
       }
     },
     "ConformanceReport": {

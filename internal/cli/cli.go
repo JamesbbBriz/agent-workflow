@@ -647,7 +647,7 @@ func runProviderConformance(args []string, stdout, stderr io.Writer) int {
 	providerVersion := flags.String("provider-version", "", "provider version")
 	configRef := flags.String("config-ref", "default", "non-secret provider configuration reference")
 	allowNetwork := flags.Bool("allow-network", false, "allow the isolated adapter to reach its provider API")
-	file := flags.String("file", "examples/research-review.workflow.json", "admitted workflow fixture")
+	file := flags.String("file", "conformance/fixtures/generic.json", "admitted conformance fixture or legacy Workflow definition")
 	at := flags.String("at", "", "pinned evidence cutoff in RFC3339")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return 2
@@ -690,6 +690,25 @@ func runProviderConformance(args []string, stdout, stderr io.Writer) int {
 	body, err := os.ReadFile(*file)
 	if err != nil {
 		return writeError(stdout, stderr, true, "input_unavailable", errors.New("workflow fixture is unavailable"))
+	}
+	var fixture contractsv1.ConformanceFixture
+	if err := contract.DecodeDefinition("ConformanceFixture", body, &fixture); err == nil {
+		if fixture.Profile != contractsv1.ConformanceFixtureProfileGeneric {
+			return writeError(stdout, stderr, true, "invalid_fixture", errors.New("provider conformance requires the generic fixture"))
+		}
+		report, err := workflow.RunConformanceWithProvider(context.Background(), fixture, toolVersion(), descriptor.Id, provider)
+		stopAt := time.Now().Add(5 * time.Minute)
+		for errors.Is(err, workflow.ErrProviderNotReady) && time.Now().Before(stopAt) {
+			time.Sleep(50 * time.Millisecond)
+			report, err = workflow.RunConformanceWithProvider(context.Background(), fixture, toolVersion(), descriptor.Id, provider)
+		}
+		if err != nil {
+			return writeError(stdout, stderr, true, "conformance_failed", err)
+		}
+		if err := json.NewEncoder(stdout).Encode(report); err != nil {
+			return writeError(stdout, stderr, true, "output_failed", errors.New("conformance report could not be written"))
+		}
+		return 0
 	}
 	var definition contractsv1.WorkflowDefinition
 	if _, err := contract.ValidateWorkflow(body); err != nil {
