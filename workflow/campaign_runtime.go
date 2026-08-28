@@ -20,8 +20,11 @@ type CampaignRuntime interface {
 }
 
 type CampaignRunRequest struct {
-	Job      contractsv1.JobDefinition
-	Campaign contractsv1.CampaignDefinition
+	Job       contractsv1.JobDefinition
+	Campaign  contractsv1.CampaignDefinition
+	Workflows []contractsv1.WorkflowDefinition
+	// Workflow keeps the one-Workflow Go API source-compatible. New callers
+	// that pin more than one Workflow must supply Workflows in plan order.
 	Workflow contractsv1.WorkflowDefinition
 }
 
@@ -71,13 +74,15 @@ func (e *Engine) RunNode(ctx context.Context, request RunRequest) (RunResult, er
 		}
 	}
 	if childErr == nil {
+		workflowRef := contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", request.Workflow.Id, request.Workflow.Version))
 		for _, node := range preview.State.Nodes {
-			if string(node.NodeId) == request.NodeID && (node.Status == contractsv1.CampaignNodeExecutionStatusCompleted || node.Status == contractsv1.CampaignNodeExecutionStatusCompletedNoAction) {
+			if node.WorkflowRef == workflowRef && string(node.NodeId) == request.NodeID && (node.Status == contractsv1.CampaignNodeExecutionStatusCompleted || node.Status == contractsv1.CampaignNodeExecutionStatusCompletedNoAction) {
 				return e.runAgentNode(ctx, request)
 			}
 		}
 	}
-	if preview.NextAction != contractsv1.CampaignDrivePreviewNextActionRunNode || preview.State.NextNodeId == nil || string(*preview.State.NextNodeId) != request.NodeID {
+	workflowRef := contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", request.Workflow.Id, request.Workflow.Version))
+	if preview.NextAction != contractsv1.CampaignDrivePreviewNextActionRunNode || preview.State.NextWorkflowRef == nil || *preview.State.NextWorkflowRef != workflowRef || preview.State.NextNodeId == nil || string(*preview.State.NextNodeId) != request.NodeID {
 		return RunResult{}, fmt.Errorf("node %q is not the Core-derived next ready Node", request.NodeID)
 	}
 	receipt, err := e.drive(ctx, CampaignDriveCommand{CampaignRunRequest: CampaignRunRequest{Job: request.Job, Campaign: request.Campaign, Workflow: request.Workflow}, MaxTransitions: 1})
@@ -119,7 +124,7 @@ func (e *Engine) Preview(_ context.Context, request CampaignRunRequest) (contrac
 	if err != nil {
 		return contractsv1.CampaignDrivePreview{}, err
 	}
-	deriveNext(&state, prepared.compiled)
+	deriveNext(&state, prepared)
 	preview := contractsv1.CampaignDrivePreview{Kind: contractsv1.CampaignDrivePreviewKindCampaignDrivePreview, SchemaVersion: 2, State: state, NextAction: nextAction(state)}
 	if err := contract.ValidateDefinition("CampaignDrivePreview", preview); err != nil {
 		return contractsv1.CampaignDrivePreview{}, err
@@ -159,11 +164,11 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 	transitions := 0
 	var nodeReplay *contractsv1.ReplayBundle
 	for transitions < command.MaxTransitions {
-		deriveNext(&state, prepared.compiled)
+		deriveNext(&state, prepared)
 		if state.Status == contractsv1.CampaignExecutionStateStatusCompleted || state.Status == contractsv1.CampaignExecutionStateStatusBlocked || state.Status == contractsv1.CampaignExecutionStateStatusTerminal {
 			break
 		}
-		if state.NextNodeId == nil {
+		if state.NextWorkflowRef == nil || state.NextNodeId == nil {
 			if err := e.completeCampaign(&state, *replay); err != nil {
 				return contractsv1.CampaignDriveReceipt{}, err
 			}
@@ -179,14 +184,14 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 			}
 			break
 		}
-		nodeID := string(*state.NextNodeId)
-		node, ok := compiledNodeByID(prepared.compiled, nodeID)
+		workflowRef, nodeID := *state.NextWorkflowRef, string(*state.NextNodeId)
+		workflow, node, ok := preparedNode(prepared, workflowRef, nodeID)
 		if !ok {
-			return contractsv1.CampaignDriveReceipt{}, errors.New("derived Node is absent from the compiled Workflow")
+			return contractsv1.CampaignDriveReceipt{}, errors.New("derived Node is absent from the compiled Campaign plan")
 		}
-		remaining, blocker := remainingBudget(state, prepared.request.Campaign.Budget, node.Definition)
+		remaining, blocker := remainingBudget(state, prepared.request.Campaign.Budget, workflowRef, node.Definition)
 		if blocker != "" {
-			if err := e.exhaustCampaignNode(&state, *replay, nodeID, blocker); err != nil {
+			if err := e.exhaustCampaignNode(&state, *replay, workflowRef, nodeID, blocker); err != nil {
 				return contractsv1.CampaignDriveReceipt{}, err
 			}
 			transitions++
@@ -201,8 +206,8 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 			}
 			break
 		}
-		if nodeState(state, nodeID).Status == contractsv1.CampaignNodeExecutionStatusPending {
-			if err := e.reserveCampaignAttempt(&state, *replay, nodeID); err != nil {
+		if nodeState(state, workflowRef, nodeID).Status == contractsv1.CampaignNodeExecutionStatusPending {
+			if err := e.reserveCampaignAttempt(&state, *replay, workflowRef, nodeID); err != nil {
 				return contractsv1.CampaignDriveReceipt{}, err
 			}
 			bundle, err := e.ledger.Replay(state.AggregateId)
@@ -215,11 +220,11 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 				return contractsv1.CampaignDriveReceipt{}, err
 			}
 		}
-		run, runErr := e.runAgentNode(ctx, RunRequest{Job: prepared.request.Job, Campaign: prepared.request.Campaign, Workflow: prepared.request.Workflow, NodeID: nodeID, BudgetOverride: &remaining})
+		run, runErr := e.runAgentNode(ctx, RunRequest{Job: prepared.request.Job, Campaign: prepared.request.Campaign, Workflow: workflow.definition, NodeID: nodeID, BudgetOverride: &remaining})
 		if runErr != nil {
 			var exceeded budgetExceededError
 			if errors.As(runErr, &exceeded) {
-				if err := e.exhaustCampaignNode(&state, *replay, nodeID, exceeded.code); err != nil {
+				if err := e.exhaustCampaignNode(&state, *replay, workflowRef, nodeID, exceeded.code); err != nil {
 					return contractsv1.CampaignDriveReceipt{}, err
 				}
 				transitions++
@@ -229,7 +234,7 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 				break
 			}
 			if errors.Is(runErr, ErrProviderDeadline) {
-				if err := e.exhaustCampaignNode(&state, *replay, nodeID, "duration-budget-exhausted"); err != nil {
+				if err := e.exhaustCampaignNode(&state, *replay, workflowRef, nodeID, "duration-budget-exhausted"); err != nil {
 					return contractsv1.CampaignDriveReceipt{}, err
 				}
 				transitions++
@@ -242,14 +247,14 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 		if err != nil {
 			return contractsv1.CampaignDriveReceipt{}, err
 		}
-		if _, blocker := remainingBudget(state, prepared.request.Campaign.Budget, node.Definition); blocker != "" {
-			if err := e.exhaustCampaignNode(&state, *replay, nodeID, blocker); err != nil {
+		if _, blocker := remainingBudget(state, prepared.request.Campaign.Budget, workflowRef, node.Definition); blocker != "" {
+			if err := e.exhaustCampaignNode(&state, *replay, workflowRef, nodeID, blocker); err != nil {
 				return contractsv1.CampaignDriveReceipt{}, err
 			}
 			transitions++
 			break
 		}
-		if err := e.completeCampaignNode(&state, *replay, nodeID, material, run.Replay); err != nil {
+		if err := e.completeCampaignNode(&state, *replay, workflowRef, nodeID, material, run.Replay); err != nil {
 			return contractsv1.CampaignDriveReceipt{}, err
 		}
 		transitions++
@@ -272,7 +277,7 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 		return contractsv1.CampaignDriveReceipt{}, err
 	}
 	replay = &latest
-	deriveNext(&state, prepared.compiled)
+	deriveNext(&state, prepared)
 	receipt := contractsv1.CampaignDriveReceipt{Kind: contractsv1.CampaignDriveReceiptKindCampaignDriveReceipt, SchemaVersion: 2, State: state, Transitions: transitions, CampaignReplay: replay, NodeReplay: nodeReplay}
 	if err := contract.ValidateDefinition("CampaignDriveReceipt", receipt); err != nil {
 		return contractsv1.CampaignDriveReceipt{}, err
@@ -280,19 +285,28 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 	return receipt, nil
 }
 
-type preparedCampaign struct {
-	request         CampaignRunRequest
+type preparedWorkflow struct {
+	definition      contractsv1.WorkflowDefinition
 	compiled        CompiledWorkflow
 	admission       contractsv1.WorkflowAdmission
 	admissionReplay contractsv1.ReplayBundle
-	initial         contractsv1.CampaignExecutionState
+}
+
+type preparedCampaign struct {
+	request   CampaignRunRequest
+	workflows []preparedWorkflow
+	initial   contractsv1.CampaignExecutionState
 }
 
 func (e *Engine) prepareCampaign(request CampaignRunRequest) (preparedCampaign, error) {
 	if e == nil || e.provider == nil || e.ledger == nil {
 		return preparedCampaign{}, errors.New("provider and ledger are required")
 	}
-	run := RunRequest{Job: request.Job, Campaign: request.Campaign, Workflow: request.Workflow}
+	definitions, err := campaignWorkflowDefinitions(request)
+	if err != nil {
+		return preparedCampaign{}, err
+	}
+	run := RunRequest{Job: request.Job, Campaign: request.Campaign, Workflow: definitions[0]}
 	jobHash, campaignHash, err := aggregateDefinitionHashes(run)
 	if err != nil {
 		return preparedCampaign{}, err
@@ -302,30 +316,50 @@ func (e *Engine) prepareCampaign(request CampaignRunRequest) (preparedCampaign, 
 		return preparedCampaign{}, err
 	}
 	now := time.Now().UTC()
-	compiled, _, err := compileWorkflow(request.Workflow, e.registry, aggregateID, now)
-	if err != nil {
-		return preparedCampaign{}, err
-	}
-	if err := validateRunBinding(run, compiled, now); err != nil {
-		return preparedCampaign{}, err
-	}
-	admission, admissionReplay, err := e.admissionForRun(run)
-	if err != nil {
-		return preparedCampaign{}, err
-	}
-	if admission.DefinitionHash != compiled.DefinitionHash || admission.CompileHash != compiled.CompileHash {
-		return preparedCampaign{}, errors.New("admitted Workflow does not match the compiled Campaign contract")
-	}
 	state := contractsv1.CampaignExecutionState{
 		Kind: contractsv1.CampaignExecutionStateKindCampaignExecutionState, SchemaVersion: 2,
 		AggregateId: aggregateID, JobId: request.Job.Id, CampaignId: request.Campaign.Id,
-		JobHash: jobHash, CampaignHash: campaignHash, WorkflowRef: compiled.WorkflowRef, WorkflowHash: compiled.DefinitionHash,
+		JobHash: jobHash, CampaignHash: campaignHash, WorkflowHashes: contractsv1.CampaignExecutionStateWorkflowHashes{},
 		Status: contractsv1.CampaignExecutionStateStatusAdmitted, StartedAt: now, UpdatedAt: now,
 	}
-	for _, node := range compiled.Nodes {
-		state.Nodes = append(state.Nodes, contractsv1.CampaignNodeExecution{WorkflowRef: compiled.WorkflowRef, NodeId: node.Definition.Id, Status: contractsv1.CampaignNodeExecutionStatusPending})
+	prepared := preparedCampaign{request: request, initial: state}
+	for index, definition := range definitions {
+		run.Workflow = definition
+		compiled, _, err := compileWorkflow(definition, e.registry, aggregateID, now)
+		if err != nil {
+			return preparedCampaign{}, err
+		}
+		if compiled.WorkflowRef != request.Campaign.WorkflowPlan[index] {
+			return preparedCampaign{}, errors.New("Campaign Workflow definitions do not match the pinned plan order")
+		}
+		if err := validateRunBinding(run, compiled, now); err != nil {
+			return preparedCampaign{}, err
+		}
+		admission, admissionReplay, err := e.admissionForRun(run)
+		if err != nil {
+			return preparedCampaign{}, err
+		}
+		if admission.DefinitionHash != compiled.DefinitionHash || admission.CompileHash != compiled.CompileHash {
+			return preparedCampaign{}, errors.New("admitted Workflow does not match the compiled Campaign contract")
+		}
+		prepared.workflows = append(prepared.workflows, preparedWorkflow{definition: definition, compiled: compiled, admission: admission, admissionReplay: admissionReplay})
+		prepared.initial.WorkflowHashes[string(compiled.WorkflowRef)] = compiled.DefinitionHash
+		for _, node := range compiled.Nodes {
+			prepared.initial.Nodes = append(prepared.initial.Nodes, contractsv1.CampaignNodeExecution{WorkflowRef: compiled.WorkflowRef, NodeId: node.Definition.Id, Status: contractsv1.CampaignNodeExecutionStatusPending})
+		}
 	}
-	return preparedCampaign{request: request, compiled: compiled, admission: admission, admissionReplay: admissionReplay, initial: state}, nil
+	return prepared, nil
+}
+
+func campaignWorkflowDefinitions(request CampaignRunRequest) ([]contractsv1.WorkflowDefinition, error) {
+	definitions := append([]contractsv1.WorkflowDefinition(nil), request.Workflows...)
+	if len(definitions) == 0 && request.Workflow.Id != "" {
+		definitions = []contractsv1.WorkflowDefinition{request.Workflow}
+	}
+	if len(definitions) != len(request.Campaign.WorkflowPlan) || len(definitions) == 0 {
+		return nil, errors.New("Campaign execution requires every pinned Workflow definition in plan order")
+	}
+	return definitions, nil
 }
 
 func campaignExecutionID(jobID, campaignID contractsv1.Identifier) (string, error) {
@@ -357,19 +391,27 @@ func (e *Engine) admitCampaign(prepared preparedCampaign, state contractsv1.Camp
 		return err
 	}
 	receipt, err := sealReceiptVersion(2, state.AggregateId, 1, contractsv1.ReceiptReceiptTypeCampaignAdmission, state.StartedAt, nil,
-		[]contractsv1.SHA256{prepared.admission.Receipt.ReceiptHash, state.JobHash, state.CampaignHash, state.WorkflowHash, prepared.compiled.CompileHash}, []contractsv1.SHA256{contractsv1.SHA256(hash)}, map[string]any{"state": state})
+		campaignAdmissionInputs(prepared, state), []contractsv1.SHA256{contractsv1.SHA256(hash)}, map[string]any{"state": state})
 	if err != nil {
 		return err
 	}
 	return e.ledger.Append(receipt)
 }
 
-func (e *Engine) reserveCampaignAttempt(state *contractsv1.CampaignExecutionState, replay contractsv1.ReplayBundle, nodeID string) error {
-	now := time.Now().UTC()
-	return e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeAttemptReserved, now, []contractsv1.SHA256{state.CampaignHash}, nil, map[string]any{"node_id": nodeID, "started_at": now})
+func campaignAdmissionInputs(prepared preparedCampaign, state contractsv1.CampaignExecutionState) []contractsv1.SHA256 {
+	inputs := []contractsv1.SHA256{state.JobHash, state.CampaignHash}
+	for _, workflow := range prepared.workflows {
+		inputs = append(inputs, workflow.admission.Receipt.ReceiptHash, workflow.compiled.DefinitionHash, workflow.compiled.CompileHash)
+	}
+	return inputs
 }
 
-func (e *Engine) completeCampaignNode(state *contractsv1.CampaignExecutionState, replay contractsv1.ReplayBundle, nodeID string, material ReplayMaterial, childReplay contractsv1.ReplayBundle) error {
+func (e *Engine) reserveCampaignAttempt(state *contractsv1.CampaignExecutionState, replay contractsv1.ReplayBundle, workflowRef contractsv1.WorkflowRef, nodeID string) error {
+	now := time.Now().UTC()
+	return e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeAttemptReserved, now, []contractsv1.SHA256{state.CampaignHash}, nil, map[string]any{"workflow_ref": workflowRef, "node_id": nodeID, "started_at": now})
+}
+
+func (e *Engine) completeCampaignNode(state *contractsv1.CampaignExecutionState, replay contractsv1.ReplayBundle, workflowRef contractsv1.WorkflowRef, nodeID string, material ReplayMaterial, childReplay contractsv1.ReplayBundle) error {
 	_, ok, err := materializeProviderResult(childReplay)
 	if err != nil {
 		return err
@@ -378,7 +420,7 @@ func (e *Engine) completeCampaignNode(state *contractsv1.CampaignExecutionState,
 		return errors.New("completed Node Replay has no provider result")
 	}
 	completedAt := time.Now().UTC()
-	startedAt := nodeState(*state, nodeID).StartedAt
+	startedAt := nodeState(*state, workflowRef, nodeID).StartedAt
 	duration := 0
 	if startedAt != nil && completedAt.After(*startedAt) {
 		duration = int(math.Ceil(completedAt.Sub(*startedAt).Seconds()))
@@ -388,11 +430,11 @@ func (e *Engine) completeCampaignNode(state *contractsv1.CampaignExecutionState,
 	if len(material.Artifacts) == 0 {
 		status = contractsv1.CampaignNodeExecutionStatusCompletedNoAction
 	}
-	return e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeNodeCompleted, completedAt, []contractsv1.SHA256{material.Invocation.Bundle.BundleHash}, []contractsv1.SHA256{childReplay.BundleHash}, map[string]any{"node_id": nodeID, "status": status, "usage": usage, "completed_at": completedAt, "result_replay_hash": childReplay.BundleHash})
+	return e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeNodeCompleted, completedAt, []contractsv1.SHA256{material.Invocation.Bundle.BundleHash}, []contractsv1.SHA256{childReplay.BundleHash}, map[string]any{"workflow_ref": workflowRef, "node_id": nodeID, "status": status, "usage": usage, "completed_at": completedAt, "result_replay_hash": childReplay.BundleHash})
 }
 
-func (e *Engine) exhaustCampaignNode(state *contractsv1.CampaignExecutionState, replay contractsv1.ReplayBundle, nodeID string, code contractsv1.Identifier) error {
-	return e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeBudgetExhausted, time.Now().UTC(), []contractsv1.SHA256{state.CampaignHash}, nil, map[string]any{"node_id": nodeID, "blocker_code": code})
+func (e *Engine) exhaustCampaignNode(state *contractsv1.CampaignExecutionState, replay contractsv1.ReplayBundle, workflowRef contractsv1.WorkflowRef, nodeID string, code contractsv1.Identifier) error {
+	return e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeBudgetExhausted, time.Now().UTC(), []contractsv1.SHA256{state.CampaignHash}, nil, map[string]any{"workflow_ref": workflowRef, "node_id": nodeID, "blocker_code": code})
 }
 
 func (e *Engine) completeCampaign(state *contractsv1.CampaignExecutionState, replay contractsv1.ReplayBundle) error {
@@ -421,7 +463,7 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 	}
 	expected := prepared.initial
 	expected.StartedAt, expected.UpdatedAt = state.StartedAt, state.UpdatedAt
-	wantInputs := []contractsv1.SHA256{prepared.admission.Receipt.ReceiptHash, state.JobHash, state.CampaignHash, state.WorkflowHash, prepared.compiled.CompileHash}
+	wantInputs := campaignAdmissionInputs(prepared, state)
 	stateHash, err := Digest(state)
 	if err != nil {
 		return contractsv1.CampaignExecutionState{}, err
@@ -435,8 +477,12 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 		}
 		switch receipt.ReceiptType {
 		case contractsv1.ReceiptReceiptTypeAttemptReserved:
+			var workflowRef contractsv1.WorkflowRef
 			var nodeID string
 			var startedAt time.Time
+			if err := decodePayload(receipt.Payload["workflow_ref"], &workflowRef); err != nil {
+				return state, err
+			}
 			if err := decodePayload(receipt.Payload["node_id"], &nodeID); err != nil {
 				return state, err
 			}
@@ -446,8 +492,8 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			if !startedAt.Equal(receipt.OccurredAt) || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{state.CampaignHash}) || len(receipt.OutputHashes) != 0 {
 				return state, errors.New("Campaign attempt reservation binding is invalid")
 			}
-			node := nodeStatePtr(&state, nodeID)
-			if node == nil || node.Status != contractsv1.CampaignNodeExecutionStatusPending {
+			node := nodeStatePtr(&state, workflowRef, nodeID)
+			if node == nil || node.Status != contractsv1.CampaignNodeExecutionStatusPending || !campaignNodeReady(state, prepared, workflowRef, nodeID) {
 				return state, errors.New("Campaign attempt reservation is not eligible")
 			}
 			node.Status = contractsv1.CampaignNodeExecutionStatusRunning
@@ -456,11 +502,15 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			state.Usage.Attempts++
 			state.Status = contractsv1.CampaignExecutionStateStatusRunning
 		case contractsv1.ReceiptReceiptTypeNodeCompleted:
+			var workflowRef contractsv1.WorkflowRef
 			var nodeID string
 			var status contractsv1.CampaignNodeExecutionStatus
 			var usage contractsv1.CampaignExecutionUsage
 			var completedAt time.Time
 			var replayHash contractsv1.SHA256
+			if err := decodePayload(receipt.Payload["workflow_ref"], &workflowRef); err != nil {
+				return state, err
+			}
 			if err := decodePayload(receipt.Payload["node_id"], &nodeID); err != nil {
 				return state, err
 			}
@@ -476,11 +526,15 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			if err := decodePayload(receipt.Payload["result_replay_hash"], &replayHash); err != nil {
 				return state, err
 			}
-			node := nodeStatePtr(&state, nodeID)
+			node := nodeStatePtr(&state, workflowRef, nodeID)
 			if node == nil || node.Status != contractsv1.CampaignNodeExecutionStatusRunning || (status != contractsv1.CampaignNodeExecutionStatusCompleted && status != contractsv1.CampaignNodeExecutionStatusCompletedNoAction) || usage.Attempts != 1 {
 				return state, errors.New("Campaign Node completion is not eligible")
 			}
-			childID, err := executionID(RunRequest{Job: prepared.request.Job, Campaign: prepared.request.Campaign, Workflow: prepared.request.Workflow, NodeID: nodeID})
+			workflow, ok := preparedWorkflowByRef(prepared, workflowRef)
+			if !ok {
+				return state, errors.New("Campaign Node completion Workflow is not pinned")
+			}
+			childID, err := executionID(RunRequest{Job: prepared.request.Job, Campaign: prepared.request.Campaign, Workflow: workflow.definition, NodeID: nodeID})
 			if err != nil {
 				return state, err
 			}
@@ -489,10 +543,10 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 				return state, errors.New("Campaign Node completion has no exact child Replay")
 			}
 			childReplay, err := replayAtBundleHash(childHead, replayHash)
-			if err != nil {
+			if err != nil || !nodeCompletedReplay(childReplay) {
 				return state, errors.New("Campaign Node completion has no exact child Replay")
 			}
-			invocation, err := VerifyDefinitionBindingWithAdmission(childReplay, prepared.admissionReplay, prepared.request.Job, prepared.request.Campaign, prepared.request.Workflow)
+			invocation, err := VerifyDefinitionBindingWithAdmission(childReplay, workflow.admissionReplay, prepared.request.Job, prepared.request.Campaign, workflow.definition)
 			if err != nil || string(invocation.Node.Id) != nodeID || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{invocation.Bundle.BundleHash}) {
 				return state, errors.New("Campaign Node completion child binding is invalid")
 			}
@@ -500,12 +554,12 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			if err != nil {
 				return state, err
 			}
-			_, ok, err := materializeProviderResult(childReplay)
+			_, hasResult, err := materializeProviderResult(childReplay)
 			duration := 0
 			if node.StartedAt != nil && completedAt.After(*node.StartedAt) {
 				duration = int(math.Ceil(completedAt.Sub(*node.StartedAt).Seconds()))
 			}
-			if err != nil || !ok || !completedAt.Equal(receipt.OccurredAt) || usage.Actions != len(material.Artifacts) || usage.Candidates != artifactCandidateCount(material.Artifacts, invocation.Node.OutputSlots) || usage.DurationSeconds != duration {
+			if err != nil || !hasResult || !completedAt.Equal(receipt.OccurredAt) || usage.Actions != len(material.Artifacts) || usage.Candidates != artifactCandidateCount(material.Artifacts, invocation.Node.OutputSlots) || usage.DurationSeconds != duration {
 				return state, errors.New("Campaign Node completion usage does not match the child Replay")
 			}
 			node.Status, node.CompletedAt, node.ResultReplayHash = status, &completedAt, &replayHash
@@ -514,8 +568,12 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			state.Usage.Candidates += usage.Candidates
 			state.Usage.DurationSeconds += usage.DurationSeconds
 		case contractsv1.ReceiptReceiptTypeBudgetExhausted:
+			var workflowRef contractsv1.WorkflowRef
 			var nodeID string
 			var blocker contractsv1.Identifier
+			if err := decodePayload(receipt.Payload["workflow_ref"], &workflowRef); err != nil {
+				return state, err
+			}
 			if err := decodePayload(receipt.Payload["node_id"], &nodeID); err != nil {
 				return state, err
 			}
@@ -525,8 +583,8 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			if !knownBudgetBlocker(blocker) || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{state.CampaignHash}) || len(receipt.OutputHashes) != 0 {
 				return state, errors.New("Campaign budget exhaustion binding is invalid")
 			}
-			node := nodeStatePtr(&state, nodeID)
-			if node == nil || (node.Status != contractsv1.CampaignNodeExecutionStatusPending && node.Status != contractsv1.CampaignNodeExecutionStatusRunning) {
+			node := nodeStatePtr(&state, workflowRef, nodeID)
+			if node == nil || (node.Status != contractsv1.CampaignNodeExecutionStatusRunning && (node.Status != contractsv1.CampaignNodeExecutionStatusPending || !campaignNodeReady(state, prepared, workflowRef, nodeID))) {
 				return state, errors.New("Campaign budget exhaustion is not eligible")
 			}
 			node.Status, node.BlockerCode = contractsv1.CampaignNodeExecutionStatusBudgetExhausted, &blocker
@@ -578,38 +636,96 @@ func knownBudgetBlocker(code contractsv1.Identifier) bool {
 	}
 }
 
-func deriveNext(state *contractsv1.CampaignExecutionState, compiled CompiledWorkflow) {
+func preparedWorkflowByRef(prepared preparedCampaign, ref contractsv1.WorkflowRef) (preparedWorkflow, bool) {
+	for _, workflow := range prepared.workflows {
+		if workflow.compiled.WorkflowRef == ref {
+			return workflow, true
+		}
+	}
+	return preparedWorkflow{}, false
+}
+
+func preparedNode(prepared preparedCampaign, ref contractsv1.WorkflowRef, nodeID string) (preparedWorkflow, CompiledNode, bool) {
+	workflow, ok := preparedWorkflowByRef(prepared, ref)
+	if !ok {
+		return preparedWorkflow{}, CompiledNode{}, false
+	}
+	for _, node := range workflow.compiled.Nodes {
+		if string(node.Definition.Id) == nodeID {
+			return workflow, node, true
+		}
+	}
+	return preparedWorkflow{}, CompiledNode{}, false
+}
+
+func deriveNext(state *contractsv1.CampaignExecutionState, prepared preparedCampaign) {
+	state.NextWorkflowRef = nil
 	state.NextNodeId = nil
 	if state.Status == contractsv1.CampaignExecutionStateStatusBlocked || state.Status == contractsv1.CampaignExecutionStateStatusCompleted || state.Status == contractsv1.CampaignExecutionStateStatusTerminal {
 		return
 	}
-	for _, compiledNode := range compiled.Nodes {
-		node := nodeState(*state, string(compiledNode.Definition.Id))
-		if node.Status == contractsv1.CampaignNodeExecutionStatusRunning {
-			id := node.NodeId
-			state.NextNodeId = &id
-			return
-		}
-		if node.Status != contractsv1.CampaignNodeExecutionStatusPending {
+	for _, workflow := range prepared.workflows {
+		ref := workflow.compiled.WorkflowRef
+		if workflowCompleted(*state, ref) {
 			continue
 		}
-		ready := true
-		for _, dependency := range compiledNode.Definition.DependsOn {
-			status := nodeState(*state, dependency).Status
-			if status != contractsv1.CampaignNodeExecutionStatusCompleted && status != contractsv1.CampaignNodeExecutionStatusCompletedNoAction {
-				ready = false
-				break
+		for _, compiledNode := range workflow.compiled.Nodes {
+			node := nodeState(*state, ref, string(compiledNode.Definition.Id))
+			if node.Status == contractsv1.CampaignNodeExecutionStatusRunning {
+				workflowRef, id := ref, node.NodeId
+				state.NextWorkflowRef, state.NextNodeId = &workflowRef, &id
+				return
 			}
 		}
-		if ready {
-			id := node.NodeId
-			state.NextNodeId = &id
-			return
+		for _, compiledNode := range workflow.compiled.Nodes {
+			if campaignNodeReady(*state, prepared, ref, string(compiledNode.Definition.Id)) {
+				workflowRef, id := ref, compiledNode.Definition.Id
+				state.NextWorkflowRef, state.NextNodeId = &workflowRef, &id
+				return
+			}
 		}
+		return
 	}
 	if allNodesCompleted(*state) {
 		state.Status = contractsv1.CampaignExecutionStateStatusRunning
 	}
+}
+
+func campaignNodeReady(state contractsv1.CampaignExecutionState, prepared preparedCampaign, ref contractsv1.WorkflowRef, nodeID string) bool {
+	for _, workflow := range prepared.workflows {
+		if workflowCompleted(state, workflow.compiled.WorkflowRef) {
+			continue
+		}
+		if workflow.compiled.WorkflowRef != ref {
+			return false
+		}
+		_, node, ok := preparedNode(prepared, ref, nodeID)
+		if !ok || nodeState(state, ref, nodeID).Status != contractsv1.CampaignNodeExecutionStatusPending {
+			return false
+		}
+		for _, dependency := range node.Definition.DependsOn {
+			status := nodeState(state, ref, dependency).Status
+			if status != contractsv1.CampaignNodeExecutionStatusCompleted && status != contractsv1.CampaignNodeExecutionStatusCompletedNoAction {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func workflowCompleted(state contractsv1.CampaignExecutionState, ref contractsv1.WorkflowRef) bool {
+	found := false
+	for _, node := range state.Nodes {
+		if node.WorkflowRef != ref {
+			continue
+		}
+		found = true
+		if node.Status != contractsv1.CampaignNodeExecutionStatusCompleted && node.Status != contractsv1.CampaignNodeExecutionStatusCompletedNoAction {
+			return false
+		}
+	}
+	return found
 }
 
 func nextAction(state contractsv1.CampaignExecutionState) contractsv1.CampaignDrivePreviewNextAction {
@@ -625,8 +741,8 @@ func nextAction(state contractsv1.CampaignExecutionState) contractsv1.CampaignDr
 	return contractsv1.CampaignDrivePreviewNextActionWait
 }
 
-func remainingBudget(state contractsv1.CampaignExecutionState, campaign contractsv1.Budget, node contractsv1.NodeDefinition) (contractsv1.Budget, contractsv1.Identifier) {
-	current := nodeState(state, string(node.Id))
+func remainingBudget(state contractsv1.CampaignExecutionState, campaign contractsv1.Budget, workflowRef contractsv1.WorkflowRef, node contractsv1.NodeDefinition) (contractsv1.Budget, contractsv1.Identifier) {
+	current := nodeState(state, workflowRef, string(node.Id))
 	nodeUsage := current.Usage
 	attempts := minInt(node.Budget.MaxAttempts-nodeUsage.Attempts, campaign.MaxAttempts-state.Usage.Attempts)
 	if current.Status == contractsv1.CampaignNodeExecutionStatusRunning {
@@ -678,22 +794,34 @@ func minInt(a, b int) int {
 	return b
 }
 
-func nodeState(state contractsv1.CampaignExecutionState, nodeID string) contractsv1.CampaignNodeExecution {
+func nodeState(state contractsv1.CampaignExecutionState, workflowRef contractsv1.WorkflowRef, nodeID string) contractsv1.CampaignNodeExecution {
 	for _, node := range state.Nodes {
-		if string(node.NodeId) == nodeID {
+		if node.WorkflowRef == workflowRef && string(node.NodeId) == nodeID {
 			return node
 		}
 	}
 	return contractsv1.CampaignNodeExecution{}
 }
 
-func nodeStatePtr(state *contractsv1.CampaignExecutionState, nodeID string) *contractsv1.CampaignNodeExecution {
+func nodeStatePtr(state *contractsv1.CampaignExecutionState, workflowRef contractsv1.WorkflowRef, nodeID string) *contractsv1.CampaignNodeExecution {
 	for index := range state.Nodes {
-		if string(state.Nodes[index].NodeId) == nodeID {
+		if state.Nodes[index].WorkflowRef == workflowRef && string(state.Nodes[index].NodeId) == nodeID {
 			return &state.Nodes[index]
 		}
 	}
 	return nil
+}
+
+func nodeCompletedReplay(replay contractsv1.ReplayBundle) bool {
+	if len(replay.Receipts) == 0 {
+		return false
+	}
+	last := replay.Receipts[len(replay.Receipts)-1]
+	if last.ReceiptType != contractsv1.ReceiptReceiptTypeTerminal {
+		return false
+	}
+	var state string
+	return decodePayload(last.Payload["state"], &state) == nil && state == "node_completed"
 }
 
 func allNodesCompleted(state contractsv1.CampaignExecutionState) bool {

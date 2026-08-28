@@ -82,6 +82,44 @@ func TestCampaignRuntimeDerivesDependenciesAndCompletesTheDAG(t *testing.T) {
 	}
 }
 
+func TestCampaignRuntimeExecutesEveryPinnedWorkflowInOrder(t *testing.T) {
+	t.Parallel()
+	cutoff := time.Now().UTC().Add(-time.Hour)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := loadExample(t)
+	first.Nodes = first.Nodes[:1]
+	first.Nodes[0].OutputSlots[0].Consumers = []string{"workflow-output"}
+	first.Outputs = append([]contractsv1.Slot(nil), first.Nodes[0].OutputSlots...)
+	first.Outputs[0].Consumers = append([]string(nil), first.Intent.Consumers...)
+	second := first
+	second.Id = "follow-up-review"
+	second.Intent.Title = "Follow-up review"
+	job := jobFixture(scope)
+	campaign := campaignFixture(scope, cutoff)
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@1", "follow-up-review@1"}
+	campaign.Budget = contractsv1.Budget{MaxAttempts: 2, MaxActions: 2, MaxCandidates: 2}
+	ledger := workflow.NewMemoryLedger()
+	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: first, NodeID: "research"})
+	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: second, NodeID: "research"})
+	provider := &dagProvider{results: map[string]workflow.ProviderResult{}}
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger)
+
+	receipt, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflows: []contractsv1.WorkflowDefinition{first, second}}, MaxTransitions: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.State.Status != contractsv1.CampaignExecutionStateStatusCompleted || receipt.Transitions != 3 || provider.starts != 2 || len(receipt.State.Nodes) != 2 {
+		t.Fatalf("Campaign did not execute both Workflows and close: state=%+v transitions=%d starts=%d", receipt.State, receipt.Transitions, provider.starts)
+	}
+	if receipt.State.Nodes[0].WorkflowRef != "research-review@1" || receipt.State.Nodes[1].WorkflowRef != "follow-up-review@1" {
+		t.Fatalf("same-named Nodes lost their Workflow identity: %+v", receipt.State.Nodes)
+	}
+}
+
 func TestCampaignRuntimeRecordsOutputBudgetExhaustionBeforeAcceptance(t *testing.T) {
 	t.Parallel()
 	cutoff := time.Now().UTC().Add(-time.Hour)

@@ -1,23 +1,28 @@
 export interface AgentWorkflowV1 {
-    action_artifact?:            ActionArtifact;
-    approval_brief?:             ApprovalBrief;
-    approval_preview?:           ApprovalPreview;
-    authoring_catalog?:          AuthoringCatalog;
-    campaign_definition?:        CampaignDefinition;
-    campaign_drive_preview?:     CampaignDrivePreview;
-    campaign_drive_receipt?:     CampaignDriveReceipt;
-    campaign_execution_state?:   State;
-    canvas_snapshot?:            CanvasSnapshot;
-    capability_manifest?:        CapabilityManifest;
-    context_bundle?:             Bundle;
-    context_pack_edition?:       Edition;
-    job_definition?:             Job;
-    receipt?:                    ReplayBundleReceipt;
-    replay_bundle?:              CampaignReplay;
-    workflow_admission?:         WorkflowAdmission;
-    workflow_admission_preview?: WorkflowAdmissionPreview;
-    workflow_definition?:        WorkflowDefinitionElement;
-    workflow_lint_report?:       WorkflowLintReport;
+    action_artifact?:                  ActionArtifact;
+    approval_brief?:                   ApprovalBrief;
+    approval_preview?:                 ApprovalPreview;
+    attempt_reserved_event_payload?:   AttemptReservedEventPayload;
+    authoring_catalog?:                AuthoringCatalog;
+    budget_exhausted_event_payload?:   BudgetExhaustedEventPayload;
+    campaign_admission_event_payload?: CampaignAdmissionEventPayload;
+    campaign_definition?:              CampaignDefinition;
+    campaign_drive_preview?:           CampaignDrivePreview;
+    campaign_drive_receipt?:           CampaignDriveReceipt;
+    campaign_execution_state?:         CampaignExecutionStateClass;
+    campaign_terminal_event_payload?:  CampaignTerminalEventPayload;
+    canvas_snapshot?:                  CanvasSnapshot;
+    capability_manifest?:              CapabilityManifest;
+    context_bundle?:                   Bundle;
+    context_pack_edition?:             Edition;
+    job_definition?:                   Job;
+    node_completed_event_payload?:     NodeCompletedEventPayload;
+    receipt?:                          ReplayBundleReceipt;
+    replay_bundle?:                    CampaignReplay;
+    workflow_admission?:               WorkflowAdmission;
+    workflow_admission_preview?:       WorkflowAdmissionPreview;
+    workflow_definition?:              WorkflowDefinitionElement;
+    workflow_lint_report?:             WorkflowLintReport;
 }
 
 export interface ActionArtifact {
@@ -88,6 +93,12 @@ export interface ApprovalPreview {
 
 export type ApprovalPreviewKind = "approval_preview";
 
+export interface AttemptReservedEventPayload {
+    node_id:      string;
+    started_at:   string;
+    workflow_ref: string;
+}
+
 export interface AuthoringCatalog {
     approval_policies: string[];
     blockers:          string[];
@@ -121,6 +132,59 @@ export interface ProducerElement {
     schema_version: number;
     selector:       string;
 }
+
+export interface BudgetExhaustedEventPayload {
+    blocker_code: string;
+    node_id:      string;
+    workflow_ref: string;
+}
+
+export interface CampaignAdmissionEventPayload {
+    state: CampaignExecutionStateClass;
+}
+
+export interface CampaignExecutionStateClass {
+    aggregate_id:       string;
+    blocker_code?:      string;
+    campaign_hash:      string;
+    campaign_id:        string;
+    job_hash:           string;
+    job_id:             string;
+    kind:               CampaignExecutionStateKind;
+    next_node_id?:      string;
+    next_workflow_ref?: string;
+    nodes:              [CampaignExecutionStateNode, ...CampaignExecutionStateNode[]];
+    schema_version:     number;
+    started_at:         string;
+    status:             CampaignExecutionStateStatus;
+    updated_at:         string;
+    usage:              Usage;
+    workflow_hashes:    { [key: string]: string };
+}
+
+export type CampaignExecutionStateKind = "campaign_execution_state";
+
+export interface CampaignExecutionStateNode {
+    blocker_code?:       string;
+    completed_at?:       string;
+    node_id:             string;
+    result_replay_hash?: string;
+    started_at?:         string;
+    status:              NodeStatus;
+    usage:               Usage;
+    workflow_ref:        string;
+}
+
+export type NodeStatus = "pending" | "running" | "completed" | "completed_no_action" | "blocked" | "budget_exhausted";
+
+export interface Usage {
+    actions:          number;
+    attempts:         number;
+    candidates:       number;
+    duration_seconds: number;
+}
+
+export type CampaignExecutionStateStatus = "admitted" | "running" | "blocked" | "completed" | "terminal";
 
 export interface CampaignDefinition {
     archetype:         string;
@@ -177,62 +241,19 @@ export interface CampaignDrivePreview {
     kind:           CampaignDrivePreviewKind;
     next_action:    NextAction;
     schema_version: number;
-    state:          State;
+    state:          CampaignExecutionStateClass;
 }
 
 export type CampaignDrivePreviewKind = "campaign_drive_preview";
 
 export type NextAction = "run_node" | "wait" | "blocked" | "complete";
 
-export interface State {
-    aggregate_id:   string;
-    blocker_code?:  string;
-    campaign_hash:  string;
-    campaign_id:    string;
-    job_hash:       string;
-    job_id:         string;
-    kind:           CampaignExecutionStateKind;
-    next_node_id?:  string;
-    nodes:          [CampaignExecutionStateNode, ...CampaignExecutionStateNode[]];
-    schema_version: number;
-    started_at:     string;
-    status:         CampaignExecutionStateStatus;
-    updated_at:     string;
-    usage:          Usage;
-    workflow_hash:  string;
-    workflow_ref:   string;
-}
-
-export type CampaignExecutionStateKind = "campaign_execution_state";
-
-export interface CampaignExecutionStateNode {
-    blocker_code?:       string;
-    completed_at?:       string;
-    node_id:             string;
-    result_replay_hash?: string;
-    started_at?:         string;
-    status:              NodeStatus;
-    usage:               Usage;
-    workflow_ref:        string;
-}
-
-export type NodeStatus = "pending" | "running" | "completed" | "completed_no_action" | "blocked" | "budget_exhausted";
-
-export interface Usage {
-    actions:          number;
-    attempts:         number;
-    candidates:       number;
-    duration_seconds: number;
-}
-
-export type CampaignExecutionStateStatus = "admitted" | "running" | "blocked" | "completed" | "terminal";
-
 export interface CampaignDriveReceipt {
     campaign_replay?: CampaignReplay;
     kind:             CampaignDriveReceiptKind;
     node_replay?:     CampaignReplay;
     schema_version:   number;
-    state:            State;
+    state:            CampaignExecutionStateClass;
     transitions:      number;
 }
 
@@ -268,6 +289,12 @@ export type ReceiptKind = "receipt";
 export type ReceiptType = "compile" | "admission" | "campaign_admission" | "attempt_reserved" | "pack_edition" | "invocation" | "provider_execution" | "result" | "node_completed" | "budget_exhausted" | "approval" | "terminal";
 
 export type CampaignDriveReceiptKind = "campaign_drive_receipt";
+
+export interface CampaignTerminalEventPayload {
+    state: StateEnum;
+}
+
+export type StateEnum = "completed";
 
 export interface CanvasSnapshot {
     admission_replays?: CampaignReplay[];
@@ -475,6 +502,17 @@ export interface Capability {
 }
 
 export type CapabilityManifestKind = "capability_manifest";
+
+export interface NodeCompletedEventPayload {
+    completed_at:       string;
+    node_id:            string;
+    result_replay_hash: string;
+    status:             NodeCompletedEventPayloadStatus;
+    usage:              Usage;
+    workflow_ref:       string;
+}
+
+export type NodeCompletedEventPayloadStatus = "completed" | "completed_no_action";
 
 export interface WorkflowAdmission {
     campaign:        CampaignDefinition;

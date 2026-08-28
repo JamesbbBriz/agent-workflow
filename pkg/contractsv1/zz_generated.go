@@ -66,8 +66,20 @@ type AgentWorkflowContractCatalog struct {
 	// ApprovalPreview corresponds to the JSON schema field "approval_preview".
 	ApprovalPreview *ApprovalPreview `json:"approval_preview,omitempty,omitzero"`
 
+	// AttemptReservedEventPayload corresponds to the JSON schema field
+	// "attempt_reserved_event_payload".
+	AttemptReservedEventPayload *AttemptReservedEventPayload `json:"attempt_reserved_event_payload,omitempty,omitzero"`
+
 	// AuthoringCatalog corresponds to the JSON schema field "authoring_catalog".
 	AuthoringCatalog *AuthoringCatalog `json:"authoring_catalog,omitempty,omitzero"`
+
+	// BudgetExhaustedEventPayload corresponds to the JSON schema field
+	// "budget_exhausted_event_payload".
+	BudgetExhaustedEventPayload *BudgetExhaustedEventPayload `json:"budget_exhausted_event_payload,omitempty,omitzero"`
+
+	// CampaignAdmissionEventPayload corresponds to the JSON schema field
+	// "campaign_admission_event_payload".
+	CampaignAdmissionEventPayload *CampaignAdmissionEventPayload `json:"campaign_admission_event_payload,omitempty,omitzero"`
 
 	// CampaignDefinition corresponds to the JSON schema field "campaign_definition".
 	CampaignDefinition *CampaignDefinition `json:"campaign_definition,omitempty,omitzero"`
@@ -84,6 +96,10 @@ type AgentWorkflowContractCatalog struct {
 	// "campaign_execution_state".
 	CampaignExecutionState *CampaignExecutionState `json:"campaign_execution_state,omitempty,omitzero"`
 
+	// CampaignTerminalEventPayload corresponds to the JSON schema field
+	// "campaign_terminal_event_payload".
+	CampaignTerminalEventPayload *CampaignTerminalEventPayload `json:"campaign_terminal_event_payload,omitempty,omitzero"`
+
 	// CanvasSnapshot corresponds to the JSON schema field "canvas_snapshot".
 	CanvasSnapshot *CanvasSnapshot `json:"canvas_snapshot,omitempty,omitzero"`
 
@@ -98,6 +114,10 @@ type AgentWorkflowContractCatalog struct {
 
 	// JobDefinition corresponds to the JSON schema field "job_definition".
 	JobDefinition *JobDefinition `json:"job_definition,omitempty,omitzero"`
+
+	// NodeCompletedEventPayload corresponds to the JSON schema field
+	// "node_completed_event_payload".
+	NodeCompletedEventPayload *NodeCompletedEventPayload `json:"node_completed_event_payload,omitempty,omitzero"`
 
 	// Receipt corresponds to the JSON schema field "receipt".
 	Receipt *Receipt `json:"receipt,omitempty,omitzero"`
@@ -238,6 +258,17 @@ const ArtifactRefKindActionArtifact ArtifactRefKind = "action_artifact"
 const ArtifactRefKindContextPack ArtifactRefKind = "context_pack"
 const ArtifactRefKindReceipt ArtifactRefKind = "receipt"
 
+type AttemptReservedEventPayload struct {
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// StartedAt corresponds to the JSON schema field "started_at".
+	StartedAt time.Time `json:"started_at"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
+}
+
 type AuthoringCatalog struct {
 	// ApprovalPolicies corresponds to the JSON schema field "approval_policies".
 	ApprovalPolicies Strings `json:"approval_policies"`
@@ -285,6 +316,22 @@ type Budget struct {
 
 	// MaxDurationSeconds corresponds to the JSON schema field "max_duration_seconds".
 	MaxDurationSeconds *int `json:"max_duration_seconds,omitempty,omitzero"`
+}
+
+type BudgetExhaustedEventPayload struct {
+	// BlockerCode corresponds to the JSON schema field "blocker_code".
+	BlockerCode Identifier `json:"blocker_code"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
+}
+
+type CampaignAdmissionEventPayload struct {
+	// State corresponds to the JSON schema field "state".
+	State CampaignExecutionState `json:"state"`
 }
 
 type CampaignDefinition struct {
@@ -406,6 +453,9 @@ type CampaignExecutionState struct {
 	// NextNodeId corresponds to the JSON schema field "next_node_id".
 	NextNodeId *Identifier `json:"next_node_id,omitempty,omitzero"`
 
+	// NextWorkflowRef corresponds to the JSON schema field "next_workflow_ref".
+	NextWorkflowRef *WorkflowRef `json:"next_workflow_ref,omitempty,omitzero"`
+
 	// Nodes corresponds to the JSON schema field "nodes".
 	Nodes []CampaignNodeExecution `json:"nodes"`
 
@@ -424,11 +474,8 @@ type CampaignExecutionState struct {
 	// Usage corresponds to the JSON schema field "usage".
 	Usage CampaignExecutionUsage `json:"usage"`
 
-	// WorkflowHash corresponds to the JSON schema field "workflow_hash".
-	WorkflowHash SHA256 `json:"workflow_hash"`
-
-	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
-	WorkflowRef WorkflowRef `json:"workflow_ref"`
+	// WorkflowHashes corresponds to the JSON schema field "workflow_hashes".
+	WorkflowHashes CampaignExecutionStateWorkflowHashes `json:"workflow_hashes"`
 }
 
 type CampaignExecutionStateKind string
@@ -444,6 +491,8 @@ const CampaignExecutionStateStatusBlocked CampaignExecutionStateStatus = "blocke
 const CampaignExecutionStateStatusCompleted CampaignExecutionStateStatus = "completed"
 const CampaignExecutionStateStatusRunning CampaignExecutionStateStatus = "running"
 const CampaignExecutionStateStatusTerminal CampaignExecutionStateStatus = "terminal"
+
+type CampaignExecutionStateWorkflowHashes map[string]SHA256
 
 type CampaignExecutionUsage struct {
 	// Actions corresponds to the JSON schema field "actions".
@@ -493,6 +542,11 @@ const CampaignNodeExecutionStatusCompleted CampaignNodeExecutionStatus = "comple
 const CampaignNodeExecutionStatusCompletedNoAction CampaignNodeExecutionStatus = "completed_no_action"
 const CampaignNodeExecutionStatusPending CampaignNodeExecutionStatus = "pending"
 const CampaignNodeExecutionStatusRunning CampaignNodeExecutionStatus = "running"
+
+type CampaignTerminalEventPayload struct {
+	// State corresponds to the JSON schema field "state".
+	State interface{} `json:"state"`
+}
 
 type CanvasContextPort struct {
 	// AllowPartial corresponds to the JSON schema field "allow_partial".
@@ -1047,6 +1101,31 @@ type JobDefinitionKind string
 const JobDefinitionKindJobDefinition JobDefinitionKind = "job_definition"
 
 type JobDefinitionSchemaVersion int
+
+type NodeCompletedEventPayload struct {
+	// CompletedAt corresponds to the JSON schema field "completed_at".
+	CompletedAt time.Time `json:"completed_at"`
+
+	// NodeId corresponds to the JSON schema field "node_id".
+	NodeId Identifier `json:"node_id"`
+
+	// ResultReplayHash corresponds to the JSON schema field "result_replay_hash".
+	ResultReplayHash SHA256 `json:"result_replay_hash"`
+
+	// Status corresponds to the JSON schema field "status".
+	Status NodeCompletedEventPayloadStatus `json:"status"`
+
+	// Usage corresponds to the JSON schema field "usage".
+	Usage CampaignExecutionUsage `json:"usage"`
+
+	// WorkflowRef corresponds to the JSON schema field "workflow_ref".
+	WorkflowRef WorkflowRef `json:"workflow_ref"`
+}
+
+type NodeCompletedEventPayloadStatus string
+
+const NodeCompletedEventPayloadStatusCompleted NodeCompletedEventPayloadStatus = "completed"
+const NodeCompletedEventPayloadStatusCompletedNoAction NodeCompletedEventPayloadStatus = "completed_no_action"
 
 type NodeDefinition struct {
 	// ApprovalPolicy corresponds to the JSON schema field "approval_policy".

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,6 +39,76 @@ func TestFileLedgerPreservesExactJSONNumbers(t *testing.T) {
 	}
 	if replay.Receipts[0].Payload["large"] != json.Number("9007199254740993") {
 		t.Fatalf("large JSON number changed: %#v", replay.Receipts[0].Payload["large"])
+	}
+}
+
+func TestFileLedgerSerializesConcurrentCoreWriters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "receipts.jsonl")
+	left, err := OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := OpenFileLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	first, err := sealReceipt("aggregate-a", 1, contractsv1.ReceiptReceiptTypeCompile, at, nil, nil, nil, map[string]any{"writer": "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := left.Append(first); err != nil {
+		t.Fatal(err)
+	}
+	secondA, err := sealReceipt("aggregate-a", 2, contractsv1.ReceiptReceiptTypeTerminal, at.Add(time.Second), &first.ReceiptHash, nil, nil, map[string]any{"state": "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondB, err := sealReceipt("aggregate-a", 2, contractsv1.ReceiptReceiptTypeTerminal, at.Add(time.Second), &first.ReceiptHash, nil, nil, map[string]any{"state": "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	for _, writer := range []struct {
+		ledger  *FileLedger
+		receipt contractsv1.Receipt
+	}{{left, secondA}, {right, secondB}} {
+		go func() {
+			ready.Done()
+			<-start
+			errs <- writer.ledger.Append(writer.receipt)
+		}()
+	}
+	ready.Wait()
+	close(start)
+	successes := 0
+	for range 2 {
+		if err := <-errs; err == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("concurrent writers committed %d competing heads", successes)
+	}
+	replay, err := left.Replay("aggregate-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replay.Receipts) != 2 {
+		t.Fatalf("ledger was corrupted by concurrent writers: %+v", replay)
+	}
+}
+
+func TestFileLedgerRejectsZeroVersionWithoutPanicking(t *testing.T) {
+	ledger, err := OpenFileLedger(filepath.Join(t.TempDir(), "receipts.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Append(contractsv1.Receipt{}); err == nil {
+		t.Fatal("zero-version receipt was accepted")
 	}
 }
 

@@ -46,6 +46,7 @@ type Invocation struct {
 	Capabilities   contractsv1.CapabilityManifest   `json:"capabilities"`
 	InputHashes    []contractsv1.SHA256             `json:"input_hashes"`
 	Budget         contractsv1.Budget               `json:"budget"`
+	BudgetEnforced bool                             `json:"budget_enforced,omitempty"`
 	Deadline       time.Time                        `json:"deadline"`
 }
 
@@ -147,7 +148,8 @@ func (e *Engine) runAgentNode(ctx context.Context, request RunRequest) (RunResul
 	if node.Definition.Kind != contractsv1.NodeDefinitionKindAgent {
 		return RunResult{}, fmt.Errorf("node %q is not an agent node", request.NodeID)
 	}
-	if request.BudgetOverride != nil {
+	budgetEnforced := request.BudgetOverride != nil
+	if budgetEnforced {
 		definition, err := tightenNodeBudget(node.Definition, *request.BudgetOverride)
 		if err != nil {
 			return RunResult{}, err
@@ -214,7 +216,7 @@ func (e *Engine) runAgentNode(ctx context.Context, request RunRequest) (RunResul
 		IdempotencyKey: invocationKey, JobID: request.Job.Id, CampaignID: request.Campaign.Id,
 		WorkflowRef: compiled.WorkflowRef, Node: node.Definition, Playbook: request.Workflow.Intent,
 		IntentChain: intentChain, Context: resolved.Packs,
-		Bundle: resolved.Bundle, Capabilities: manifest, Budget: node.Definition.Budget, Deadline: deadline,
+		Bundle: resolved.Bundle, Capabilities: manifest, Budget: node.Definition.Budget, BudgetEnforced: budgetEnforced, Deadline: deadline,
 		InputHashes: []contractsv1.SHA256{admission.Receipt.ReceiptHash, jobHash, campaignHash, compiled.CompileHash, resolved.Bundle.BundleHash, manifest.ManifestHash},
 	}
 	if err := validateJSONLimit("invocation material", invocation, maxReceiptMaterialBytes); err != nil {
@@ -741,6 +743,10 @@ func validateArtifacts(artifacts []contractsv1.ActionArtifact, invocation Invoca
 		if !ok || slot.ArtifactKind == nil || *slot.ArtifactKind != contractsv1.SlotArtifactKindActionArtifact || slot.ContentSchema == nil {
 			return fmt.Errorf("provider artifact %q does not match an Action Artifact output slot", artifact.Id)
 		}
+		value := reflect.ValueOf(artifact.Content)
+		if slot.CountsAsCandidates && value.IsValid() && (value.Kind() == reflect.Array || value.Kind() == reflect.Slice) {
+			return fmt.Errorf("provider artifact %q batches candidate records; emit one Action Artifact per candidate", artifact.Id)
+		}
 		if err := outputs[*slot.ContentSchema](artifact.Content); err != nil {
 			return fmt.Errorf("provider artifact %q content schema: %w", artifact.Id, err)
 		}
@@ -756,11 +762,13 @@ func validateArtifacts(artifacts []contractsv1.ActionArtifact, invocation Invoca
 	if len(counts) > 0 {
 		return errors.New("provider returned an undeclared artifact type")
 	}
-	if len(artifacts) > invocation.Budget.MaxActions {
-		return budgetExceededError{code: "action-budget-exhausted"}
-	}
-	if candidates := artifactCandidateCount(artifacts, invocation.Node.OutputSlots); candidates > invocation.Budget.MaxCandidates {
-		return budgetExceededError{code: "candidate-budget-exhausted"}
+	if invocation.BudgetEnforced {
+		if len(artifacts) > invocation.Budget.MaxActions {
+			return budgetExceededError{code: "action-budget-exhausted"}
+		}
+		if candidates := artifactCandidateCount(artifacts, invocation.Node.OutputSlots); candidates > invocation.Budget.MaxCandidates {
+			return budgetExceededError{code: "candidate-budget-exhausted"}
+		}
 	}
 	return nil
 }
@@ -775,11 +783,6 @@ func artifactCandidateCount(artifacts []contractsv1.ActionArtifact, slots []cont
 	total := 0
 	for _, artifact := range artifacts {
 		if !candidateTypes[artifact.ArtifactType] {
-			continue
-		}
-		value := reflect.ValueOf(artifact.Content)
-		if value.IsValid() && (value.Kind() == reflect.Array || value.Kind() == reflect.Slice) {
-			total += value.Len()
 			continue
 		}
 		total++

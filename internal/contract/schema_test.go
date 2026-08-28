@@ -61,6 +61,36 @@ func TestPublicContractsFreezeWorkflowRefsAndContextOnlyBundles(t *testing.T) {
 	}
 }
 
+func TestV2CampaignReceiptPayloadsAreClosedAndTyped(t *testing.T) {
+	t.Parallel()
+	compiler := jsonschema.NewCompiler()
+	var document any
+	if err := json.Unmarshal(publiccontracts.AgentWorkflowV1, &document); err != nil {
+		t.Fatal(err)
+	}
+	if err := compiler.AddResource(schemaID, document); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := compiler.Compile(schemaID + "#/$defs/Receipt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	documentReceipt := map[string]any{
+		"kind": "receipt", "schema_version": 2, "id": "receipt-a", "receipt_type": "attempt_reserved",
+		"aggregate_id": "campaign-a", "aggregate_version": 2, "occurred_at": "2026-08-28T00:00:00Z",
+		"input_hashes": []any{sha}, "output_hashes": []any{}, "previous_receipt_hash": sha, "receipt_hash": sha,
+		"payload": map[string]any{},
+	}
+	if err := receipt.Validate(documentReceipt); err == nil {
+		t.Fatal("v2 Campaign receipt accepted an untyped payload")
+	}
+	documentReceipt["payload"] = map[string]any{"workflow_ref": "research-review@1", "node_id": "research", "started_at": "2026-08-28T00:00:00Z"}
+	if err := receipt.Validate(documentReceipt); err != nil {
+		t.Fatalf("v2 Campaign receipt rejected its exact payload: %v", err)
+	}
+}
+
 func intentFixture(kind string) map[string]any {
 	return map[string]any{
 		"schema_version": 1, "kind": kind, "title": "Title", "summary": "Summary", "objective": "Objective",
