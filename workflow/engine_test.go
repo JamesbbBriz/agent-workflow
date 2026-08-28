@@ -109,6 +109,13 @@ func TestProviderResultRecoveryConvergesAfterLedgerFailure(t *testing.T) {
 	if provider.work != 1 || len(result.Replay.Receipts) != 7 {
 		t.Fatalf("redelivery duplicated provider work or failed to converge: work=%d receipts=%d", provider.work, len(result.Replay.Receipts))
 	}
+	preview, err := engine.Preview(context.Background(), workflow.CampaignRunRequest{Job: request.Job, Campaign: request.Campaign, Workflow: request.Workflow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.State.NextNodeId == nil || *preview.State.NextNodeId != "review" || preview.State.Nodes[0].Status != contractsv1.CampaignNodeExecutionStatusCompleted {
+		t.Fatalf("redelivery completed only the child Replay, not its Campaign transition: %+v", preview.State)
+	}
 }
 
 func TestExpiredProviderPollBecomesOneTerminalReceipt(t *testing.T) {
