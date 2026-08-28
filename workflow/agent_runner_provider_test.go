@@ -234,8 +234,8 @@ func TestAgentRunnerProviderUsesBoundedProtocolAndExactResult(t *testing.T) {
 	isolation := provider.IsolationEvidence()
 	invocation := Invocation{IdempotencyKey: "runner-attempt", Deadline: time.Now().Add(10 * time.Second), Node: contractsv1.NodeDefinition{Id: "research", OutputSlots: []contractsv1.Slot{}}, InputHashes: []contractsv1.SHA256{repeatedSHA('1')}, ExecutorProfile: &profile, Isolation: &isolation}
 	badHandshake, err := NewAgentRunnerProvider(SubprocessProviderConfig{
-		Executable: executable, Args: []string{"-test.run=TestAgentRunnerProtocolHelper"}, StagedRoot: root,
-		Environment: map[string]string{"OPENAI_API_KEY": "agent-workflow-helper", "AGENT_WORKFLOW_PROTOCOL_MODE": "bad-descriptor"},
+		Executable: executable, Args: []string{"-test.run=TestAgentRunnerBadHandshakeHelper"}, StagedRoot: root,
+		Environment: map[string]string{"OPENAI_API_KEY": "agent-workflow-helper"},
 	}, profile)
 	if err != nil {
 		t.Fatal(err)
@@ -319,9 +319,6 @@ func TestAgentRunnerProtocolHelper(t *testing.T) {
 		return
 	}
 	descriptor, _ := ProviderDescriptor(contractsv1.ProviderIDCodex)
-	if os.Getenv("AGENT_WORKFLOW_PROTOCOL_MODE") == "bad-descriptor" {
-		descriptor, _ = ProviderDescriptor(contractsv1.ProviderIDHermesAgent)
-	}
 	runRef := "opaque-provider-run"
 	invocationID := ""
 	var invocation Invocation
@@ -380,6 +377,26 @@ func TestAgentRunnerProtocolHelper(t *testing.T) {
 		}
 	}
 	os.Exit(0)
+}
+
+func TestAgentRunnerBadHandshakeHelper(t *testing.T) {
+	if os.Getenv("OPENAI_API_KEY") != "agent-workflow-helper" {
+		return
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		os.Exit(30)
+	}
+	var request contractsv1.ProviderProtocolRequest
+	if err := contract.DecodeDefinition("ProviderProtocolRequest", append([]byte{}, scanner.Bytes()...), &request); err != nil {
+		os.Exit(31)
+	}
+	descriptor, _ := ProviderDescriptor(contractsv1.ProviderIDHermesAgent)
+	response := contractsv1.ProviderProtocolResponse{ProtocolVersion: 1, RequestId: request.RequestId, ResponseType: contractsv1.ProviderProtocolResponseResponseTypeDescriptor, Descriptor: &descriptor}
+	if json.NewEncoder(os.Stdout).Encode(response) != nil {
+		os.Exit(32)
+	}
+	time.Sleep(30 * time.Second)
 }
 
 func testExecutorProfile(t *testing.T, configRef string) contractsv1.ExecutorProfile {
