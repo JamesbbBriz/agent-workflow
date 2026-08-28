@@ -35,20 +35,21 @@ type ProviderResult struct {
 }
 
 type Invocation struct {
-	IdempotencyKey string                           `json:"idempotency_key"`
-	JobID          contractsv1.Identifier           `json:"job_id"`
-	CampaignID     contractsv1.Identifier           `json:"campaign_id"`
-	WorkflowRef    contractsv1.WorkflowRef          `json:"workflow_ref"`
-	Node           contractsv1.NodeDefinition       `json:"node"`
-	Playbook       contractsv1.IntentCard           `json:"playbook"`
-	IntentChain    contractsv1.ContextPackEdition   `json:"intent_chain"`
-	Context        []contractsv1.ContextPackEdition `json:"context"`
-	Bundle         contractsv1.ContextBundle        `json:"bundle"`
-	Capabilities   contractsv1.CapabilityManifest   `json:"capabilities"`
-	InputHashes    []contractsv1.SHA256             `json:"input_hashes"`
-	Budget         contractsv1.Budget               `json:"budget"`
-	BudgetEnforced bool                             `json:"budget_enforced,omitempty"`
-	Deadline       time.Time                        `json:"deadline"`
+	IdempotencyKey string                                 `json:"idempotency_key"`
+	JobID          contractsv1.Identifier                 `json:"job_id"`
+	CampaignID     contractsv1.Identifier                 `json:"campaign_id"`
+	WorkflowRef    contractsv1.WorkflowRef                `json:"workflow_ref"`
+	Node           contractsv1.NodeDefinition             `json:"node"`
+	Playbook       contractsv1.IntentCard                 `json:"playbook"`
+	IntentChain    contractsv1.ContextPackEdition         `json:"intent_chain"`
+	Context        []contractsv1.ContextPackEdition       `json:"context"`
+	Bundle         contractsv1.ContextBundle              `json:"bundle"`
+	Capabilities   contractsv1.CapabilityManifest         `json:"capabilities"`
+	InputHashes    []contractsv1.SHA256                   `json:"input_hashes"`
+	Budget         contractsv1.Budget                     `json:"budget"`
+	BudgetEnforced bool                                   `json:"budget_enforced,omitempty"`
+	Deadline       time.Time                              `json:"deadline"`
+	Isolation      *contractsv1.ProviderIsolationEvidence `json:"isolation,omitempty"`
 }
 
 type ReplayMaterial struct {
@@ -75,12 +76,13 @@ type RunResult struct {
 }
 
 type Engine struct {
-	registry       *Registry
-	capabilities   CapabilityCatalog
-	outputs        OutputCatalog
-	provider       Provider
-	ledger         Ledger
-	approvalActors map[string]map[string]bool
+	registry          *Registry
+	capabilities      CapabilityCatalog
+	outputs           OutputCatalog
+	provider          Provider
+	ledger            Ledger
+	approvalActors    map[string]map[string]bool
+	requiredIsolation contractsv1.ProviderIsolationProfile
 }
 
 type Ledger interface {
@@ -212,6 +214,9 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 				}
 				return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: material.Artifacts, AdmissionReplay: admissionReplay, Replay: replay}, nil
 			}
+			if err := e.validateInvocationIsolation(invocation); err != nil {
+				return RunResult{}, err
+			}
 			return e.resumeInvocation(ctx, aggregateID, transitionAt, compiled, invocation, admissionReplay, replay)
 		}
 	}
@@ -231,6 +236,10 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 		}
 	}
 	manifest, err := e.capabilityManifest(node.Definition)
+	if err != nil {
+		return RunResult{}, err
+	}
+	isolation, err := e.providerIsolation()
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -263,7 +272,8 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 		WorkflowRef: compiled.WorkflowRef, Node: node.Definition, Playbook: request.Workflow.Intent,
 		IntentChain: intentChain, Context: resolved.Packs,
 		Bundle: resolved.Bundle, Capabilities: manifest, Budget: node.Definition.Budget, BudgetEnforced: budgetEnforced, Deadline: deadline,
-		InputHashes: []contractsv1.SHA256{admission.Receipt.ReceiptHash, jobHash, campaignHash, compiled.CompileHash, resolved.Bundle.BundleHash, manifest.ManifestHash},
+		InputHashes: []contractsv1.SHA256{admission.Receipt.ReceiptHash, jobHash, campaignHash, compiled.CompileHash, resolved.Bundle.BundleHash, manifest.ManifestHash, isolation.EvidenceHash},
+		Isolation:   &isolation,
 	}
 	if err := validateJSONLimit("invocation material", invocation, maxReceiptMaterialBytes); err != nil {
 		return RunResult{}, err
@@ -287,6 +297,9 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occurredAt time.Time, compiled CompiledWorkflow, invocation Invocation, admissionReplay, replay contractsv1.ReplayBundle) (RunResult, error) {
 	if _, ok := e.ledger.(AtomicLedger); !ok {
 		return RunResult{}, errors.New("provider execution requires an AtomicLedger")
+	}
+	if err := e.validateInvocationIsolation(invocation); err != nil {
+		return RunResult{}, err
 	}
 	if storedResult, ok, err := materializeProviderResult(replay); err != nil {
 		return RunResult{}, err
@@ -402,6 +415,13 @@ func providerAcknowledged(replay contractsv1.ReplayBundle, invocation Invocation
 	var completedAt time.Time
 	if err := decodePayload(receipt.Payload["completed_at"], &completedAt); err != nil {
 		return false, err
+	}
+	if invocation.Isolation == nil {
+		return false, errors.New("provider execution has no isolation binding")
+	}
+	var isolation contractsv1.ProviderIsolationEvidence
+	if err := decodePayload(receipt.Payload["isolation"], &isolation); err != nil || isolation.EvidenceHash != invocation.Isolation.EvidenceHash {
+		return false, errors.New("provider execution isolation does not match the invocation")
 	}
 	hashes, err := actionArtifactHashes(result.Artifacts)
 	if err != nil {
@@ -618,10 +638,13 @@ func verifyDefinitionBinding(bundle contractsv1.ReplayBundle, admissionReplay *c
 	if err != nil || !reflect.DeepEqual(admission.Job, job) || !reflect.DeepEqual(admission.Campaign, campaign) || !reflect.DeepEqual(admission.Workflow, definition) || admission.Receipt.ReceiptHash != compileReceipt.InputHashes[1] {
 		return Invocation{}, errors.New("replay does not bind a canonical Workflow admission")
 	}
-	if len(invocation.InputHashes) != 6 || invocation.InputHashes[0] != compileReceipt.InputHashes[1] || invocation.InputHashes[1] != jobHash || invocation.InputHashes[2] != campaignHash ||
+	if (len(invocation.InputHashes) != 6 && len(invocation.InputHashes) != 7) || invocation.InputHashes[0] != compileReceipt.InputHashes[1] || invocation.InputHashes[1] != jobHash || invocation.InputHashes[2] != campaignHash ||
 		invocation.InputHashes[3] != compileReceipt.OutputHashes[0] || invocation.InputHashes[4] != invocation.Bundle.BundleHash ||
 		invocation.InputHashes[5] != invocation.Capabilities.ManifestHash || compileReceipt.InputHashes[0] != contractsv1.SHA256(identity.Hash) {
 		return Invocation{}, errors.New("replay does not bind the displayed definitions")
+	}
+	if len(invocation.InputHashes) == 7 && (invocation.Isolation == nil || invocation.InputHashes[6] != invocation.Isolation.EvidenceHash || verifyProviderIsolation(*invocation.Isolation) != nil) {
+		return Invocation{}, errors.New("replay does not bind valid provider isolation evidence")
 	}
 	return invocation, nil
 }
@@ -651,8 +674,11 @@ func validateReplayBinding(invocation Invocation, request RunRequest, compiled C
 	if invocation.JobID != request.Job.Id || invocation.CampaignID != request.Campaign.Id || invocation.WorkflowRef != compiled.WorkflowRef || invocation.Node.Id != node.Definition.Id {
 		return errors.New("recorded invocation identity does not match redelivery")
 	}
-	if len(invocation.InputHashes) != 6 || invocation.InputHashes[1] != jobHash || invocation.InputHashes[2] != campaignHash || invocation.InputHashes[3] != compiled.CompileHash {
+	if (len(invocation.InputHashes) != 6 && len(invocation.InputHashes) != 7) || invocation.InputHashes[1] != jobHash || invocation.InputHashes[2] != campaignHash || invocation.InputHashes[3] != compiled.CompileHash {
 		return errors.New("recorded invocation inputs do not match redelivery")
+	}
+	if len(invocation.InputHashes) == 7 && (invocation.Isolation == nil || invocation.InputHashes[6] != invocation.Isolation.EvidenceHash || verifyProviderIsolation(*invocation.Isolation) != nil) {
+		return errors.New("recorded invocation isolation evidence is invalid")
 	}
 	return nil
 }
@@ -981,9 +1007,12 @@ func postExecutionReceipts(aggregateID string, occurredAt time.Time, previousRec
 func postExecutionReceiptsWithState(aggregateID string, occurredAt time.Time, previousReceipt contractsv1.Receipt, invocation Invocation, providerResult ProviderResult, artifactHashes []contractsv1.SHA256, accepted bool, terminalState string) ([]contractsv1.Receipt, error) {
 	version := previousReceipt.AggregateVersion + 1
 	previous := previousReceipt.ReceiptHash
-	providerReceipt, err := sealReceipt(aggregateID, version, contractsv1.ReceiptReceiptTypeProviderExecution, occurredAt, &previous,
+	if invocation.Isolation == nil {
+		return nil, errors.New("provider execution requires isolation evidence")
+	}
+	providerReceipt, err := sealReceiptVersion(2, aggregateID, version, contractsv1.ReceiptReceiptTypeProviderExecution, occurredAt, &previous,
 		[]contractsv1.SHA256{contractsv1.SHA256(invocation.IdempotencyKey)}, artifactHashes,
-		map[string]any{"node_id": invocation.Node.Id, "idempotency_key": providerResult.IdempotencyKey, "completed_at": providerResult.CompletedAt})
+		map[string]any{"node_id": invocation.Node.Id, "idempotency_key": providerResult.IdempotencyKey, "completed_at": providerResult.CompletedAt, "isolation": *invocation.Isolation})
 	if err != nil {
 		return nil, err
 	}
