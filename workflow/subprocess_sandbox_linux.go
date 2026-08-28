@@ -29,7 +29,7 @@ func sandboxCommand(executable string, args []string, root string, maxOutputByte
 	if err != nil {
 		return "", nil, err
 	}
-	commandArgs := []string{"--die-with-parent", "--new-session", "--unshare-all", "--proc", "/proc", "--dev", "/dev", "--dir", "/workspace", "--dir", "/workspace/output", "--ro-bind", root + "/input", "/workspace/input", "--bind", root + "/output/result", "/workspace/output/result", "--ro-bind", executable, "/provider", "--chdir", "/workspace"}
+	commandArgs := []string{"--die-with-parent", "--new-session", "--unshare-all", "--proc", "/proc", "--dev", "/dev", "--dir", "/workspace", "--ro-bind", root + "/input", "/workspace/input", "--ro-bind", root + "/output", "/workspace/output", "--bind", root + "/output/result", "/workspace/output/result", "--ro-bind", executable, "/provider", "--chdir", "/workspace"}
 	for _, path := range []string{"/usr", "/bin", "/lib", "/lib64"} {
 		if _, err := os.Stat(path); err == nil {
 			commandArgs = append(commandArgs, "--ro-bind", path, path)

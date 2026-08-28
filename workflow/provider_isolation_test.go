@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -80,6 +81,7 @@ func TestSubprocessProviderSandboxHidesAmbientEnvironmentAndOutsideFiles(t *test
 		"[ -z \"$UNDECLARED_PROVIDER_CANARY\" ] || exit 21\n" +
 		"if /usr/bin/cat \"$1\" >/dev/null 2>&1; then exit 24; fi\n" +
 		"if /usr/bin/tee input/tamper </dev/null >/dev/null 2>&1; then exit 25; fi\n" +
+		"if /usr/bin/tee output/other </dev/null >/dev/null 2>&1; then exit 27; fi\n" +
 		"printf output > output/result || exit 26\n" +
 		"printf '%s\\n' '{\"idempotency_key\":\"sandbox-attempt\",\"completed_at\":\"" + completedAt.Format(time.RFC3339Nano) + "\",\"artifacts\":[]}'\n"
 	if err := os.WriteFile(filepath.Join(root, "input", "provider.sh"), []byte(script), 0700); err != nil {
@@ -132,10 +134,21 @@ func TestSubprocessProviderEnforcesCancellationAndOutputLimit(t *testing.T) {
 	}
 
 	t.Run("cancel", func(t *testing.T) {
-		provider := newProvider("while :; do :; done\n", 1024)
+		provider := newProvider("/usr/bin/sleep 30 & echo $! > output/result\nwhile :; do :; done\n", 1024)
 		invocation := Invocation{IdempotencyKey: "cancel-attempt", Deadline: time.Now().Add(5 * time.Second)}
 		if err := provider.Start(context.Background(), invocation); err != nil {
 			t.Fatal(err)
+		}
+		var childPID int
+		for childPID == 0 && time.Now().Before(invocation.Deadline) {
+			body, _ := os.ReadFile(filepath.Join(provider.config.StagedRoot, "output", "result"))
+			childPID, _ = strconv.Atoi(strings.TrimSpace(string(body)))
+			if childPID == 0 {
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+		if childPID == 0 {
+			t.Fatal("provider child process did not start")
 		}
 		if err := provider.Cancel(context.Background(), invocation.IdempotencyKey); err != nil {
 			t.Fatal(err)
@@ -144,6 +157,14 @@ func TestSubprocessProviderEnforcesCancellationAndOutputLimit(t *testing.T) {
 		case <-provider.runs[invocation.IdempotencyKey].done:
 		case <-time.After(2 * time.Second):
 			t.Fatal("canceled provider process did not stop")
+		}
+		stopBy := time.Now().Add(time.Second)
+		for processAlive(childPID) && time.Now().Before(stopBy) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if processAlive(childPID) {
+			terminateProcess(childPID)
+			t.Fatal("canceled provider child process survived")
 		}
 	})
 

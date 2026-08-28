@@ -178,6 +178,7 @@ func (p *SubprocessProvider) Start(ctx context.Context, invocation Invocation) e
 	}
 	runCtx, cancel := context.WithDeadline(context.Background(), invocation.Deadline)
 	cmd := exec.CommandContext(runCtx, name, args...)
+	configureProcessGroup(cmd)
 	cmd.Dir = p.config.StagedRoot
 	cmd.Env = make([]string, 0, len(p.config.Environment))
 	for name, value := range p.config.Environment {
@@ -195,7 +196,10 @@ func (p *SubprocessProvider) Start(ctx context.Context, invocation Invocation) e
 		return nil
 	}
 	p.runs[invocation.IdempotencyKey] = running
-	p.cancels[invocation.IdempotencyKey] = cancel
+	p.cancels[invocation.IdempotencyKey] = func() {
+		cancel()
+		killProcessGroup(cmd)
+	}
 	p.mu.Unlock()
 	go p.execute(invocation, cmd, stdout, running, cancel)
 	return nil
@@ -203,6 +207,7 @@ func (p *SubprocessProvider) Start(ctx context.Context, invocation Invocation) e
 
 func (p *SubprocessProvider) execute(invocation Invocation, cmd *exec.Cmd, stdout *limitedBuffer, running *subprocessRun, cancel context.CancelFunc) {
 	err := cmd.Run()
+	killProcessGroup(cmd)
 	if err == nil {
 		if info, statErr := os.Stat(filepath.Join(p.config.StagedRoot, "output", "result")); statErr != nil {
 			err = statErr
