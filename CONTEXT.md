@@ -5,6 +5,8 @@
 - **Workflow** — an immutable, versioned directed acyclic graph of Nodes. It is a reusable definition, not a running instance.
 - **Campaign execution** — the canonical runtime aggregate that advances one admitted Campaign through its pinned Workflow plan.
 - **Node** — the smallest context, capability, budget, execution, and acceptance authority.
+- **Agent Role** — a reusable, versioned job description for Agent work, identified by an executor reference and explained through its purpose, expected Context, Capabilities, and outputs. It is not a model, process, Workflow, or running Agent instance.
+- **Agent Invocation** — one bounded attempt to execute an Agent Node under an exact Executor Profile. Invocation counts are runtime evidence; Agent Role counts describe available capability.
 - **Context Pack** — an immutable evidence edition with authority, scope, provenance, freshness, and a content hash.
 - **Context Bundle** — the exact set of Context Pack editions resolved for one Node at one Campaign evidence frontier.
 - **Action Artifact** — a decision or proposed mutation. It has no mutation authority until the Core accepts the required review or approval.

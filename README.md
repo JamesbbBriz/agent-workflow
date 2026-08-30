@@ -4,6 +4,8 @@ Agent Workflow is an auditable control plane for context-bound Agent work. Human
 
 This repository is the domain-neutral Core extracted from patterns dogfooded in [SEO Ops](https://github.com/JamesbbBriz/seo-ops). It does not copy SEO workflows or create another SEO state machine.
 
+For positioning, the 13-Agent SEO vertical, current dogfood evidence, claim boundaries, and the next generic contract extractions, see the [SEO Ops dogfood GTM pack](docs/go-to-market/seo-ops-dogfood-gtm-pack.md).
+
 ## Control model
 
 An Agent is constrained by all of the following:
