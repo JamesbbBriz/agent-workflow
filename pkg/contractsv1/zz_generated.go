@@ -171,6 +171,12 @@ type AgentWorkflowContractCatalog struct {
 	// JobDefinition corresponds to the JSON schema field "job_definition".
 	JobDefinition *JobDefinition `json:"job_definition,omitempty,omitzero"`
 
+	// LocalProjectDoctor corresponds to the JSON schema field "local_project_doctor".
+	LocalProjectDoctor *LocalProjectDoctor `json:"local_project_doctor,omitempty,omitzero"`
+
+	// LocalProjectInit corresponds to the JSON schema field "local_project_init".
+	LocalProjectInit *LocalProjectInit `json:"local_project_init,omitempty,omitzero"`
+
 	// MutationEvidence corresponds to the JSON schema field "mutation_evidence".
 	MutationEvidence *MutationEvidence `json:"mutation_evidence,omitempty,omitzero"`
 
@@ -1801,6 +1807,89 @@ const JobDefinitionKindJobDefinition JobDefinitionKind = "job_definition"
 
 type JobDefinitionSchemaVersion int
 
+type LocalProjectDoctor struct {
+	// CampaignId corresponds to the JSON schema field "campaign_id".
+	CampaignId Identifier `json:"campaign_id"`
+
+	// Core corresponds to the JSON schema field "core".
+	Core LocalProjectDoctorCore `json:"core"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind LocalProjectDoctorKind `json:"kind"`
+
+	// Provider corresponds to the JSON schema field "provider".
+	Provider LocalProjectDoctorProvider `json:"provider"`
+
+	// Ready corresponds to the JSON schema field "ready".
+	Ready bool `json:"ready"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion LocalProjectDoctorSchemaVersion `json:"schema_version"`
+
+	// Status corresponds to the JSON schema field "status".
+	Status LocalProjectDoctorStatus `json:"status"`
+
+	// Storage corresponds to the JSON schema field "storage".
+	Storage LocalProjectDoctorStorage `json:"storage"`
+}
+
+type LocalProjectDoctorCore string
+
+const LocalProjectDoctorCoreReady LocalProjectDoctorCore = "ready"
+
+type LocalProjectDoctorKind string
+
+const LocalProjectDoctorKindLocalProjectDoctor LocalProjectDoctorKind = "local_project_doctor"
+
+type LocalProjectDoctorProvider struct {
+	// Id corresponds to the JSON schema field "id".
+	Id Identifier `json:"id"`
+
+	// Production corresponds to the JSON schema field "production".
+	Production bool `json:"production"`
+
+	// Ready corresponds to the JSON schema field "ready".
+	Ready bool `json:"ready"`
+}
+
+type LocalProjectDoctorSchemaVersion int
+
+type LocalProjectDoctorStatus string
+
+const LocalProjectDoctorStatusReady LocalProjectDoctorStatus = "ready"
+
+type LocalProjectDoctorStorage struct {
+	// Mode corresponds to the JSON schema field "mode".
+	Mode LocalProjectDoctorStorageMode `json:"mode"`
+
+	// Path corresponds to the JSON schema field "path".
+	Path string `json:"path"`
+}
+
+type LocalProjectDoctorStorageMode string
+
+const LocalProjectDoctorStorageModeRw LocalProjectDoctorStorageMode = "-rw-------"
+
+type LocalProjectInit struct {
+	// Kind corresponds to the JSON schema field "kind".
+	Kind LocalProjectInitKind `json:"kind"`
+
+	// Ledger corresponds to the JSON schema field "ledger".
+	Ledger string `json:"ledger"`
+
+	// Project corresponds to the JSON schema field "project".
+	Project string `json:"project"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion LocalProjectInitSchemaVersion `json:"schema_version"`
+}
+
+type LocalProjectInitKind string
+
+const LocalProjectInitKindLocalProjectInit LocalProjectInitKind = "local_project_init"
+
+type LocalProjectInitSchemaVersion int
+
 type MutationEvidence struct {
 	// CaseId corresponds to the JSON schema field "case_id".
 	CaseId string `json:"case_id"`
@@ -2897,11 +2986,21 @@ type WorkflowAdmissionPreview struct {
 
 type WorkflowAdmissionPreviewKind string
 
+type RedactedReceiptPreviousReceiptHash_0 = SHA256
+
+type ReceiptPreviousReceiptHash_0 = SHA256
+
+type WorkflowDefinitionKind string
+
+type WorkflowAdmissionSchemaVersion int
+
+const WorkflowDefinitionKindWorkflowDefinition WorkflowDefinitionKind = "workflow_definition"
+
+type WorkflowDefinitionSchemaVersion int
+
 const WorkflowAdmissionPreviewKindWorkflowAdmissionPreview WorkflowAdmissionPreviewKind = "workflow_admission_preview"
 
 type WorkflowAdmissionPreviewSchemaVersion int
-
-type WorkflowAdmissionSchemaVersion int
 
 type WorkflowDefinition struct {
 	// Blockers corresponds to the JSON schema field "blockers".
@@ -2938,11 +3037,10 @@ type WorkflowDefinition struct {
 	Version int `json:"version"`
 }
 
-type WorkflowDefinitionKind string
+type WorkflowLintIssueSeverity string
 
-const WorkflowDefinitionKindWorkflowDefinition WorkflowDefinitionKind = "workflow_definition"
-
-type WorkflowDefinitionSchemaVersion int
+const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
+const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
 
 type WorkflowLintIssue struct {
 	// Code corresponds to the JSON schema field "code".
@@ -2958,14 +3056,11 @@ type WorkflowLintIssue struct {
 	Severity WorkflowLintIssueSeverity `json:"severity"`
 }
 
-type WorkflowLintIssueSeverity string
+type WorkflowLintReportKind string
 
-const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
-const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
+const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflow_lint_report"
 
-type WorkflowRef string
-
-type RedactedReceiptPreviousReceiptHash_0 = SHA256
+type WorkflowLintReportSchemaVersion int
 
 type WorkflowLintReport struct {
 	// Issues corresponds to the JSON schema field "issues".
@@ -2981,10 +3076,4 @@ type WorkflowLintReport struct {
 	Valid bool `json:"valid"`
 }
 
-type WorkflowLintReportKind string
-
-const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflow_lint_report"
-
-type WorkflowLintReportSchemaVersion int
-
-type ReceiptPreviousReceiptHash_0 = SHA256
+type WorkflowRef string

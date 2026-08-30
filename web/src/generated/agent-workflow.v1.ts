@@ -32,6 +32,8 @@ export interface AgentWorkflowV1 {
     core_completed_event_payload?:     CoreCompletedEventPayload;
     executor_profile?:                 ExecutorProfile;
     job_definition?:                   Job;
+    local_project_doctor?:             LocalProjectDoctor;
+    local_project_init?:               LocalProjectInit;
     mutation_evidence?:                ApplyEvidence;
     mutation_lease?:                   Lease;
     needs_context_event_payload?:      NeedsContextEventPayload;
@@ -469,7 +471,7 @@ export interface DefinitionElement {
     kind:                NodeKindEnum;
     output_slots:        OutputElement[];
     wait_delay_seconds?: number;
-    wait_mode?:          Mode;
+    wait_mode?:          WaitModeEnum;
     wait_signal?:        string;
 }
 
@@ -486,7 +488,7 @@ export interface OutputElement {
 
 export type ArtifactKind = "context_pack" | "action_artifact";
 
-export type Mode = "time" | "signal";
+export type WaitModeEnum = "time" | "signal";
 
 export interface ExecutionElement {
     aggregate_id:     string;
@@ -875,6 +877,43 @@ export interface ExecutorProfile {
 
 export type ExecutorProfileKind = "executor_profile";
 
+export interface LocalProjectDoctor {
+    campaign_id:    string;
+    core:           Core;
+    kind:           LocalProjectDoctorKind;
+    provider:       Provider;
+    ready:          boolean;
+    schema_version: number;
+    status:         Core;
+    storage:        Storage;
+}
+
+export type Core = "ready";
+
+export type LocalProjectDoctorKind = "local_project_doctor";
+
+export interface Provider {
+    id:         string;
+    production: boolean;
+    ready:      boolean;
+}
+
+export interface Storage {
+    mode: StorageMode;
+    path: string;
+}
+
+export type StorageMode = "-rw-------";
+
+export interface LocalProjectInit {
+    kind:           LocalProjectInitKind;
+    ledger:         string;
+    project:        string;
+    schema_version: number;
+}
+
+export type LocalProjectInitKind = "local_project_init";
+
 export interface NeedsContextEventPayload {
     blocker_fingerprint: string;
     node_id:             string;
@@ -1058,7 +1097,7 @@ export interface WaitResumedEventPayload {
 }
 
 export interface WaitStartedEventPayload {
-    mode:         Mode;
+    mode:         WaitModeEnum;
     node_id:      string;
     signal?:      string;
     started_at:   string;

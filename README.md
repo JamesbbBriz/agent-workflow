@@ -29,6 +29,7 @@ fixture and demo provider with a private append-only ledger:
 go run ./cmd/agent-workflow init --dir /tmp/agent-workflow-demo
 go run ./cmd/agent-workflow doctor --dir /tmp/agent-workflow-demo
 go run ./cmd/agent-workflow run --dir /tmp/agent-workflow-demo
+go run ./cmd/agent-workflow status --dir /tmp/agent-workflow-demo
 go run ./cmd/agent-workflow approval confirm --dir /tmp/agent-workflow-demo
 go run ./cmd/agent-workflow replay --dir /tmp/agent-workflow-demo
 ```

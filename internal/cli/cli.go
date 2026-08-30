@@ -25,11 +25,13 @@ import (
 )
 
 type response struct {
-	OK          bool   `json:"ok"`
-	WorkflowRef string `json:"workflow_ref,omitempty"`
-	Hash        string `json:"hash,omitempty"`
-	Error       string `json:"error,omitempty"`
-	Code        string `json:"code,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	SchemaVersion int    `json:"schema_version,omitempty"`
+	OK            bool   `json:"ok"`
+	WorkflowRef   string `json:"workflow_ref,omitempty"`
+	Hash          string `json:"hash,omitempty"`
+	Error         string `json:"error,omitempty"`
+	Code          string `json:"code,omitempty"`
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -76,8 +78,8 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("init", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	dir := flags.String("dir", ".", "project directory")
-	_ = flags.Bool("json", true, "write a JSON response")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	jsonOutput := flags.Bool("json", true, "write a JSON response")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !*jsonOutput {
 		return 2
 	}
 	root := filepath.Clean(*dir)
@@ -86,6 +88,11 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	}
 	want := conformanceassets.GenericFixture()
 	definitionPath := filepath.Join(root, "agent-workflow.json")
+	if info, err := os.Lstat(definitionPath); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
+		return writeError(stdout, stderr, true, "project_unsafe", errors.New("agent-workflow.json must be a regular file, not a symlink"))
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return writeError(stdout, stderr, true, "project_unavailable", errors.New("project definition is unavailable"))
+	}
 	if existing, err := os.ReadFile(definitionPath); err == nil {
 		if !reflect.DeepEqual(existing, want) {
 			return writeError(stdout, stderr, true, "project_exists", errors.New("agent-workflow.json already exists with different content"))
@@ -95,39 +102,57 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	} else if err := os.WriteFile(definitionPath, want, 0o600); err != nil {
 		return writeError(stdout, stderr, true, "project_unavailable", errors.New("project definition could not be written"))
 	}
-	ledger, err := workflow.OpenFileLedger(filepath.Join(root, ".agent-workflow", "ledger.jsonl"))
+	ledgerPath, err := localLedgerPath(root, true)
+	if err != nil {
+		return writeError(stdout, stderr, true, "ledger_unavailable", err)
+	}
+	ledger, err := workflow.OpenFileLedger(ledgerPath)
 	if err != nil {
 		return writeError(stdout, stderr, true, "ledger_unavailable", err)
 	}
 	_ = ledger
-	return writeProviderData(stdout, map[string]any{"project": definitionPath, "ledger": filepath.Join(root, ".agent-workflow", "ledger.jsonl")})
+	result := contractsv1.LocalProjectInit{Kind: contractsv1.LocalProjectInitKindLocalProjectInit, SchemaVersion: 1, Project: definitionPath, Ledger: ledgerPath}
+	if err := contract.ValidateDefinition("LocalProjectInit", result); err != nil {
+		return writeError(stdout, stderr, true, "output_failed", err)
+	}
+	return writeProviderData(stdout, result)
 }
 
 func runDoctor(args []string, stdout, stderr io.Writer) int {
-	runtime, _, root, code := openLocalRuntime(args, stdout, stderr, "doctor")
+	_, campaign, root, code := openLocalRuntime(args, stdout, stderr, "doctor")
 	if code != 0 {
 		return code
 	}
-	preview, err := runtime.Preview(context.Background(), "")
+	ledgerPath, err := localLedgerPath(root, false)
 	if err != nil {
-		return writeError(stdout, stderr, true, "project_invalid", err)
+		return writeError(stdout, stderr, true, "ledger_unavailable", err)
 	}
-	ledgerPath := filepath.Join(root, ".agent-workflow", "ledger.jsonl")
 	info, err := os.Stat(ledgerPath)
 	if err != nil {
 		return writeError(stdout, stderr, true, "ledger_unavailable", errors.New("ledger is unavailable"))
 	}
-	return writeProviderData(stdout, map[string]any{
-		"ready": true, "campaign_id": preview.State.CampaignId, "status": preview.State.Status,
-		"core": "ready", "provider": map[string]any{"id": "demo", "ready": true, "production": false},
-		"storage": map[string]any{"path": ledgerPath, "mode": info.Mode().Perm().String()},
-	})
+	if info.Mode().Perm() != 0o600 {
+		return writeError(stdout, stderr, true, "ledger_unsafe", errors.New("ledger mode must be 0600"))
+	}
+	result := contractsv1.LocalProjectDoctor{
+		Kind: contractsv1.LocalProjectDoctorKindLocalProjectDoctor, SchemaVersion: 1, Ready: true,
+		CampaignId: campaign, Status: contractsv1.LocalProjectDoctorStatusReady, Core: contractsv1.LocalProjectDoctorCoreReady,
+		Provider: contractsv1.LocalProjectDoctorProvider{Id: "demo", Ready: true, Production: false},
+		Storage:  contractsv1.LocalProjectDoctorStorage{Path: ledgerPath, Mode: contractsv1.LocalProjectDoctorStorageModeRw},
+	}
+	if err := contract.ValidateDefinition("LocalProjectDoctor", result); err != nil {
+		return writeError(stdout, stderr, true, "output_failed", err)
+	}
+	return writeProviderData(stdout, result)
 }
 
 func runLocal(args []string, stdout, stderr io.Writer) int {
 	runtime, campaign, _, code := openLocalRuntime(args, stdout, stderr, "run")
 	if code != 0 {
 		return code
+	}
+	if err := runtime.Admit(); err != nil {
+		return writeError(stdout, stderr, true, "admission_failed", err)
 	}
 	if _, err := runtime.Drive(context.Background(), campaign, 100); err != nil {
 		return writeError(stdout, stderr, true, "run_failed", err)
@@ -156,25 +181,31 @@ func runApproval(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "usage: agent-workflow approval confirm [--dir .] [--campaign id] [--option approve]")
 		return 2
 	}
-	option := "approve"
-	filtered := make([]string, 0, len(args)-1)
-	for i := 1; i < len(args); i++ {
-		if args[i] == "--option" && i+1 < len(args) {
-			option, i = args[i+1], i+1
-			continue
-		}
-		filtered = append(filtered, args[i])
+	flags := flag.NewFlagSet("approval confirm", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dir := flags.String("dir", ".", "project directory")
+	campaignFlag := flags.String("campaign", "", "Campaign id; optional for a single-Campaign project")
+	option := flags.String("option", "approve", "approval option")
+	jsonOutput := flags.Bool("json", true, "write a JSON response")
+	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || !*jsonOutput {
+		return 2
 	}
-	runtime, campaign, _, code := openLocalRuntime(filtered, stdout, stderr, "approval confirm")
+	runtime, campaign, _, code := loadLocalRuntime(*dir, contractsv1.Identifier(*campaignFlag), stdout, stderr)
 	if code != 0 {
 		return code
 	}
 	preview, err := runtime.PreviewApproval(context.Background(), campaign)
-	if err != nil {
+	if err != nil && !errors.Is(err, workflow.ErrApprovalAlreadyDecided) {
 		return writeError(stdout, stderr, true, "approval_unavailable", err)
 	}
-	if _, err := runtime.ConfirmApproval(preview, option); err != nil {
-		return writeError(stdout, stderr, true, "approval_failed", err)
+	if err == nil {
+		if _, err := runtime.ConfirmApproval(preview, *option); err != nil {
+			return writeError(stdout, stderr, true, "approval_failed", err)
+		}
+	} else if selected, ok, lookupErr := runtime.ExistingApprovalOption(context.Background(), campaign); lookupErr != nil {
+		return writeError(stdout, stderr, true, "approval_unavailable", lookupErr)
+	} else if !ok || selected != *option {
+		return writeError(stdout, stderr, true, "approval_conflict", errors.New("existing approval selected a different option"))
 	}
 	if _, err := runtime.Drive(context.Background(), campaign, 100); err != nil {
 		return writeError(stdout, stderr, true, "resume_failed", err)
@@ -203,11 +234,15 @@ func openLocalRuntime(args []string, stdout, stderr io.Writer, name string) (*wo
 	flags.SetOutput(stderr)
 	dir := flags.String("dir", ".", "project directory")
 	campaign := flags.String("campaign", "", "Campaign id; optional for a single-Campaign project")
-	_ = flags.Bool("json", true, "write a JSON response")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	jsonOutput := flags.Bool("json", true, "write a JSON response")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !*jsonOutput {
 		return nil, "", "", 2
 	}
-	root := filepath.Clean(*dir)
+	return loadLocalRuntime(*dir, contractsv1.Identifier(*campaign), stdout, stderr)
+}
+
+func loadLocalRuntime(dir string, campaign contractsv1.Identifier, stdout, stderr io.Writer) (*workflow.FixtureRuntime, contractsv1.Identifier, string, int) {
+	root := filepath.Clean(dir)
 	body, err := os.ReadFile(filepath.Join(root, "agent-workflow.json"))
 	if err != nil {
 		return nil, "", root, writeError(stdout, stderr, true, "project_unavailable", errors.New("run agent-workflow init first"))
@@ -216,7 +251,11 @@ func openLocalRuntime(args []string, stdout, stderr io.Writer, name string) (*wo
 	if err := contract.DecodeDefinition("ConformanceFixture", body, &fixture); err != nil {
 		return nil, "", root, writeError(stdout, stderr, true, "project_invalid", err)
 	}
-	ledger, err := workflow.OpenFileLedger(filepath.Join(root, ".agent-workflow", "ledger.jsonl"))
+	ledgerPath, err := localLedgerPath(root, false)
+	if err != nil {
+		return nil, "", root, writeError(stdout, stderr, true, "ledger_unavailable", err)
+	}
+	ledger, err := workflow.OpenFileLedger(ledgerPath)
 	if err != nil {
 		return nil, "", root, writeError(stdout, stderr, true, "ledger_unavailable", err)
 	}
@@ -224,7 +263,30 @@ func openLocalRuntime(args []string, stdout, stderr io.Writer, name string) (*wo
 	if err != nil {
 		return nil, "", root, writeError(stdout, stderr, true, "project_invalid", err)
 	}
-	return runtime, contractsv1.Identifier(*campaign), root, 0
+	selected := campaign
+	if selected == "" && len(fixture.Campaigns) == 1 {
+		selected = fixture.Campaigns[0].Id
+	}
+	return runtime, selected, root, 0
+}
+
+func localLedgerPath(root string, allowMissing bool) (string, error) {
+	dir := filepath.Join(root, ".agent-workflow")
+	info, err := os.Lstat(dir)
+	if errors.Is(err, os.ErrNotExist) && allowMissing {
+		return filepath.Join(dir, "ledger.jsonl"), nil
+	}
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", errors.New(".agent-workflow must be a real project directory")
+	}
+	path := filepath.Join(dir, "ledger.jsonl")
+	if !allowMissing {
+		info, err = os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return "", errors.New("ledger must be an initialized regular file")
+		}
+	}
+	return path, nil
 }
 
 func runConformance(args []string, stdout, stderr io.Writer) int {
@@ -783,7 +845,7 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeError(stdout, stderr, *jsonOutput, "invalid_workflow", err)
 	}
-	result := response{OK: true, WorkflowRef: identity.Ref, Hash: identity.Hash}
+	result := response{Kind: "cli_response", SchemaVersion: 1, OK: true, WorkflowRef: identity.Ref, Hash: identity.Hash}
 	if *jsonOutput {
 		_ = json.NewEncoder(stdout).Encode(result)
 	} else {
@@ -970,9 +1032,11 @@ func runProviderConformance(args []string, stdout, stderr io.Writer) int {
 
 func writeProviderData(stdout io.Writer, data any) int {
 	_ = json.NewEncoder(stdout).Encode(struct {
-		OK   bool `json:"ok"`
-		Data any  `json:"data"`
-	}{OK: true, Data: data})
+		Kind          string `json:"kind"`
+		SchemaVersion int    `json:"schema_version"`
+		OK            bool   `json:"ok"`
+		Data          any    `json:"data"`
+	}{Kind: "cli_response", SchemaVersion: 1, OK: true, Data: data})
 	return 0
 }
 
@@ -1094,7 +1158,7 @@ func (*demoProvider) Cancel(context.Context, string) error { return nil }
 
 func writeError(stdout, stderr io.Writer, jsonOutput bool, code string, err error) int {
 	if jsonOutput {
-		_ = json.NewEncoder(stdout).Encode(response{OK: false, Error: err.Error(), Code: code})
+		_ = json.NewEncoder(stdout).Encode(response{Kind: "cli_response", SchemaVersion: 1, OK: false, Error: err.Error(), Code: code})
 	} else {
 		fmt.Fprintln(stderr, err)
 	}

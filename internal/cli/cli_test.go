@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/JamesbbBriz/agent-workflow/internal/cli"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
+	"github.com/JamesbbBriz/agent-workflow/workflow"
 )
 
 func TestValidateReportsStableWorkflowIdentity(t *testing.T) {
@@ -154,20 +156,30 @@ func TestLocalProjectGoldenPathPersistsApprovalAndReplay(t *testing.T) {
 		if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
 			t.Fatalf("decode %v: %v\n%s", args, err, stdout.String())
 		}
+		if response["kind"] != "cli_response" || response["schema_version"] != float64(1) {
+			t.Fatalf("unversioned response for %v: %#v", args, response)
+		}
 		return response
 	}
 
 	initialized := call("init", "--dir", dir)
-	if initialized["ok"] != true {
+	if initialized["ok"] != true || initialized["data"].(map[string]any)["kind"] != "local_project_init" {
 		t.Fatalf("init response: %#v", initialized)
 	}
 	if info, err := os.Stat(filepath.Join(dir, ".agent-workflow", "ledger.jsonl")); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("secure ledger was not created: info=%v err=%v", info, err)
 	}
+	var disabledOut, disabledErr bytes.Buffer
+	if code := cli.Run([]string{"doctor", "--dir", dir, "--json=false"}, &disabledOut, &disabledErr); code != 2 || disabledOut.Len() != 0 {
+		t.Fatalf("dead --json=false control was accepted: code=%d stdout=%s", code, disabledOut.String())
+	}
 	doctor := call("doctor", "--dir", dir, "--json")
 	doctorData := doctor["data"].(map[string]any)
-	if doctorData["ready"] != true || doctorData["provider"].(map[string]any)["production"] != false || doctorData["storage"].(map[string]any)["mode"] != "-rw-------" {
+	if doctorData["kind"] != "local_project_doctor" || doctorData["ready"] != true || doctorData["provider"].(map[string]any)["production"] != false || doctorData["storage"].(map[string]any)["mode"] != "-rw-------" {
 		t.Fatalf("doctor omitted readiness or storage security: %#v", doctor)
+	}
+	if body, err := os.ReadFile(filepath.Join(dir, ".agent-workflow", "ledger.jsonl")); err != nil || len(body) != 0 {
+		t.Fatalf("read-only doctor changed the ledger: bytes=%d err=%v", len(body), err)
 	}
 
 	waiting := call("run", "--dir", dir, "--json")
@@ -198,6 +210,48 @@ func TestLocalProjectGoldenPathPersistsApprovalAndReplay(t *testing.T) {
 	}
 }
 
+func TestLocalApprovalConfirmResumesAnAlreadyPersistedDecision(t *testing.T) {
+	dir := t.TempDir()
+	for _, args := range [][]string{{"init", "--dir", dir}, {"run", "--dir", dir}} {
+		var stdout, stderr bytes.Buffer
+		if code := cli.Run(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%v: code=%d stdout=%s stderr=%s", args, code, stdout.String(), stderr.String())
+		}
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "agent-workflow.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture contractsv1.ConformanceFixture
+	if err := json.Unmarshal(body, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := workflow.OpenFileLedger(filepath.Join(dir, ".agent-workflow", "ledger.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := workflow.NewFixtureRuntime(fixture, nil, ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := runtime.PreviewApproval(t.Context(), "research-campaign")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.ConfirmApproval(preview, "approve"); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"approval", "confirm", "--dir", dir, "--option=reject"}, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "approval_conflict") {
+		t.Fatalf("conflicting retry was accepted: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := cli.Run([]string{"approval", "confirm", "--dir", dir, "--option=approve"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"status":"completed"`) {
+		t.Fatalf("retry did not resume: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestLocalProjectInitRefusesToOverwriteDifferentDefinition(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent-workflow.json")
@@ -211,6 +265,40 @@ func TestLocalProjectInitRefusesToOverwriteDifferentDefinition(t *testing.T) {
 	body, err := os.ReadFile(path)
 	if err != nil || string(body) != `{"owned_by":"user"}` {
 		t.Fatalf("existing project changed: body=%s err=%v", body, err)
+	}
+}
+
+func TestLocalProjectInitRejectsSymlinkedDefinition(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "user-owned.json")
+	if err := os.WriteFile(target, []byte(`{"owned_by":"user"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "agent-workflow.json")); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"init", "--dir", dir}, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "project_unsafe") {
+		t.Fatalf("symlinked definition was accepted: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	body, err := os.ReadFile(target)
+	if err != nil || string(body) != `{"owned_by":"user"}` {
+		t.Fatalf("symlink target changed: body=%s err=%v", body, err)
+	}
+}
+
+func TestLocalProjectInitRejectsSymlinkedStateDirectory(t *testing.T) {
+	dir := t.TempDir()
+	target := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(dir, ".agent-workflow")); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"init", "--dir", dir}, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "ledger_unavailable") {
+		t.Fatalf("symlinked state directory was accepted: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(target, "ledger.jsonl")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ledger escaped the project root: %v", err)
 	}
 }
 

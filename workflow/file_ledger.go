@@ -28,10 +28,13 @@ func OpenFileLedger(path string) (*FileLedger, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create ledger directory: %w", err)
 	}
-	_, statErr := os.Stat(path)
+	info, statErr := os.Lstat(path)
 	created := errors.Is(statErr, os.ErrNotExist)
 	if statErr != nil && !created {
 		return nil, fmt.Errorf("inspect ledger: %w", statErr)
+	}
+	if !created && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
+		return nil, errors.New("ledger must be a regular file, not a symlink")
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {

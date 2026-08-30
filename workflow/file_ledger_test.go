@@ -44,6 +44,25 @@ func TestFileLedgerPreservesExactJSONNumbers(t *testing.T) {
 	}
 }
 
+func TestFileLedgerRejectsSymlinkWithoutChangingItsTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.txt")
+	if err := os.WriteFile(target, []byte("keep-me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "receipts.jsonl")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenFileLedger(link); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlinked ledger was accepted: %v", err)
+	}
+	body, err := os.ReadFile(target)
+	if err != nil || string(body) != "keep-me" {
+		t.Fatalf("symlink target changed: body=%q err=%v", body, err)
+	}
+}
+
 func TestFileLedgerReopensExactLimitReceipt(t *testing.T) {
 	at := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
 	receipt, err := sealReceipt("aggregate-limit", 1, contractsv1.ReceiptReceiptTypeCompile, at, nil, nil, nil, map[string]any{"padding": ""})

@@ -13,6 +13,7 @@ import (
 // Core used by conformance. It deliberately does not auto-approve.
 type FixtureRuntime struct {
 	runtime *conformanceRuntime
+	now     func() time.Time
 }
 
 func NewFixtureRuntime(fixture contractsv1.ConformanceFixture, provider Provider, ledger Ledger) (*FixtureRuntime, error) {
@@ -20,10 +21,11 @@ func NewFixtureRuntime(fixture contractsv1.ConformanceFixture, provider Provider
 	if err != nil {
 		return nil, err
 	}
-	if err := runtime.admit(); err != nil {
-		return nil, err
-	}
-	return &FixtureRuntime{runtime: runtime}, nil
+	return &FixtureRuntime{runtime: runtime, now: time.Now}, nil
+}
+
+func (r *FixtureRuntime) Admit() error {
+	return r.runtime.admit()
 }
 
 func (r *FixtureRuntime) Preview(ctx context.Context, campaignID contractsv1.Identifier) (contractsv1.CampaignDrivePreview, error) {
@@ -85,12 +87,32 @@ func (r *FixtureRuntime) PreviewApproval(ctx context.Context, campaignID contrac
 }
 
 func (r *FixtureRuntime) ConfirmApproval(preview contractsv1.ApprovalPreview, option string) (contractsv1.Receipt, error) {
-	source, err := r.runtime.ledger.Replay(preview.SourceAggregateId)
-	if err != nil || len(source.Receipts) == 0 {
-		return contractsv1.Receipt{}, errors.New("approval source is unavailable")
+	return r.runtime.authoring.ConfirmApproval(preview, "conformance-human", option, r.now().UTC())
+}
+
+func (r *FixtureRuntime) ExistingApprovalOption(ctx context.Context, campaignID contractsv1.Identifier) (string, bool, error) {
+	preview, err := r.Preview(ctx, campaignID)
+	if err != nil {
+		return "", false, err
 	}
-	at := source.Receipts[len(source.Receipts)-1].OccurredAt.Add(time.Second)
-	return r.runtime.authoring.ConfirmApproval(preview, "conformance-human", option, at)
+	for _, node := range preview.State.Nodes {
+		if node.Status != contractsv1.CampaignNodeExecutionStatusAwaitingApproval || node.ApprovalId == nil {
+			continue
+		}
+		replay, err := r.runtime.ledger.Replay(approvalAggregate(string(*node.ApprovalId)))
+		if errors.Is(err, ErrReplayEmpty) {
+			return "", false, nil
+		}
+		if err != nil || VerifyReplay(replay) != nil || len(replay.Receipts) != 1 || replay.Receipts[0].ReceiptType != contractsv1.ReceiptReceiptTypeApproval {
+			return "", false, errors.New("existing approval is invalid")
+		}
+		var option string
+		if err := decodePayload(replay.Receipts[0].Payload["selected_option_id"], &option); err != nil {
+			return "", false, errors.New("existing approval option is invalid")
+		}
+		return option, true, nil
+	}
+	return "", false, errors.New("Campaign is not awaiting approval")
 }
 
 func (r *FixtureRuntime) Replay(campaignID contractsv1.Identifier) (contractsv1.ReplayBundle, error) {

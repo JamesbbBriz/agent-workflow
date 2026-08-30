@@ -17,6 +17,10 @@ import (
 type ExecutorCatalog map[string]contractsv1.NodeDefinitionKind
 type ApprovalAuthorityCatalog map[string][]string
 
+// ErrApprovalAlreadyDecided lets retrying adapters resume after the approval
+// receipt was committed but before the Campaign was driven.
+var ErrApprovalAlreadyDecided = errors.New("approval was already decided")
+
 type admissionDefinitionLedger interface {
 	AppendAdmission(contractsv1.Receipt, contractsv1.JobDefinition, contractsv1.CampaignDefinition) error
 }
@@ -453,7 +457,7 @@ func (c *AuthoringCore) PreviewApproval(brief contractsv1.ApprovalBrief, actor, 
 	base := 0
 	if replay, err := c.ledger.Replay(approvalAggregate(string(brief.Id))); err == nil {
 		if len(replay.Receipts) > 0 {
-			return contractsv1.ApprovalPreview{}, errors.New("approval was already decided")
+			return contractsv1.ApprovalPreview{}, ErrApprovalAlreadyDecided
 		}
 	} else if !errors.Is(err, ErrReplayEmpty) {
 		return contractsv1.ApprovalPreview{}, err
