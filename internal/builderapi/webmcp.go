@@ -90,6 +90,10 @@ func NewWithWebMCPControlPlanePortfoliosReader(core *workflow.AuthoringCore, now
 	return newWithWebMCP(NewWithControlPlanePortfoliosReader(core, now, portfolios, selectedJobID, history, readChanges).(*Handler), config)
 }
 
+func NewWithWebMCPControlPlaneReaders(core *workflow.AuthoringCore, now func() time.Time, portfolios []contractsv1.CanvasPortfolioSnapshot, selectedJobID contractsv1.Identifier, history DefinitionHistory, readChanges func(time.Time) ([]contractsv1.ChangeCaseCanvas, error), readPortfolios func(time.Time) ([]contractsv1.CanvasPortfolioSnapshot, contractsv1.Identifier, error), config WebMCPConfig) (http.Handler, error) {
+	return newWithWebMCP(NewWithControlPlaneReaders(core, now, portfolios, selectedJobID, history, readChanges, readPortfolios).(*Handler), config)
+}
+
 func newWithWebMCP(handler *Handler, config WebMCPConfig) (http.Handler, error) {
 	if config.Audit == nil {
 		return nil, errors.New("WebMCP audit writer is required")

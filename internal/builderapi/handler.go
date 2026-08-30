@@ -22,17 +22,18 @@ const maxRequestBytes = 2 << 20
 const localApprovalActor = "local-operator"
 
 type Handler struct {
-	core        *workflow.AuthoringCore
-	now         func() time.Time
-	mu          sync.Mutex
-	canvas      *contractsv1.CanvasSnapshot
-	portfolio   *contractsv1.CanvasPortfolioSnapshot
-	portfolios  []contractsv1.CanvasPortfolioSnapshot
-	changeCases []contractsv1.ChangeCaseCanvas
-	readChanges func(time.Time) ([]contractsv1.ChangeCaseCanvas, error)
-	jobs        map[contractsv1.Identifier]contractsv1.JobDefinition
-	campaigns   map[contractsv1.Identifier]contractsv1.CampaignDefinition
-	webMCP      *webMCPGate
+	core           *workflow.AuthoringCore
+	now            func() time.Time
+	mu             sync.Mutex
+	canvas         *contractsv1.CanvasSnapshot
+	portfolio      *contractsv1.CanvasPortfolioSnapshot
+	portfolios     []contractsv1.CanvasPortfolioSnapshot
+	changeCases    []contractsv1.ChangeCaseCanvas
+	readChanges    func(time.Time) ([]contractsv1.ChangeCaseCanvas, error)
+	readPortfolios func(time.Time) ([]contractsv1.CanvasPortfolioSnapshot, contractsv1.Identifier, error)
+	jobs           map[contractsv1.Identifier]contractsv1.JobDefinition
+	campaigns      map[contractsv1.Identifier]contractsv1.CampaignDefinition
+	webMCP         *webMCPGate
 }
 
 type DefinitionHistory struct {
@@ -74,18 +75,22 @@ func NewWithControlPlane(core *workflow.AuthoringCore, now func() time.Time, por
 }
 
 func NewWithControlPlanePortfolios(core *workflow.AuthoringCore, now func() time.Time, portfolios []contractsv1.CanvasPortfolioSnapshot, selectedJobID contractsv1.Identifier, history DefinitionHistory, changeCases []contractsv1.ChangeCaseCanvas) http.Handler {
-	return newWithControlPlanePortfolios(core, now, portfolios, selectedJobID, history, changeCases, nil)
+	return newWithControlPlanePortfolios(core, now, portfolios, selectedJobID, history, changeCases, nil, nil)
 }
 
 func NewWithControlPlanePortfoliosReader(core *workflow.AuthoringCore, now func() time.Time, portfolios []contractsv1.CanvasPortfolioSnapshot, selectedJobID contractsv1.Identifier, history DefinitionHistory, readChanges func(time.Time) ([]contractsv1.ChangeCaseCanvas, error)) http.Handler {
-	return newWithControlPlanePortfolios(core, now, portfolios, selectedJobID, history, nil, readChanges)
+	return newWithControlPlanePortfolios(core, now, portfolios, selectedJobID, history, nil, readChanges, nil)
 }
 
-func newWithControlPlanePortfolios(core *workflow.AuthoringCore, now func() time.Time, portfolios []contractsv1.CanvasPortfolioSnapshot, selectedJobID contractsv1.Identifier, history DefinitionHistory, changeCases []contractsv1.ChangeCaseCanvas, readChanges func(time.Time) ([]contractsv1.ChangeCaseCanvas, error)) http.Handler {
+func NewWithControlPlaneReaders(core *workflow.AuthoringCore, now func() time.Time, portfolios []contractsv1.CanvasPortfolioSnapshot, selectedJobID contractsv1.Identifier, history DefinitionHistory, readChanges func(time.Time) ([]contractsv1.ChangeCaseCanvas, error), readPortfolios func(time.Time) ([]contractsv1.CanvasPortfolioSnapshot, contractsv1.Identifier, error)) http.Handler {
+	return newWithControlPlanePortfolios(core, now, portfolios, selectedJobID, history, nil, readChanges, readPortfolios)
+}
+
+func newWithControlPlanePortfolios(core *workflow.AuthoringCore, now func() time.Time, portfolios []contractsv1.CanvasPortfolioSnapshot, selectedJobID contractsv1.Identifier, history DefinitionHistory, changeCases []contractsv1.ChangeCaseCanvas, readChanges func(time.Time) ([]contractsv1.ChangeCaseCanvas, error), readPortfolios func(time.Time) ([]contractsv1.CanvasPortfolioSnapshot, contractsv1.Identifier, error)) http.Handler {
 	if now == nil {
 		now = time.Now
 	}
-	handler := &Handler{core: core, now: now, portfolios: append([]contractsv1.CanvasPortfolioSnapshot{}, portfolios...), changeCases: append([]contractsv1.ChangeCaseCanvas{}, changeCases...), readChanges: readChanges, jobs: map[contractsv1.Identifier]contractsv1.JobDefinition{}, campaigns: map[contractsv1.Identifier]contractsv1.CampaignDefinition{}}
+	handler := &Handler{core: core, now: now, portfolios: append([]contractsv1.CanvasPortfolioSnapshot{}, portfolios...), changeCases: append([]contractsv1.ChangeCaseCanvas{}, changeCases...), readChanges: readChanges, readPortfolios: readPortfolios, jobs: map[contractsv1.Identifier]contractsv1.JobDefinition{}, campaigns: map[contractsv1.Identifier]contractsv1.CampaignDefinition{}}
 	for _, job := range history.Jobs {
 		handler.jobs[job.Id] = job
 	}
@@ -98,21 +103,44 @@ func newWithControlPlanePortfolios(core *workflow.AuthoringCore, now func() time
 		for campaignIndex := range portfolio.Campaigns {
 			handler.campaigns[portfolio.Campaigns[campaignIndex].Canvas.Definition.Campaign.Id] = portfolio.Campaigns[campaignIndex].Canvas.Definition.Campaign
 		}
-		if portfolio.Job.Id == selectedJobID {
-			handler.portfolio = portfolio
-			for campaignIndex := range portfolio.Campaigns {
-				if portfolio.Campaigns[campaignIndex].CampaignId == portfolio.SelectedCampaignId {
-					handler.canvas = &portfolio.Campaigns[campaignIndex].Canvas
-					break
-				}
-			}
+	}
+	handler.selectPortfolio(selectedJobID)
+	return handler
+}
+
+func (h *Handler) selectPortfolio(selectedJobID contractsv1.Identifier) {
+	h.portfolio, h.canvas = nil, nil
+	for index := range h.portfolios {
+		if h.portfolios[index].Job.Id == selectedJobID {
+			h.portfolio = &h.portfolios[index]
+			break
 		}
 	}
-	if handler.portfolio == nil && len(handler.portfolios) > 0 {
-		handler.portfolio = &handler.portfolios[0]
-		handler.canvas = &handler.portfolio.Campaigns[0].Canvas
+	if h.portfolio == nil && len(h.portfolios) > 0 {
+		h.portfolio = &h.portfolios[0]
 	}
-	return handler
+	if h.portfolio == nil {
+		return
+	}
+	for index := range h.portfolio.Campaigns {
+		if h.portfolio.Campaigns[index].CampaignId == h.portfolio.SelectedCampaignId {
+			h.canvas = &h.portfolio.Campaigns[index].Canvas
+			return
+		}
+	}
+}
+
+func (h *Handler) refreshPortfolios(generatedAt time.Time) error {
+	if h.readPortfolios == nil {
+		return nil
+	}
+	portfolios, selectedJobID, err := h.readPortfolios(generatedAt)
+	if err != nil {
+		return err
+	}
+	h.portfolios = append([]contractsv1.CanvasPortfolioSnapshot{}, portfolios...)
+	h.selectPortfolio(selectedJobID)
+	return nil
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -133,6 +161,10 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/v2/canvas":
 		h.mu.Lock()
 		defer h.mu.Unlock()
+		if err := h.refreshPortfolios(h.now().UTC()); err != nil {
+			h.writeStatus(w, http.StatusServiceUnavailable, "control_plane_unavailable", "control plane is unavailable")
+			return
+		}
 		if h.portfolio == nil {
 			h.write(w, nil, errors.New("trusted Canvas portfolio is unavailable"))
 			return
@@ -142,6 +174,11 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/control-plane":
 		h.mu.Lock()
 		defer h.mu.Unlock()
+		generatedAt := h.now().UTC()
+		if err := h.refreshPortfolios(generatedAt); err != nil {
+			h.writeStatus(w, http.StatusServiceUnavailable, "control_plane_unavailable", "control plane is unavailable")
+			return
+		}
 		if h.portfolio == nil {
 			h.write(w, nil, errors.New("trusted Canvas portfolio is unavailable"))
 			return
@@ -151,13 +188,12 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 			h.write(w, nil, err)
 			return
 		}
-		generatedAt := h.now().UTC()
 		changeCases := append([]contractsv1.ChangeCaseCanvas{}, h.changeCases...)
 		if h.readChanges != nil {
 			var err error
 			changeCases, err = h.readChanges(generatedAt)
 			if err != nil {
-				h.write(w, nil, err)
+				h.writeStatus(w, http.StatusServiceUnavailable, "control_plane_unavailable", "control plane is unavailable")
 				return
 			}
 			h.changeCases = append([]contractsv1.ChangeCaseCanvas{}, changeCases...)
@@ -177,6 +213,10 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/canvas":
 		h.mu.Lock()
 		defer h.mu.Unlock()
+		if err := h.refreshPortfolios(h.now().UTC()); err != nil {
+			h.writeStatus(w, http.StatusServiceUnavailable, "control_plane_unavailable", "control plane is unavailable")
+			return
+		}
 		if h.canvas == nil {
 			h.write(w, nil, errors.New("trusted Canvas is unavailable"))
 			return

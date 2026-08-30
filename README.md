@@ -91,9 +91,21 @@ go run ./cmd/agent-workflow builder \
 npm run web:dev
 ```
 
+For the lightweight production path, build once and start the API plus React control plane from the same Go binary:
+
+```bash
+npm run web:embed
+go build -o bin/agent-workflow ./cmd/agent-workflow
+./bin/agent-workflow serve \
+  --listen 127.0.0.1:4321 \
+  --dir /tmp/agent-workflow-demo
+```
+
+Open `http://127.0.0.1:4321`. The release binary needs no Node.js runtime. `serve --dir` reads the initialized project's same canonical ledger used by `run`, `approval`, `replay`, and `report`; it does not create a parallel GUI ledger. The Evidence view is read-only, and an empty ledger produces an explicit unavailable state instead of fabricated metrics.
+
 The browser keeps unfinished drafts in local storage. The Builder reads the Go Core catalog, lints and expands the exact Node contracts, then requires a revision-bound preview token before the Core admits an immutable Workflow version. Pending Action Artifacts can be opened from the Runtime Canvas for a separate preview/confirm human decision. Only the Core writes admission and approval receipts; the GUI projects their Replay.
 
-The UI uses the open-source shadcn/ui composition model, Radix primitives, and Tailwind. Paid block source is not vendored, so the public repository stays redistributable.
+The UI uses plain React with Vite, the open-source shadcn/ui composition model, Radix primitives, and Tailwind. Paid block source is not vendored, so the public repository stays redistributable.
 
 To opt into the browser's experimental `document.modelContext` API for this exact local page origin:
 
