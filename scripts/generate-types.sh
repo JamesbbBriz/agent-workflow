@@ -17,4 +17,5 @@ cat >> "$out" <<'EOF'
 export type NodeElement = DefinitionElement;
 export type ReplayBundleElement = CampaignReplay;
 export type Status = ContextPortStatus;
+export type Mode = WaitModeEnum;
 EOF

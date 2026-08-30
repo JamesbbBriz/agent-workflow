@@ -509,6 +509,9 @@ func (c *AuthoringCore) ConfirmApproval(preview contractsv1.ApprovalPreview, act
 	}
 	expected, err := c.PreviewApproval(preview.Brief, actor, preview.SourceAggregateId)
 	if err != nil || !reflect.DeepEqual(expected, preview) {
+		if receipt, ok := existingApproval(c.ledger, aggregate, preview.PreviewHash, optionID, actor); ok {
+			return receipt, nil
+		}
 		return contractsv1.Receipt{}, errors.New("approval preview is stale or altered")
 	}
 	unsigned := preview

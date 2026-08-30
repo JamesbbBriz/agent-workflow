@@ -34,6 +34,8 @@ type response struct {
 	Code          string `json:"code,omitempty"`
 }
 
+const maxConcurrentDeliveryAttempts = 100
+
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		writeUsage(stderr)
@@ -86,6 +88,9 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return writeError(stdout, stderr, true, "project_unavailable", errors.New("project directory is unavailable"))
 	}
+	if err := trustedProjectRoot(root); err != nil {
+		return writeError(stdout, stderr, true, "project_unsafe", err)
+	}
 	want := conformanceassets.GenericFixture()
 	definitionPath := filepath.Join(root, "agent-workflow.json")
 	if info, err := os.Lstat(definitionPath); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
@@ -119,9 +124,12 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 }
 
 func runDoctor(args []string, stdout, stderr io.Writer) int {
-	_, campaign, root, code := openLocalRuntime(args, stdout, stderr, "doctor")
+	runtime, campaign, root, code := openLocalRuntime(args, stdout, stderr, "doctor")
 	if code != 0 {
 		return code
+	}
+	if err := runtime.Preflight(); err != nil {
+		return writeError(stdout, stderr, true, "core_not_ready", err)
 	}
 	ledgerPath, err := localLedgerPath(root, false)
 	if err != nil {
@@ -147,15 +155,24 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 }
 
 func runLocal(args []string, stdout, stderr io.Writer) int {
-	runtime, campaign, _, code := openLocalRuntime(args, stdout, stderr, "run")
+	runtime, campaign, root, code := openLocalRuntime(args, stdout, stderr, "run")
 	if code != 0 {
 		return code
 	}
-	if err := runtime.Admit(); err != nil {
-		return writeError(stdout, stderr, true, "admission_failed", err)
-	}
-	if _, err := runtime.Drive(context.Background(), campaign, 100); err != nil {
-		return writeError(stdout, stderr, true, "run_failed", err)
+	for attempt := 0; ; attempt++ {
+		if err := runtime.Admit(); err != nil {
+			return writeError(stdout, stderr, true, "admission_failed", err)
+		}
+		if _, err := runtime.Drive(context.Background(), campaign, 100); err == nil {
+			break
+		} else if !errors.Is(err, workflow.ErrCanonicalConflict) || attempt == maxConcurrentDeliveryAttempts-1 {
+			return writeError(stdout, stderr, true, "run_failed", err)
+		}
+		var reloadCode int
+		runtime, campaign, _, reloadCode = loadLocalRuntime(root, campaign, stdout, stderr)
+		if reloadCode != 0 {
+			return reloadCode
+		}
 	}
 	preview, err := runtime.Preview(context.Background(), campaign)
 	if err != nil {
@@ -190,25 +207,37 @@ func runApproval(args []string, stdout, stderr io.Writer) int {
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || !*jsonOutput {
 		return 2
 	}
-	runtime, campaign, _, code := loadLocalRuntime(*dir, contractsv1.Identifier(*campaignFlag), stdout, stderr)
+	runtime, campaign, root, code := loadLocalRuntime(*dir, contractsv1.Identifier(*campaignFlag), stdout, stderr)
 	if code != 0 {
 		return code
 	}
-	preview, err := runtime.PreviewApproval(context.Background(), campaign)
-	if err != nil && !errors.Is(err, workflow.ErrApprovalAlreadyDecided) {
-		return writeError(stdout, stderr, true, "approval_unavailable", err)
-	}
-	if err == nil {
-		if _, err := runtime.ConfirmApproval(preview, *option); err != nil {
-			return writeError(stdout, stderr, true, "approval_failed", err)
+	for attempt := 0; ; attempt++ {
+		preview, err := runtime.PreviewApproval(context.Background(), campaign)
+		if err != nil && !errors.Is(err, workflow.ErrApprovalAlreadyDecided) {
+			if selected, ok, lookupErr := runtime.ExistingApprovalOption(context.Background(), campaign); lookupErr != nil {
+				return writeError(stdout, stderr, true, "approval_unavailable", lookupErr)
+			} else if !ok || selected != *option {
+				return writeError(stdout, stderr, true, "approval_unavailable", err)
+			}
+		} else if err == nil {
+			if _, err := runtime.ConfirmApproval(preview, *option); err != nil {
+				return writeError(stdout, stderr, true, "approval_failed", err)
+			}
+		} else if selected, ok, lookupErr := runtime.ExistingApprovalOption(context.Background(), campaign); lookupErr != nil {
+			return writeError(stdout, stderr, true, "approval_unavailable", lookupErr)
+		} else if !ok || selected != *option {
+			return writeError(stdout, stderr, true, "approval_conflict", errors.New("existing approval selected a different option"))
 		}
-	} else if selected, ok, lookupErr := runtime.ExistingApprovalOption(context.Background(), campaign); lookupErr != nil {
-		return writeError(stdout, stderr, true, "approval_unavailable", lookupErr)
-	} else if !ok || selected != *option {
-		return writeError(stdout, stderr, true, "approval_conflict", errors.New("existing approval selected a different option"))
-	}
-	if _, err := runtime.Drive(context.Background(), campaign, 100); err != nil {
-		return writeError(stdout, stderr, true, "resume_failed", err)
+		if _, err := runtime.Drive(context.Background(), campaign, 100); err == nil {
+			break
+		} else if !errors.Is(err, workflow.ErrCanonicalConflict) || attempt == maxConcurrentDeliveryAttempts-1 {
+			return writeError(stdout, stderr, true, "resume_failed", err)
+		}
+		var reloadCode int
+		runtime, campaign, _, reloadCode = loadLocalRuntime(root, campaign, stdout, stderr)
+		if reloadCode != 0 {
+			return reloadCode
+		}
 	}
 	completed, err := runtime.Preview(context.Background(), campaign)
 	if err != nil {
@@ -243,6 +272,9 @@ func openLocalRuntime(args []string, stdout, stderr io.Writer, name string) (*wo
 
 func loadLocalRuntime(dir string, campaign contractsv1.Identifier, stdout, stderr io.Writer) (*workflow.FixtureRuntime, contractsv1.Identifier, string, int) {
 	root := filepath.Clean(dir)
+	if err := trustedProjectRoot(root); err != nil {
+		return nil, "", root, writeError(stdout, stderr, true, "project_unsafe", err)
+	}
 	body, err := os.ReadFile(filepath.Join(root, "agent-workflow.json"))
 	if err != nil {
 		return nil, "", root, writeError(stdout, stderr, true, "project_unavailable", errors.New("run agent-workflow init first"))
@@ -279,6 +311,9 @@ func localLedgerPath(root string, allowMissing bool) (string, error) {
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return "", errors.New(".agent-workflow must be a real project directory")
 	}
+	if info.Mode().Perm() != 0o700 {
+		return "", errors.New(".agent-workflow must use mode 0700")
+	}
 	path := filepath.Join(dir, "ledger.jsonl")
 	if !allowMissing {
 		info, err = os.Lstat(path)
@@ -287,6 +322,17 @@ func localLedgerPath(root string, allowMissing bool) (string, error) {
 		}
 	}
 	return path, nil
+}
+
+func trustedProjectRoot(root string) error {
+	info, err := os.Lstat(root)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return errors.New("project root must be a real directory")
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return errors.New("project root must not be group- or world-writable")
+	}
+	return nil
 }
 
 func runConformance(args []string, stdout, stderr io.Writer) int {

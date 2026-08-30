@@ -28,6 +28,14 @@ func (r *FixtureRuntime) Admit() error {
 	return r.runtime.admit()
 }
 
+func (r *FixtureRuntime) Preflight() error {
+	check, err := newConformanceRuntimeWithLedger(r.runtime.fixture, r.runtime.engine.provider, NewMemoryLedger())
+	if err != nil {
+		return err
+	}
+	return check.admit()
+}
+
 func (r *FixtureRuntime) Preview(ctx context.Context, campaignID contractsv1.Identifier) (contractsv1.CampaignDrivePreview, error) {
 	campaign, workflows, err := r.campaign(campaignID)
 	if err != nil {
@@ -96,7 +104,7 @@ func (r *FixtureRuntime) ExistingApprovalOption(ctx context.Context, campaignID 
 		return "", false, err
 	}
 	for _, node := range preview.State.Nodes {
-		if node.Status != contractsv1.CampaignNodeExecutionStatusAwaitingApproval || node.ApprovalId == nil {
+		if node.ApprovalId == nil {
 			continue
 		}
 		replay, err := r.runtime.ledger.Replay(approvalAggregate(string(*node.ApprovalId)))
@@ -112,7 +120,7 @@ func (r *FixtureRuntime) ExistingApprovalOption(ctx context.Context, campaignID 
 		}
 		return option, true, nil
 	}
-	return "", false, errors.New("Campaign is not awaiting approval")
+	return "", false, nil
 }
 
 func (r *FixtureRuntime) Replay(campaignID contractsv1.Identifier) (contractsv1.ReplayBundle, error) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -249,6 +250,86 @@ func TestLocalApprovalConfirmResumesAnAlreadyPersistedDecision(t *testing.T) {
 	stderr.Reset()
 	if code := cli.Run([]string{"approval", "confirm", "--dir", dir, "--option=approve"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"status":"completed"`) {
 		t.Fatalf("retry did not resume: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestDoctorRejectsInvalidCampaignPlanWithoutWritingLedger(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"init", "--dir", dir}, &stdout, &stderr); code != 0 {
+		t.Fatalf("init: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	definitionPath := filepath.Join(dir, "agent-workflow.json")
+	body, err := os.ReadFile(definitionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var definition map[string]any
+	if err := json.Unmarshal(body, &definition); err != nil {
+		t.Fatal(err)
+	}
+	definition["campaigns"].([]any)[0].(map[string]any)["workflow_plan"] = []any{"missing-workflow@1"}
+	body, err = json.Marshal(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(definitionPath, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ledgerPath := filepath.Join(dir, ".agent-workflow", "ledger.jsonl")
+	before, err := os.ReadFile(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := cli.Run([]string{"doctor", "--dir", dir}, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "core_not_ready") {
+		t.Fatalf("doctor accepted invalid plan: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	after, err := os.ReadFile(ledgerPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("doctor mutated ledger: err=%v before=%q after=%q", err, before, after)
+	}
+}
+
+func TestLocalCommandsConvergeConcurrentDeliveries(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"init", "--dir", dir}, &stdout, &stderr); code != 0 {
+		t.Fatalf("init: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	concurrent := func(args ...string) {
+		t.Helper()
+		start := make(chan struct{})
+		results := make(chan string, 2)
+		for range 2 {
+			go func() {
+				<-start
+				var out, errOut bytes.Buffer
+				code := cli.Run(args, &out, &errOut)
+				results <- fmt.Sprintf("code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
+			}()
+		}
+		close(start)
+		for range 2 {
+			result := <-results
+			if !strings.HasPrefix(result, "code=0 ") {
+				t.Fatal(result)
+			}
+		}
+	}
+	concurrent("run", "--dir", dir)
+	concurrent("approval", "confirm", "--dir", dir)
+}
+
+func TestLocalProjectRejectsWritableSharedRoot(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"init", "--dir", dir}, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "project_unsafe") {
+		t.Fatalf("shared root was accepted: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 }
 

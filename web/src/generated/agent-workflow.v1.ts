@@ -1170,3 +1170,4 @@ export type WorkflowLintReportKind = "workflow_lint_report";
 export type NodeElement = DefinitionElement;
 export type ReplayBundleElement = CampaignReplay;
 export type Status = ContextPortStatus;
+export type Mode = WaitModeEnum;

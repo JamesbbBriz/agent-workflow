@@ -20,6 +20,8 @@ type FileLedger struct {
 	path string
 }
 
+var ErrCanonicalConflict = errors.New("canonical receipt conflict")
+
 func OpenFileLedger(path string) (*FileLedger, error) {
 	if path == "" {
 		return nil, errors.New("ledger path is required")
@@ -27,6 +29,10 @@ func OpenFileLedger(path string) (*FileLedger, error) {
 	path = filepath.Clean(path)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create ledger directory: %w", err)
+	}
+	directoryInfo, err := os.Stat(filepath.Dir(path))
+	if err != nil || !directoryInfo.IsDir() || directoryInfo.Mode().Perm()&0o022 != 0 {
+		return nil, errors.New("ledger directory must be a private trusted directory")
 	}
 	info, statErr := os.Lstat(path)
 	created := errors.Is(statErr, os.ErrNotExist)
@@ -158,7 +164,7 @@ func (l *FileLedger) appendBatch(receipts []contractsv1.Receipt, validate func(m
 		index := receipt.AggregateVersion - 1
 		if index < len(current) {
 			if current[index].ReceiptHash != receipt.ReceiptHash {
-				return fmt.Errorf("receipt version %d conflicts with canonical history", receipt.AggregateVersion)
+				return fmt.Errorf("%w: receipt version %d conflicts with canonical history", ErrCanonicalConflict, receipt.AggregateVersion)
 			}
 			continue
 		}
