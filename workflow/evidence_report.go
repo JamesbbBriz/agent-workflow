@@ -48,7 +48,12 @@ func BuildEvidenceWindowReport(catalog contractsv1.AgentRoleCatalog, replays []c
 	invoked := map[contractsv1.Identifier]bool{}
 	counts := contractsv1.EvidenceCounts{}
 	evidence := []contractsv1.EvidenceReference{}
+	seenAggregates := make(map[string]bool, len(replays))
 	for _, replay := range replays {
+		if seenAggregates[replay.AggregateId] {
+			return contractsv1.EvidenceWindowReport{}, fmt.Errorf("Replay aggregate %q is duplicated", replay.AggregateId)
+		}
+		seenAggregates[replay.AggregateId] = true
 		if err := VerifyReplay(replay); err != nil {
 			return contractsv1.EvidenceWindowReport{}, fmt.Errorf("verify Replay %s: %w", replay.AggregateId, err)
 		}

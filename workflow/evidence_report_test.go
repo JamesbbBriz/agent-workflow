@@ -90,4 +90,19 @@ func TestEvidenceWindowReportRejectsInvalidWindowAndReplay(t *testing.T) {
 	if _, err := BuildEvidenceWindowReport(DefaultAgentRoleCatalog(), []contractsv1.ReplayBundle{{AggregateId: "bad"}}, now, now); err == nil {
 		t.Fatal("invalid Replay was accepted")
 	}
+	ledger := NewMemoryLedger()
+	receipt, err := sealReceipt("duplicate", 1, contractsv1.ReceiptReceiptTypeTerminal, now, nil, nil, nil, map[string]any{"fixture": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Append(receipt); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := ledger.Replay("duplicate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildEvidenceWindowReport(DefaultAgentRoleCatalog(), []contractsv1.ReplayBundle{replay, replay}, now, now); err == nil {
+		t.Fatal("duplicate Replay aggregate inflated the report")
+	}
 }
