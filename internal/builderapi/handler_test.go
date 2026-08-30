@@ -3,6 +3,7 @@ package builderapi_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -92,6 +93,31 @@ func TestBuilderHTTPReturnsTypedControlPlaneReadModel(t *testing.T) {
 	if err := contract.ValidateDefinition("ControlPlaneSnapshot", response.Data); err != nil {
 		t.Fatalf("control-plane response is not canonical: %v", err)
 	}
+}
+
+func TestBuilderHTTPRedactsDynamicPortfolioReadFailures(t *testing.T) {
+	assertUnavailable := func(path string, handler http.Handler) {
+		t.Helper()
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusServiceUnavailable || !bytes.Contains(response.Body.Bytes(), []byte(`"code":"control_plane_unavailable"`)) || bytes.Contains(response.Body.Bytes(), []byte("secret diagnostic")) || bytes.Contains(response.Body.Bytes(), []byte("/private/project")) {
+			t.Fatalf("%s leaked ledger reader failure: status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+	readPortfolios := func(time.Time) ([]contractsv1.CanvasPortfolioSnapshot, contractsv1.Identifier, error) {
+		return nil, "", errors.New("read ledger /private/project/.agent-workflow/ledger.jsonl: ledger line 7: secret diagnostic")
+	}
+	handler := builderapi.NewWithControlPlaneReaders(testCore(t), time.Now, nil, "", builderapi.DefinitionHistory{}, nil, readPortfolios)
+	for _, path := range []string{"/v1/control-plane", "/v1/canvas", "/v2/canvas"} {
+		assertUnavailable(path, handler)
+	}
+
+	snapshot := loadCanvas(t)
+	portfolio := contractsv1.CanvasPortfolioSnapshot{Job: snapshot.Definition.Job, SelectedCampaignId: snapshot.Definition.Campaign.Id, Campaigns: []contractsv1.CanvasPortfolioCampaign{{CampaignId: snapshot.Definition.Campaign.Id, Canvas: snapshot}}}
+	handler = builderapi.NewWithControlPlaneReaders(testCore(t), time.Now, []contractsv1.CanvasPortfolioSnapshot{portfolio}, portfolio.Job.Id, builderapi.DefinitionHistory{}, func(time.Time) ([]contractsv1.ChangeCaseCanvas, error) {
+		return nil, errors.New("read ledger /private/project/.agent-workflow/ledger.jsonl: ledger line 9: secret diagnostic")
+	}, nil)
+	assertUnavailable("/v1/control-plane", handler)
 }
 
 func TestBuilderHTTPKeepsTwoCampaignsInTheCanonicalPortfolio(t *testing.T) {

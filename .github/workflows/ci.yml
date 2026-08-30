@@ -30,6 +30,7 @@ jobs:
       - run: npm ci
       - run: npm run check:generated
       - run: npm run check:types
+      - run: npm run check:embedded-web
       - run: |
           npm run fixture:conformance
           git diff --exit-code -- conformance/fixtures

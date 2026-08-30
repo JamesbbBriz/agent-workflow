@@ -28,7 +28,7 @@ import {
   Wrench,
   X,
 } from "@phosphor-icons/react";
-import type { CanvasPortfolioSnapshot, CanvasSnapshot, ChangeCaseCanvas, ContextPortElement, ControlPlaneSnapshot, ExecutionElement, ProviderReadiness } from "./generated/agent-workflow.v1";
+import type { CanvasPortfolioSnapshot, CanvasSnapshot, ChangeCaseCanvas, ContextPortElement, ControlPlaneSnapshot, EvidenceWindowReport, ExecutionElement, ProviderReadiness } from "./generated/agent-workflow.v1";
 import { buildGraph, compareBundles, humanize, type CanvasGraphNode, type CanvasMode, type CanvasNodeData } from "./canvas-model";
 import { ApprovalPanel, BuilderPanel } from "./builder";
 import { installWebMCP } from "./webmcp";
@@ -46,10 +46,17 @@ interface ControlPlaneResponse {
   data: ControlPlaneSnapshot;
 }
 
-type Page = "jobs" | "runs" | "approvals" | "changes" | "providers" | "audit";
+interface EvidenceResponse {
+  ok: boolean;
+  data: EvidenceWindowReport;
+}
+
+type Page = "jobs" | "runs" | "approvals" | "changes" | "providers" | "evidence" | "audit";
 
 export function App() {
   const [controlPlane, setControlPlane] = useState<ControlPlaneSnapshot>();
+  const [evidence, setEvidence] = useState<EvidenceWindowReport | null>();
+  const [evidenceError, setEvidenceError] = useState<string>();
   const [error, setError] = useState<string>();
   const [page, setPage] = useState<Page>("jobs");
   const [mode, setMode] = useState<CanvasMode>("runtime");
@@ -67,8 +74,18 @@ export function App() {
     void loadControlPlane().then((next) => { setControlPlane(next); setError(undefined); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Canonical control-plane refresh failed."));
   };
 
+  const selectPage = (next: Page) => {
+    setPage(next);
+    if (next === "evidence") refreshEvidence();
+  };
+
+  const refreshEvidence = () => {
+    void loadEvidenceReport().then((report) => { setEvidence(report); setEvidenceError(undefined); }).catch((reason: unknown) => { setEvidence(undefined); setEvidenceError(reason instanceof Error ? reason.message : "Evidence refresh failed."); });
+  };
+
   useEffect(() => {
     void loadControlPlane().then(setControlPlane).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Control plane data is unavailable."));
+    refreshEvidence();
   }, []);
 
   useEffect(() => {
@@ -104,7 +121,7 @@ export function App() {
   const canCompare = snapshot.executions.length > 1;
   return (
     <main className="control-plane-shell">
-      <AppSidebar page={page} onPage={setPage} />
+      <AppSidebar page={page} onPage={selectPage} />
       <section className="control-plane-main">
         <ControlPlaneHeader snapshot={snapshot} portfolio={portfolio} portfolios={controlPlane.portfolios} onJob={(jobID) => setControlPlane({ ...controlPlane, selected_job_id: jobID })} onCampaign={(campaignID) => setControlPlane({ ...controlPlane, portfolios: selectCampaign(controlPlane.portfolios, portfolio.job.id, campaignID) })} onBuild={() => setBuilding(true)} />
         {page === "jobs" && <JobsPage snapshot={snapshot} campaignState={selectedCampaign?.state} mode={mode} onMode={setMode} nodes={nodes} edges={graph.edges} canCompare={canCompare} onCompare={() => setComparing(true)} />}
@@ -112,6 +129,7 @@ export function App() {
         {page === "approvals" && <ApprovalsPage portfolio={portfolio} onReview={(canvas, execution) => { const output = execution.outputs.find((item) => item.approval_state === "pending"); if (output) { setControlPlane({ ...controlPlane, portfolios: selectCampaign(controlPlane.portfolios, portfolio.job.id, canvas.definition.campaign.id) }); setApproving({ ...executionNodeData(canvas, execution), artifact: output }); } }} />}
         {page === "changes" && <ChangeCasesPage cases={controlPlane.change_cases} />}
         {page === "providers" && <ProvidersPage providers={controlPlane.providers} />}
+        {page === "evidence" && <EvidencePage report={evidence} error={evidenceError} onRetry={refreshEvidence} />}
         {page === "audit" && <AuditPage portfolio={portfolio} cases={controlPlane.change_cases} />}
       </section>
 
@@ -131,6 +149,15 @@ async function loadControlPlane(): Promise<ControlPlaneSnapshot> {
   return body.data;
 }
 
+async function loadEvidenceReport(): Promise<EvidenceWindowReport | null> {
+  const response = await fetch("/v1/evidence-report");
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error("Evidence is unavailable.");
+  const body = await response.json() as EvidenceResponse;
+  if (!body.ok) throw new Error("Evidence was rejected by the Core.");
+  return body.data;
+}
+
 function selectCampaign(portfolios: ControlPlaneSnapshot["portfolios"], jobID: string, campaignID: string): ControlPlaneSnapshot["portfolios"] {
   return portfolios.map((item) => item.job.id === jobID ? { ...item, selected_campaign_id: campaignID } : item) as ControlPlaneSnapshot["portfolios"];
 }
@@ -141,6 +168,7 @@ const navigation: { id: Page; label: string; icon: typeof Briefcase }[] = [
   { id: "approvals", label: "Approvals", icon: ShieldCheck },
   { id: "changes", label: "Change Cases", icon: GitBranch },
   { id: "providers", label: "Providers", icon: Robot },
+  { id: "evidence", label: "Evidence", icon: ChartLineUp },
   { id: "audit", label: "Audit trail", icon: ListChecks },
 ];
 
@@ -209,6 +237,23 @@ function ProvidersPage({ providers }: { providers: ProviderReadiness[] }) {
   return <ListPage title="Providers" description="Bundled runner adapters and the exact local prerequisites required to execute them." empty="Provider readiness is unavailable in the static demo.">
     {providers.length > 0 ? <div className="cp-provider-grid">{providers.map((provider) => <Card key={provider.descriptor.id}><CardHeader><div className="cp-card-title-row"><span className="cp-provider-icon"><Robot size={18} /></span><Badge variant={provider.ready ? "default" : "secondary"}>{provider.code === "profile_required" ? "Profile required" : provider.ready ? "Ready" : "Unavailable"}</Badge></div><CardTitle>{provider.descriptor.display_name}</CardTitle><CardDescription>{provider.descriptor.id} · protocol v{provider.descriptor.protocol_version}</CardDescription></CardHeader><CardContent><div className="cp-tags">{provider.descriptor.capabilities.map((item) => <Badge key={item} variant="outline">{humanize(item)}</Badge>)}</div>{provider.missing.length > 0 ? <div className="cp-provider-missing"><strong>Missing</strong>{provider.missing.map((item) => <code key={item}>{item}</code>)}</div> : provider.code === "profile_required" ? <p className="cp-provider-ready"><ShieldCheck size={16} />Select an admitted Executor Profile to assess readiness.</p> : <p className="cp-provider-ready"><CheckCircle size={16} weight="fill" />All declared requirements are available.</p>}</CardContent></Card>)}</div> : []}
   </ListPage>;
+}
+
+export function EvidencePage({ report, error, onRetry }: { report?: EvidenceWindowReport | null; error?: string; onRetry?: () => void }) {
+  if (error) return <div className="cp-page"><div className="cp-page-heading"><h2>Evidence window</h2><p>Proof derived from the same canonical receipt ledger.</p></div><Separator /><Card className="cp-empty"><CardContent><WarningCircle size={24} /><strong>Evidence refresh failed.</strong><span>{error}</span>{onRetry && <Button variant="outline" onClick={onRetry}>Retry evidence readback</Button>}</CardContent></Card></div>;
+  if (!report) return <div className="cp-page"><div className="cp-page-heading"><h2>Evidence window</h2><p>Proof derived from the same canonical receipt ledger.</p></div><Separator /><EmptyState title="No evidence receipts have been recorded." /></div>;
+  const roleSummary = `${report.invoked_role_ids.length} of ${report.available_role_ids.length} roles evidenced`;
+  return <div className="cp-page">
+    <div className="cp-page-heading"><h2>Evidence window</h2><p>{roleSummary} · {formatTime(report.window.started_at)} to {formatTime(report.window.ended_at)}</p></div>
+    <Separator />
+    <section className="cp-summary-grid">
+      <SummaryCard label="Agent invocations" value={String(report.counts.agent_invocations)} detail={`${report.counts.context_refreshes} context refreshes`} icon={Robot} />
+      <SummaryCard label="Effects" value={String(report.counts.effects)} detail={`${report.counts.readbacks} verified readbacks`} icon={CheckCircle} />
+      <SummaryCard label="Outcomes" value={String(report.counts.outcomes)} detail={`${report.counts.approvals} approvals`} icon={ShieldCheck} />
+      <SummaryCard label="Audit evidence" value={String(report.counts.receipts)} detail={`${report.counts.replays} replay bundles`} icon={ListChecks} />
+    </section>
+    <Card><CardHeader><CardTitle>Agent roles</CardTitle><CardDescription>{roleSummary}. Availability never implies execution.</CardDescription></CardHeader><CardContent><div className="cp-tags">{report.available_role_ids.map((role) => <Badge key={role} variant={report.invoked_role_ids.includes(role) ? "default" : "outline"}>{humanize(role)}</Badge>)}</div></CardContent></Card>
+  </div>;
 }
 
 function AuditPage({ portfolio, cases }: { portfolio: CanvasPortfolioSnapshot; cases: ChangeCaseCanvas[] }) {

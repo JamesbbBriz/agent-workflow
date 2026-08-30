@@ -20,6 +20,7 @@ import (
 	conformanceassets "github.com/JamesbbBriz/agent-workflow/conformance"
 	"github.com/JamesbbBriz/agent-workflow/internal/builderapi"
 	"github.com/JamesbbBriz/agent-workflow/internal/contract"
+	"github.com/JamesbbBriz/agent-workflow/internal/webassets"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 	"github.com/JamesbbBriz/agent-workflow/workflow"
 )
@@ -64,6 +65,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runCanvas(args[1:], stdout, stderr)
 	case "builder":
 		return runBuilder(args[1:], stdout, stderr)
+	case "serve":
+		return runServe(args[1:], stdout, stderr)
 	case "provider":
 		return runProvider(args[1:], stdout, stderr)
 	case "conformance":
@@ -75,7 +78,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func writeUsage(output io.Writer) {
-	fmt.Fprintln(output, "usage: agent-workflow <init|doctor|run|status|approval|replay|report|validate|demo|canvas|builder|provider|conformance> [options]")
+	fmt.Fprintln(output, "usage: agent-workflow <init|doctor|run|status|approval|replay|report|validate|demo|canvas|builder|serve|provider|conformance> [options]")
 }
 
 func runInit(args []string, stdout, stderr io.Writer) int {
@@ -462,33 +465,68 @@ func toolVersion() string {
 }
 
 func runBuilder(args []string, stdout, stderr io.Writer) int {
-	flags := flag.NewFlagSet("builder", flag.ContinueOnError)
+	return runBuilderServer("builder", args, stdout, stderr, false)
+}
+
+func runServe(args []string, stdout, stderr io.Writer) int {
+	return runBuilderServer("serve", args, stdout, stderr, true)
+}
+
+func runBuilderServer(command string, args []string, stdout, stderr io.Writer, withGUI bool) int {
+	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	listenAddress := flags.String("listen", "127.0.0.1:4321", "loopback listen address")
-	ledgerPath := flags.String("ledger", ".agent-workflow/builder.jsonl", "canonical admission ledger")
-	canvasPath := flags.String("canvas", "", "verified Canvas snapshot supplying approval source Replays")
+	var ledgerFlag, projectDir *string
+	canvasPath := new(string)
+	if withGUI {
+		projectDir = flags.String("dir", ".", "initialized CLI project directory")
+	} else {
+		ledgerFlag = flags.String("ledger", ".agent-workflow/builder.jsonl", "canonical admission ledger")
+		canvasPath = flags.String("canvas", "", "verified Canvas snapshot supplying approval source Replays")
+	}
 	webOrigin := flags.String("web-origin", "", "exact page origin allowed to use experimental WebMCP")
-	webMCPAuditPath := flags.String("webmcp-audit", ".agent-workflow/webmcp-audit.jsonl", "append-only WebMCP audit log")
+	webMCPAuditPath := new(string)
+	if withGUI {
+		// serve binds its audit file to --dir below; there is no external override.
+	} else {
+		webMCPAuditPath = flags.String("webmcp-audit", ".agent-workflow/webmcp-audit.jsonl", "append-only WebMCP audit log")
+	}
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "builder accepts only --listen, --ledger, --canvas, --web-origin, and --webmcp-audit")
+		fmt.Fprintf(stderr, "%s received unexpected arguments\n", command)
 		return 2
 	}
 	host, _, err := net.SplitHostPort(*listenAddress)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
-		return writeError(stdout, stderr, true, "invalid_listen_address", errors.New("builder must listen on an explicit loopback IP"))
+		return writeError(stdout, stderr, true, "invalid_listen_address", fmt.Errorf("%s must listen on an explicit loopback IP", command))
 	}
-	if err := os.MkdirAll(filepath.Dir(*ledgerPath), 0o700); err != nil {
-		return writeError(stdout, stderr, true, "ledger_unavailable", errors.New("builder ledger directory is unavailable"))
+	ledgerPath := ""
+	projectRoot := ""
+	if withGUI {
+		root, rootErr := canonicalProjectRoot(filepath.Clean(*projectDir))
+		if rootErr != nil {
+			return writeError(stdout, stderr, true, "project_unsafe", rootErr)
+		}
+		ledgerPath, err = localLedgerPath(root, false)
+		if err != nil {
+			return writeError(stdout, stderr, true, "ledger_unavailable", err)
+		}
+		projectRoot = root
+		*webMCPAuditPath = filepath.Join(root, ".agent-workflow", "webmcp-audit.jsonl")
+	} else {
+		ledgerPath = *ledgerFlag
+		if err := os.MkdirAll(filepath.Dir(ledgerPath), 0o700); err != nil {
+			return writeError(stdout, stderr, true, "ledger_unavailable", errors.New("builder ledger directory is unavailable"))
+		}
 	}
 	if *webOrigin != "" {
 		if err := os.MkdirAll(filepath.Dir(*webMCPAuditPath), 0o700); err != nil {
 			return writeError(stdout, stderr, true, "audit_unavailable", errors.New("WebMCP audit directory is unavailable"))
 		}
 	}
-	paths := []string{*ledgerPath}
+	paths := []string{ledgerPath}
 	if *canvasPath != "" {
 		paths = append(paths, *canvasPath)
 	}
@@ -503,13 +541,18 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	ledger, err := workflow.OpenFileLedger(*ledgerPath)
+	ledger, err := workflow.OpenFileLedger(ledgerPath)
 	if err != nil {
 		return writeError(stdout, stderr, true, "ledger_unavailable", err)
 	}
 	sources := workflow.NewMemoryLedger()
 	var sourceCanvas *contractsv1.CanvasSnapshot
-	if *canvasPath != "" {
+	if withGUI {
+		sources, sourceCanvas, err = loadProjectCanvasSources(projectRoot, ledger)
+		if err != nil {
+			return writeError(stdout, stderr, true, "canvas_unavailable", err)
+		}
+	} else if *canvasPath != "" {
 		sources, sourceCanvas, err = loadCanvasSources(*canvasPath)
 		if err != nil {
 			return writeError(stdout, stderr, true, "canvas_unavailable", err)
@@ -522,26 +565,52 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 	var portfolios []contractsv1.CanvasPortfolioSnapshot
 	var selectedJobID contractsv1.Identifier
 	var history builderapi.DefinitionHistory
+	projectPortfolios := func(snapshot *contractsv1.CanvasSnapshot) ([]contractsv1.CanvasPortfolioSnapshot, contractsv1.Identifier, builderapi.DefinitionHistory, error) {
+		projected, selected, definitions, projectErr := restoreCanvasPortfolios(snapshot, ledger)
+		if projectErr != nil {
+			return nil, "", builderapi.DefinitionHistory{}, projectErr
+		}
+		for index := range projected {
+			portfolio, approvalErr := restorePortfolioApprovals(&projected[index], ledger)
+			if approvalErr != nil {
+				return nil, "", builderapi.DefinitionHistory{}, approvalErr
+			}
+			projected[index] = *portfolio
+		}
+		return projected, selected, definitions, nil
+	}
 	if sourceCanvas != nil {
-		portfolios, selectedJobID, history, err = restoreCanvasPortfolios(sourceCanvas, ledger)
+		portfolios, selectedJobID, history, err = projectPortfolios(sourceCanvas)
 		if err != nil {
 			return writeError(stdout, stderr, true, "canvas_unavailable", err)
 		}
-		for index := range portfolios {
-			portfolio, approvalErr := restorePortfolioApprovals(&portfolios[index], ledger)
-			if approvalErr != nil {
-				return writeError(stdout, stderr, true, "canvas_unavailable", approvalErr)
-			}
-			portfolios[index] = *portfolio
-		}
 	}
 	readChangeCases := func(generatedAt time.Time) ([]contractsv1.ChangeCaseCanvas, error) {
-		return restoreChangeCases(ledger, generatedAt)
+		changeCases, readErr := restoreChangeCases(ledger, generatedAt)
+		if readErr != nil {
+			_, _ = fmt.Fprintf(stderr, "control-plane refresh failed: %v\n", readErr)
+		}
+		return changeCases, readErr
 	}
 	if _, err := readChangeCases(time.Now().UTC()); err != nil {
 		return writeError(stdout, stderr, true, "change_cases_unavailable", err)
 	}
-	var handler http.Handler = builderapi.NewWithControlPlanePortfoliosReader(core, time.Now, portfolios, selectedJobID, history, readChangeCases)
+	var readPortfolios func(time.Time) ([]contractsv1.CanvasPortfolioSnapshot, contractsv1.Identifier, error)
+	if withGUI {
+		readPortfolios = func(time.Time) ([]contractsv1.CanvasPortfolioSnapshot, contractsv1.Identifier, error) {
+			_, snapshot, readErr := loadProjectCanvasSources(projectRoot, ledger)
+			if readErr != nil {
+				_, _ = fmt.Fprintf(stderr, "control-plane refresh failed: %v\n", readErr)
+				return nil, "", readErr
+			}
+			projected, selected, _, readErr := projectPortfolios(snapshot)
+			if readErr != nil {
+				_, _ = fmt.Fprintf(stderr, "control-plane refresh failed: %v\n", readErr)
+			}
+			return projected, selected, readErr
+		}
+	}
+	var handler http.Handler = builderapi.NewWithControlPlaneReaders(core, time.Now, portfolios, selectedJobID, history, readChangeCases, readPortfolios)
 	var auditFile *os.File
 	if *webOrigin != "" {
 		auditFile, err = os.OpenFile(*webMCPAuditPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -549,7 +618,7 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 			return writeError(stdout, stderr, true, "audit_unavailable", errors.New("WebMCP audit log is unavailable"))
 		}
 		auditInfo, statErr := auditFile.Stat()
-		for _, protected := range []string{*ledgerPath, *canvasPath} {
+		for _, protected := range []string{ledgerPath, *canvasPath} {
 			if protected == "" {
 				continue
 			}
@@ -564,16 +633,20 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 			return writeError(stdout, stderr, true, "audit_unavailable", errors.New("WebMCP audit log is unavailable"))
 		}
 		defer auditFile.Close()
-		handler, err = builderapi.NewWithWebMCPControlPlanePortfoliosReader(core, time.Now, portfolios, selectedJobID, history, readChangeCases, builderapi.WebMCPConfig{PageOrigin: *webOrigin, Audit: auditFile})
+		handler, err = builderapi.NewWithWebMCPControlPlaneReaders(core, time.Now, portfolios, selectedJobID, history, readChangeCases, readPortfolios, builderapi.WebMCPConfig{PageOrigin: *webOrigin, Audit: auditFile})
 		if err != nil {
 			return writeError(stdout, stderr, true, "webmcp_unavailable", err)
 		}
+	}
+	handler = builderapi.WithEvidenceReport(handler, ledger.Replays)
+	if withGUI {
+		handler = webassets.New(handler)
 	}
 	listener, err := net.Listen("tcp", *listenAddress)
 	if err != nil {
 		return writeError(stdout, stderr, true, "listen_failed", errors.New("builder listener is unavailable"))
 	}
-	fmt.Fprintf(stdout, "builder listening on http://%s\n", listener.Addr())
+	fmt.Fprintf(stdout, "%s listening on http://%s\n", command, listener.Addr())
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return writeError(stdout, stderr, true, "serve_failed", errors.New("builder server stopped"))
@@ -910,6 +983,70 @@ func loadCanvasSources(path string) (workflow.Ledger, *contractsv1.CanvasSnapsho
 		}
 	}
 	return ledger, &envelope.Data, nil
+}
+
+func loadProjectCanvasSources(root string, ledger *workflow.FileLedger) (workflow.Ledger, *contractsv1.CanvasSnapshot, error) {
+	body, err := os.ReadFile(filepath.Join(root, "agent-workflow.json"))
+	if err != nil {
+		return nil, nil, errors.New("project definition is unavailable")
+	}
+	var fixture contractsv1.ConformanceFixture
+	if err := contract.DecodeDefinition("ConformanceFixture", body, &fixture); err != nil || len(fixture.Campaigns) == 0 {
+		return nil, nil, errors.New("project definition is invalid")
+	}
+	campaign := fixture.Campaigns[0]
+	definitions := make([]contractsv1.WorkflowDefinition, 0, len(campaign.WorkflowPlan))
+	for _, planned := range campaign.WorkflowPlan {
+		for _, definition := range fixture.Workflows {
+			if planned == contractsv1.WorkflowRef(fmt.Sprintf("%s@%d", definition.Id, definition.Version)) {
+				definitions = append(definitions, definition)
+				break
+			}
+		}
+	}
+	allAdmissions, err := ledger.ReplaysByReceiptType(contractsv1.ReceiptReceiptTypeAdmission)
+	if err != nil {
+		return nil, nil, err
+	}
+	admissions := make([]contractsv1.ReplayBundle, 0, len(allAdmissions))
+	for _, replay := range allAdmissions {
+		admission, materializeErr := workflow.MaterializeAdmission(replay, len(replay.Receipts))
+		if materializeErr != nil {
+			return nil, nil, materializeErr
+		}
+		if admission.Job.Id == fixture.Job.Id && admission.Campaign.Id == campaign.Id {
+			admissions = append(admissions, replay)
+		}
+	}
+	inputs := []canvas.ExecutionInput{}
+	replays, err := ledger.Replays()
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, replay := range replays {
+		for _, receipt := range replay.Receipts {
+			if receipt.ReceiptType != contractsv1.ReceiptReceiptTypeInvocation {
+				continue
+			}
+			raw, marshalErr := json.Marshal(receipt.Payload["invocation"])
+			var target struct {
+				JobID      contractsv1.Identifier `json:"job_id"`
+				CampaignID contractsv1.Identifier `json:"campaign_id"`
+			}
+			if marshalErr != nil || json.Unmarshal(raw, &target) != nil {
+				return nil, nil, errors.New("canonical invocation target is invalid")
+			}
+			if target.JobID == fixture.Job.Id && target.CampaignID == campaign.Id {
+				inputs = append(inputs, canvas.ExecutionInput{Replay: replay, Outputs: workflow.OutputCatalog{"recommendation@1": validateRecommendation, "review-decision@1": func(any) error { return nil }}})
+			}
+			break
+		}
+	}
+	snapshot, err := canvas.ProjectWithAdmissions(fixture.Job, campaign, definitions, admissions, inputs...)
+	if err != nil {
+		return nil, nil, err
+	}
+	return ledger, &snapshot, nil
 }
 
 func runCanvas(args []string, stdout, stderr io.Writer) int {

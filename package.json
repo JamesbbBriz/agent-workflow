@@ -13,6 +13,8 @@
     "check:types": "tsc --noEmit -p web/tsconfig.json",
     "web:dev": "vite --config web/vite.config.ts",
     "web:build": "vite build --config web/vite.config.ts",
+    "web:embed": "npm run web:build && sh scripts/sync-embedded-web.sh",
+    "check:embedded-web": "npm run web:build && diff -qr web/dist internal/webassets/dist",
     "web:test": "vitest run --config web/vite.config.ts",
     "web:e2e": "playwright test"
   },

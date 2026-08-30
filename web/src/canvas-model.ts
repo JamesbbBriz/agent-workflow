@@ -151,5 +151,5 @@ function nextNodeStatus(snapshot: CanvasSnapshot, workflowRef: string, nodeID: s
 }
 
 export function humanize(value: string): string {
-  return value.replaceAll("-", " ").replace(/\b\w/g, (character) => character.toUpperCase());
+  return value.replaceAll(/[-_]/g, " ").replace(/\b\w/g, (character) => character.toUpperCase());
 }

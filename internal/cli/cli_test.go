@@ -480,6 +480,34 @@ func TestBuilderRejectsRemoteListenAddress(t *testing.T) {
 	}
 }
 
+func TestServeRejectsRemoteListenAddress(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"serve", "--listen", "0.0.0.0:4321"}, &stdout, &stderr); code == 0 {
+		t.Fatalf("remote GUI listener was accepted: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "invalid_listen_address") {
+		t.Fatalf("unexpected error: %s %s", stdout.String(), stderr.String())
+	}
+}
+
+func TestServeRejectsExternalCanvas(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"serve", "--canvas", "foreign.json"}, &stdout, &stderr); code == 0 {
+		t.Fatal("serve accepted a Canvas outside its bound project")
+	}
+}
+
+func TestServeRejectsExternalWebMCPAuditPath(t *testing.T) {
+	external := filepath.Join(t.TempDir(), "external-audit.jsonl")
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"serve", "--webmcp-audit", external}, &stdout, &stderr); code == 0 {
+		t.Fatal("serve accepted an audit path outside its bound project")
+	}
+	if _, err := os.Stat(external); !os.IsNotExist(err) {
+		t.Fatalf("serve created an external audit file: %v", err)
+	}
+}
+
 func TestBuilderRejectsCanonicalAndAuditPathCollision(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "shared.jsonl")
 	var stdout, stderr bytes.Buffer
