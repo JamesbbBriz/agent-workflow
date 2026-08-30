@@ -1,18 +1,43 @@
 name: release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing strict SemVer release tag on main
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.tag.outputs.sha }}
+    steps:
+      - id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+\.)*[0-9A-Za-z-]+)?(\+([0-9A-Za-z-]+\.)*[0-9A-Za-z-]+)?$ ]]
+          tag_type=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.type')
+          tag_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')
+          test "$tag_type" = commit
+          status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${tag_sha}...main" --jq '.status')
+          test "$status" = identical || test "$status" = ahead
+          echo "sha=$tag_sha" >> "$GITHUB_OUTPUT"
+
   verify:
+    needs: resolve
     uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
 
   package:
-    needs: verify
+    needs: [resolve, verify]
     strategy:
       matrix:
         include:
@@ -24,11 +49,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
-      - run: scripts/package-release.sh "${GITHUB_REF_NAME}" "${{ matrix.os }}" "${{ matrix.arch }}" dist
+      - run: scripts/package-release.sh "${{ inputs.tag }}" "${{ matrix.os }}" "${{ matrix.arch }}" dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: "${{ matrix.os }}-${{ matrix.arch }}"
@@ -36,7 +63,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: package
+    needs: [resolve, package]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -53,15 +80,19 @@ jobs:
           subject-path: dist/*
       - env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+          TAG: ${{ inputs.tag }}
         run: |
-          tag_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq '.object.sha')
-          test "$tag_sha" = "$GITHUB_SHA"
-          status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...main" --jq '.status')
+          tag_type=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.type')
+          tag_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')
+          test "$tag_type" = commit
+          test "$tag_sha" = "$RELEASE_SHA"
+          status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${RELEASE_SHA}...main" --jq '.status')
           test "$status" = identical || test "$status" = ahead
           test "$(gh api "repos/${GITHUB_REPOSITORY}/immutable-releases" --jq '.enabled')" = true
-          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release create "${GITHUB_REF_NAME}" --verify-tag --draft --generate-notes --title "agent-workflow ${GITHUB_REF_NAME}"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --draft --generate-notes --title "agent-workflow $TAG"
           fi
-          gh release upload "${GITHUB_REF_NAME}" --clobber dist/*
-          test "$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq '.object.sha')" = "$GITHUB_SHA"
-          gh release edit "${GITHUB_REF_NAME}" --draft=false
+          gh release upload "$TAG" --clobber dist/*
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')" = "$RELEASE_SHA"
+          gh release edit "$TAG" --draft=false

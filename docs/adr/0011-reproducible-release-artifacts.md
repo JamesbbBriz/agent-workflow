@@ -6,7 +6,7 @@ Accepted.
 
 ## Decision
 
-Tags matching `v*` build one archive for Linux amd64/arm64, macOS amd64/arm64,
+An existing strict SemVer lightweight tag builds one archive for Linux amd64/arm64, macOS amd64/arm64,
 and Windows amd64. Every archive contains the CLI, all five bundled provider
 bridges, and the license/security/compatibility documents. GitHub Actions
 publishes the archives plus one `SHA256SUMS` file and GitHub OIDC build
@@ -22,9 +22,12 @@ not make it ready.
 ## Consequences
 
 Release binaries need no Node.js runtime because the reviewed React assets are
-already embedded. A strict SemVer lightweight tag is the only publication
-trigger. Immediately before publication, the workflow verifies that the remote
-tag still equals the event SHA and that the SHA is on `main`. Repository ruleset
+already embedded. A maintainer dispatches the privileged workflow from the
+protected default branch and supplies a strict SemVer lightweight tag as data.
+The workflow resolves the tag once, requires its commit to be on `main`, and
+checks out that exact commit for verification and packaging. Immediately before
+publication, it verifies that the remote tag still equals the resolved commit.
+Repository rulesets require reviewed, verified changes on `main`; ruleset
 `immutable release tags` blocks updates and deletion for `v*`, and GitHub
 immutable releases lock the published tag and assets. The workflow uploads every
 artifact to a draft and publishes it only after a second tag check. Release
