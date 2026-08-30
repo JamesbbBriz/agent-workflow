@@ -319,6 +319,9 @@ func (r *conformanceRuntime) admit() error {
 			}
 			preview, lint, err := r.authoring.Preview(r.fixture.Job, campaign, definition, "conformance-operator")
 			if err != nil {
+				if _, replayErr := r.authoring.AdmissionReplay(string(definition.Id)); replayErr == nil {
+					continue
+				}
 				return fmt.Errorf("Workflow %s lint failed (%v): %w", definition.Id, lint.Issues, err)
 			}
 			receipt, err := r.authoring.Confirm(preview, "conformance-operator", campaign.EvidenceFrontier.Cutoff)

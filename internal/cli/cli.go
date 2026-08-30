@@ -88,7 +88,8 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return writeError(stdout, stderr, true, "project_unavailable", errors.New("project directory is unavailable"))
 	}
-	if err := trustedProjectRoot(root); err != nil {
+	root, err := canonicalProjectRoot(root)
+	if err != nil {
 		return writeError(stdout, stderr, true, "project_unsafe", err)
 	}
 	want := conformanceassets.GenericFixture()
@@ -161,7 +162,15 @@ func runLocal(args []string, stdout, stderr io.Writer) int {
 	}
 	for attempt := 0; ; attempt++ {
 		if err := runtime.Admit(); err != nil {
-			return writeError(stdout, stderr, true, "admission_failed", err)
+			if !errors.Is(err, workflow.ErrWorkflowVersionConflict) || attempt == maxConcurrentDeliveryAttempts-1 {
+				return writeError(stdout, stderr, true, "admission_failed", err)
+			}
+			var reloadCode int
+			runtime, campaign, _, reloadCode = loadLocalRuntime(root, campaign, stdout, stderr)
+			if reloadCode != 0 {
+				return reloadCode
+			}
+			continue
 		}
 		if _, err := runtime.Drive(context.Background(), campaign, 100); err == nil {
 			break
@@ -271,8 +280,8 @@ func openLocalRuntime(args []string, stdout, stderr io.Writer, name string) (*wo
 }
 
 func loadLocalRuntime(dir string, campaign contractsv1.Identifier, stdout, stderr io.Writer) (*workflow.FixtureRuntime, contractsv1.Identifier, string, int) {
-	root := filepath.Clean(dir)
-	if err := trustedProjectRoot(root); err != nil {
+	root, err := canonicalProjectRoot(filepath.Clean(dir))
+	if err != nil {
 		return nil, "", root, writeError(stdout, stderr, true, "project_unsafe", err)
 	}
 	body, err := os.ReadFile(filepath.Join(root, "agent-workflow.json"))
@@ -324,15 +333,19 @@ func localLedgerPath(root string, allowMissing bool) (string, error) {
 	return path, nil
 }
 
-func trustedProjectRoot(root string) error {
-	info, err := os.Lstat(root)
+func canonicalProjectRoot(root string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", errors.New("project root is unavailable")
+	}
+	info, err := os.Lstat(resolved)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return errors.New("project root must be a real directory")
+		return "", errors.New("project root must be a real directory")
 	}
 	if info.Mode().Perm()&0o022 != 0 {
-		return errors.New("project root must not be group- or world-writable")
+		return "", errors.New("project root must not be group- or world-writable")
 	}
-	return nil
+	return resolved, nil
 }
 
 func runConformance(args []string, stdout, stderr io.Writer) int {
@@ -1185,7 +1198,11 @@ func (p *demoProvider) Start(_ context.Context, invocation workflow.Invocation) 
 	if err != nil {
 		return err
 	}
-	p.results[invocation.IdempotencyKey] = workflow.ProviderResult{IdempotencyKey: invocation.IdempotencyKey, CompletedAt: time.Now().UTC(), Artifacts: []contractsv1.ActionArtifact{{
+	completedAt := invocation.Deadline
+	if invocation.Node.DeadlineSeconds != nil {
+		completedAt = completedAt.Add(-time.Duration(*invocation.Node.DeadlineSeconds)*time.Second + time.Millisecond)
+	}
+	p.results[invocation.IdempotencyKey] = workflow.ProviderResult{IdempotencyKey: invocation.IdempotencyKey, CompletedAt: completedAt, Artifacts: []contractsv1.ActionArtifact{{
 		Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: "example-recommendation",
 		ArtifactType: "recommendation", JobId: invocation.JobID, CampaignId: invocation.CampaignID,
 		WorkflowRef: invocation.WorkflowRef, NodeId: invocation.Node.Id,
