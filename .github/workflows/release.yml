@@ -1,12 +1,8 @@
 name: release
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing strict SemVer release tag on main
-        required: true
-        type: string
+  repository_dispatch:
+    types: [release]
 
 permissions:
   contents: read
@@ -17,12 +13,13 @@ jobs:
     outputs:
       sha: ${{ steps.tag.outputs.sha }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: tag
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ github.event.client_payload.tag }}
         run: |
-          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+\.)*[0-9A-Za-z-]+)?(\+([0-9A-Za-z-]+\.)*[0-9A-Za-z-]+)?$ ]]
+          scripts/validate-release-version.sh "$TAG"
           tag_type=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.type')
           tag_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')
           test "$tag_type" = commit
@@ -55,7 +52,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: scripts/package-release.sh "${{ inputs.tag }}" "${{ matrix.os }}" "${{ matrix.arch }}" dist
+      - run: scripts/package-release.sh "${{ github.event.client_payload.tag }}" "${{ matrix.os }}" "${{ matrix.arch }}" dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: "${{ matrix.os }}-${{ matrix.arch }}"
@@ -81,7 +78,7 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ github.event.client_payload.tag }}
         run: |
           tag_type=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.type')
           tag_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')

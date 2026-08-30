@@ -10,11 +10,7 @@ version=$1
 target_os=$2
 target_arch=$3
 output=$4
-semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
-if ! printf '%s\n' "$version" | grep -Eq "$semver"; then
-	echo "version must be a v-prefixed semantic version" >&2
-	exit 2
-fi
+"$(dirname "$0")/validate-release-version.sh" "$version"
 case "$target_os/$target_arch" in
 	linux/amd64|linux/arm64|darwin/amd64|darwin/arm64|windows/amd64) ;;
 	*) echo "unsupported release target: $target_os/$target_arch" >&2; exit 2 ;;

@@ -22,8 +22,9 @@ not make it ready.
 ## Consequences
 
 Release binaries need no Node.js runtime because the reviewed React assets are
-already embedded. A maintainer dispatches the privileged workflow from the
-protected default branch and supplies a strict SemVer lightweight tag as data.
+already embedded. A maintainer sends the narrowly typed `release` repository
+dispatch; GitHub loads that privileged workflow from the protected default
+branch and supplies a strict SemVer lightweight tag only as event data.
 The workflow resolves the tag once, requires its commit to be on `main`, and
 checks out that exact commit for verification and packaging. Immediately before
 publication, it verifies that the remote tag still equals the resolved commit.
