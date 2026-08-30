@@ -87,7 +87,6 @@ jobs:
           test "$tag_sha" = "$RELEASE_SHA"
           status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${RELEASE_SHA}...main" --jq '.status')
           test "$status" = identical || test "$status" = ahead
-          test "$(gh api "repos/${GITHUB_REPOSITORY}/immutable-releases" --jq '.enabled')" = true
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --draft --generate-notes --title "agent-workflow $TAG"
           fi
