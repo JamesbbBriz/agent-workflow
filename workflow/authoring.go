@@ -17,6 +17,10 @@ import (
 type ExecutorCatalog map[string]contractsv1.NodeDefinitionKind
 type ApprovalAuthorityCatalog map[string][]string
 
+// ErrApprovalAlreadyDecided lets retrying adapters resume after the approval
+// receipt was committed but before the Campaign was driven.
+var ErrApprovalAlreadyDecided = errors.New("approval was already decided")
+
 type admissionDefinitionLedger interface {
 	AppendAdmission(contractsv1.Receipt, contractsv1.JobDefinition, contractsv1.CampaignDefinition) error
 }
@@ -209,7 +213,7 @@ func (c *AuthoringCore) Preview(job contractsv1.JobDefinition, campaign contract
 		return contractsv1.WorkflowAdmissionPreview{}, report, err
 	}
 	if definition.Version != base+1 {
-		return contractsv1.WorkflowAdmissionPreview{}, report, fmt.Errorf("workflow version must be %d", base+1)
+		return contractsv1.WorkflowAdmissionPreview{}, report, fmt.Errorf("%w: workflow version must be %d", ErrWorkflowVersionConflict, base+1)
 	}
 	compiled, compileReceipt, err := compileWorkflow(definition, c.registry, "preview", time.Unix(0, 0).UTC())
 	if err != nil {
@@ -283,6 +287,8 @@ type AdmissionAudit struct {
 	InputsSHA256  string `json:"inputs_sha256"`
 }
 
+var ErrWorkflowVersionConflict = errors.New("workflow version conflict")
+
 func (c *AuthoringCore) Confirm(preview contractsv1.WorkflowAdmissionPreview, actor string, occurredAt time.Time) (contractsv1.WorkflowAdmission, error) {
 	return c.ConfirmWithAudit(preview, actor, occurredAt, nil)
 }
@@ -301,6 +307,9 @@ func (c *AuthoringCore) ConfirmWithAudit(preview contractsv1.WorkflowAdmissionPr
 		return contractsv1.WorkflowAdmission{}, err
 	}
 	if current != preview.BaseRevision {
+		if existing, ok := c.existingAdmission(aggregate, preview.PreviewHash); ok && existing.Receipt.Actor != nil && *existing.Receipt.Actor == actor {
+			return existing, nil
+		}
 		return contractsv1.WorkflowAdmission{}, errors.New("workflow preview is stale")
 	}
 	expected, _, err := c.Preview(preview.Job, preview.Campaign, preview.Workflow, actor)
@@ -453,7 +462,7 @@ func (c *AuthoringCore) PreviewApproval(brief contractsv1.ApprovalBrief, actor, 
 	base := 0
 	if replay, err := c.ledger.Replay(approvalAggregate(string(brief.Id))); err == nil {
 		if len(replay.Receipts) > 0 {
-			return contractsv1.ApprovalPreview{}, errors.New("approval was already decided")
+			return contractsv1.ApprovalPreview{}, ErrApprovalAlreadyDecided
 		}
 	} else if !errors.Is(err, ErrReplayEmpty) {
 		return contractsv1.ApprovalPreview{}, err
@@ -505,6 +514,9 @@ func (c *AuthoringCore) ConfirmApproval(preview contractsv1.ApprovalPreview, act
 	}
 	expected, err := c.PreviewApproval(preview.Brief, actor, preview.SourceAggregateId)
 	if err != nil || !reflect.DeepEqual(expected, preview) {
+		if receipt, ok := existingApproval(c.ledger, aggregate, preview.PreviewHash, optionID, actor); ok {
+			return receipt, nil
+		}
 		return contractsv1.Receipt{}, errors.New("approval preview is stale or altered")
 	}
 	unsigned := preview

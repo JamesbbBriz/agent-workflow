@@ -91,6 +91,35 @@ func TestV2CampaignReceiptPayloadsAreClosedAndTyped(t *testing.T) {
 	}
 }
 
+func TestLocalProjectCLIContractsRejectUnknownFieldsAndVersions(t *testing.T) {
+	t.Parallel()
+	compiler := jsonschema.NewCompiler()
+	var catalog any
+	if err := json.Unmarshal(publiccontracts.AgentWorkflowV1, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if err := compiler.AddResource(schemaID, catalog); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := compiler.Compile(schemaID + "#/$defs/LocalProjectInit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := map[string]any{"kind": "local_project_init", "schema_version": 1, "project": "/tmp/project", "ledger": "/tmp/project/ledger.jsonl"}
+	if err := schema.Validate(document); err != nil {
+		t.Fatal(err)
+	}
+	document["unknown"] = true
+	if err := schema.Validate(document); err == nil {
+		t.Fatal("LocalProjectInit accepted an unknown field")
+	}
+	delete(document, "unknown")
+	document["schema_version"] = 2
+	if err := schema.Validate(document); err == nil {
+		t.Fatal("LocalProjectInit accepted schema version 2")
+	}
+}
+
 func intentFixture(kind string) map[string]any {
 	return map[string]any{
 		"schema_version": 1, "kind": kind, "title": "Title", "summary": "Summary", "objective": "Objective",

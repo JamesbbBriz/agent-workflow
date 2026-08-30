@@ -22,6 +22,29 @@ Context determines what the Agent can know. Capabilities determine what it can d
 
 ## Try the public contract
 
+Run the complete local CLI path first. It uses the bundled non-production
+fixture and demo provider with a private append-only ledger:
+
+```bash
+go run ./cmd/agent-workflow init --dir /tmp/agent-workflow-demo
+go run ./cmd/agent-workflow doctor --dir /tmp/agent-workflow-demo
+go run ./cmd/agent-workflow run --dir /tmp/agent-workflow-demo
+go run ./cmd/agent-workflow status --dir /tmp/agent-workflow-demo
+go run ./cmd/agent-workflow approval confirm --dir /tmp/agent-workflow-demo
+go run ./cmd/agent-workflow replay --dir /tmp/agent-workflow-demo
+```
+
+`run` stops at the exact human approval gate. `approval confirm` appends the
+approval receipt and resumes the same Campaign; `status` and `replay` recover
+the canonical state after process restart. The bundled fixture never performs
+production mutation.
+
+The local project path and its ancestors are a caller-trusted boundary and
+must not be replaced during a command. The CLI resolves that path once, rejects
+a group- or world-writable project root, and keeps runtime state in a mode-0700
+directory with mode-0600 files. Same-user hostile filesystem races are outside
+the local demo threat model.
+
 ```bash
 go run ./cmd/agent-workflow validate \
   --file examples/research-review.workflow.json \

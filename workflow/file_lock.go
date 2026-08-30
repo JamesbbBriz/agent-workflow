@@ -16,3 +16,11 @@ func openLedgerLock(path string) (*os.File, error) {
 	}
 	return file, nil
 }
+
+func openExistingLedgerLock(path string) (*os.File, error) {
+	file, err := os.Open(path + ".lock")
+	if err != nil {
+		return nil, fmt.Errorf("open existing ledger lock: %w", err)
+	}
+	return file, nil
+}

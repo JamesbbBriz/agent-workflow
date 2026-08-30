@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JamesbbBriz/agent-workflow/canvas"
+	conformanceassets "github.com/JamesbbBriz/agent-workflow/conformance"
 	"github.com/JamesbbBriz/agent-workflow/internal/builderapi"
 	"github.com/JamesbbBriz/agent-workflow/internal/contract"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
@@ -24,19 +25,35 @@ import (
 )
 
 type response struct {
-	OK          bool   `json:"ok"`
-	WorkflowRef string `json:"workflow_ref,omitempty"`
-	Hash        string `json:"hash,omitempty"`
-	Error       string `json:"error,omitempty"`
-	Code        string `json:"code,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	SchemaVersion int    `json:"schema_version,omitempty"`
+	OK            bool   `json:"ok"`
+	WorkflowRef   string `json:"workflow_ref,omitempty"`
+	Hash          string `json:"hash,omitempty"`
+	Error         string `json:"error,omitempty"`
+	Code          string `json:"code,omitempty"`
 }
+
+const maxConcurrentDeliveryAttempts = 100
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder|provider|conformance> [options]")
+		writeUsage(stderr)
 		return 2
 	}
 	switch args[0] {
+	case "init":
+		return runInit(args[1:], stdout, stderr)
+	case "doctor":
+		return runDoctor(args[1:], stdout, stderr)
+	case "run":
+		return runLocal(args[1:], stdout, stderr)
+	case "status":
+		return runStatus(args[1:], stdout, stderr)
+	case "approval":
+		return runApproval(args[1:], stdout, stderr)
+	case "replay":
+		return runReplay(args[1:], stdout, stderr)
 	case "validate":
 		return runValidate(args[1:], stdout, stderr)
 	case "demo":
@@ -50,9 +67,290 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "conformance":
 		return runConformance(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder|provider|conformance> [options]")
+		writeUsage(stderr)
 		return 2
 	}
+}
+
+func writeUsage(output io.Writer) {
+	fmt.Fprintln(output, "usage: agent-workflow <init|doctor|run|status|approval|replay|validate|demo|canvas|builder|provider|conformance> [options]")
+}
+
+func runInit(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("init", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dir := flags.String("dir", ".", "project directory")
+	jsonOutput := flags.Bool("json", true, "write a JSON response")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !*jsonOutput {
+		return 2
+	}
+	root := filepath.Clean(*dir)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return writeError(stdout, stderr, true, "project_unavailable", errors.New("project directory is unavailable"))
+	}
+	root, err := canonicalProjectRoot(root)
+	if err != nil {
+		return writeError(stdout, stderr, true, "project_unsafe", err)
+	}
+	want := conformanceassets.GenericFixture()
+	definitionPath := filepath.Join(root, "agent-workflow.json")
+	if info, err := os.Lstat(definitionPath); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
+		return writeError(stdout, stderr, true, "project_unsafe", errors.New("agent-workflow.json must be a regular file, not a symlink"))
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return writeError(stdout, stderr, true, "project_unavailable", errors.New("project definition is unavailable"))
+	}
+	if existing, err := os.ReadFile(definitionPath); err == nil {
+		if !reflect.DeepEqual(existing, want) {
+			return writeError(stdout, stderr, true, "project_exists", errors.New("agent-workflow.json already exists with different content"))
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return writeError(stdout, stderr, true, "project_unavailable", errors.New("project definition is unavailable"))
+	} else if err := os.WriteFile(definitionPath, want, 0o600); err != nil {
+		return writeError(stdout, stderr, true, "project_unavailable", errors.New("project definition could not be written"))
+	}
+	ledgerPath, err := localLedgerPath(root, true)
+	if err != nil {
+		return writeError(stdout, stderr, true, "ledger_unavailable", err)
+	}
+	ledger, err := workflow.OpenFileLedger(ledgerPath)
+	if err != nil {
+		return writeError(stdout, stderr, true, "ledger_unavailable", err)
+	}
+	_ = ledger
+	result := contractsv1.LocalProjectInit{Kind: contractsv1.LocalProjectInitKindLocalProjectInit, SchemaVersion: 1, Project: definitionPath, Ledger: ledgerPath}
+	if err := contract.ValidateDefinition("LocalProjectInit", result); err != nil {
+		return writeError(stdout, stderr, true, "output_failed", err)
+	}
+	return writeProviderData(stdout, result)
+}
+
+func runDoctor(args []string, stdout, stderr io.Writer) int {
+	runtime, campaign, root, code := openLocalRuntime(args, stdout, stderr, "doctor")
+	if code != 0 {
+		return code
+	}
+	if err := runtime.Preflight(); err != nil {
+		return writeError(stdout, stderr, true, "core_not_ready", err)
+	}
+	ledgerPath, err := localLedgerPath(root, false)
+	if err != nil {
+		return writeError(stdout, stderr, true, "ledger_unavailable", err)
+	}
+	info, err := os.Stat(ledgerPath)
+	if err != nil {
+		return writeError(stdout, stderr, true, "ledger_unavailable", errors.New("ledger is unavailable"))
+	}
+	if info.Mode().Perm() != 0o600 {
+		return writeError(stdout, stderr, true, "ledger_unsafe", errors.New("ledger mode must be 0600"))
+	}
+	result := contractsv1.LocalProjectDoctor{
+		Kind: contractsv1.LocalProjectDoctorKindLocalProjectDoctor, SchemaVersion: 1, Ready: true,
+		CampaignId: campaign, Status: contractsv1.LocalProjectDoctorStatusReady, Core: contractsv1.LocalProjectDoctorCoreReady,
+		Provider: contractsv1.LocalProjectDoctorProvider{Id: "demo", Ready: true, Production: false},
+		Storage:  contractsv1.LocalProjectDoctorStorage{Path: ledgerPath, Mode: contractsv1.LocalProjectDoctorStorageModeRw},
+	}
+	if err := contract.ValidateDefinition("LocalProjectDoctor", result); err != nil {
+		return writeError(stdout, stderr, true, "output_failed", err)
+	}
+	return writeProviderData(stdout, result)
+}
+
+func runLocal(args []string, stdout, stderr io.Writer) int {
+	runtime, campaign, root, code := openLocalRuntime(args, stdout, stderr, "run")
+	if code != 0 {
+		return code
+	}
+	for attempt := 0; ; attempt++ {
+		if err := runtime.Admit(); err != nil {
+			if !errors.Is(err, workflow.ErrWorkflowVersionConflict) || attempt == maxConcurrentDeliveryAttempts-1 {
+				return writeError(stdout, stderr, true, "admission_failed", err)
+			}
+			var reloadCode int
+			runtime, campaign, _, reloadCode = loadLocalRuntime(root, campaign, false, stdout, stderr)
+			if reloadCode != 0 {
+				return reloadCode
+			}
+			continue
+		}
+		if _, err := runtime.Drive(context.Background(), campaign, 100); err == nil {
+			break
+		} else if !errors.Is(err, workflow.ErrCanonicalConflict) || attempt == maxConcurrentDeliveryAttempts-1 {
+			return writeError(stdout, stderr, true, "run_failed", err)
+		}
+		var reloadCode int
+		runtime, campaign, _, reloadCode = loadLocalRuntime(root, campaign, false, stdout, stderr)
+		if reloadCode != 0 {
+			return reloadCode
+		}
+	}
+	preview, err := runtime.Preview(context.Background(), campaign)
+	if err != nil {
+		return writeError(stdout, stderr, true, "run_failed", err)
+	}
+	return writeProviderData(stdout, preview)
+}
+
+func runStatus(args []string, stdout, stderr io.Writer) int {
+	runtime, campaign, _, code := openLocalRuntime(args, stdout, stderr, "status")
+	if code != 0 {
+		return code
+	}
+	preview, err := runtime.Preview(context.Background(), campaign)
+	if err != nil {
+		return writeError(stdout, stderr, true, "status_failed", err)
+	}
+	return writeProviderData(stdout, preview)
+}
+
+func runApproval(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "confirm" {
+		fmt.Fprintln(stderr, "usage: agent-workflow approval confirm [--dir .] [--campaign id] [--option approve]")
+		return 2
+	}
+	flags := flag.NewFlagSet("approval confirm", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dir := flags.String("dir", ".", "project directory")
+	campaignFlag := flags.String("campaign", "", "Campaign id; optional for a single-Campaign project")
+	option := flags.String("option", "approve", "approval option")
+	jsonOutput := flags.Bool("json", true, "write a JSON response")
+	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || !*jsonOutput {
+		return 2
+	}
+	runtime, campaign, root, code := loadLocalRuntime(*dir, contractsv1.Identifier(*campaignFlag), false, stdout, stderr)
+	if code != 0 {
+		return code
+	}
+	for attempt := 0; ; attempt++ {
+		preview, err := runtime.PreviewApproval(context.Background(), campaign)
+		if err != nil && !errors.Is(err, workflow.ErrApprovalAlreadyDecided) {
+			if selected, ok, lookupErr := runtime.ExistingApprovalOption(context.Background(), campaign); lookupErr != nil {
+				return writeError(stdout, stderr, true, "approval_unavailable", lookupErr)
+			} else if !ok || selected != *option {
+				return writeError(stdout, stderr, true, "approval_unavailable", err)
+			}
+		} else if err == nil {
+			if _, err := runtime.ConfirmApproval(preview, *option); err != nil {
+				return writeError(stdout, stderr, true, "approval_failed", err)
+			}
+		} else if selected, ok, lookupErr := runtime.ExistingApprovalOption(context.Background(), campaign); lookupErr != nil {
+			return writeError(stdout, stderr, true, "approval_unavailable", lookupErr)
+		} else if !ok || selected != *option {
+			return writeError(stdout, stderr, true, "approval_conflict", errors.New("existing approval selected a different option"))
+		}
+		if _, err := runtime.Drive(context.Background(), campaign, 100); err == nil {
+			break
+		} else if !errors.Is(err, workflow.ErrCanonicalConflict) || attempt == maxConcurrentDeliveryAttempts-1 {
+			return writeError(stdout, stderr, true, "resume_failed", err)
+		}
+		var reloadCode int
+		runtime, campaign, _, reloadCode = loadLocalRuntime(root, campaign, false, stdout, stderr)
+		if reloadCode != 0 {
+			return reloadCode
+		}
+	}
+	completed, err := runtime.Preview(context.Background(), campaign)
+	if err != nil {
+		return writeError(stdout, stderr, true, "resume_failed", err)
+	}
+	return writeProviderData(stdout, completed)
+}
+
+func runReplay(args []string, stdout, stderr io.Writer) int {
+	runtime, campaign, _, code := openLocalRuntime(args, stdout, stderr, "replay")
+	if code != 0 {
+		return code
+	}
+	replay, err := runtime.Replay(campaign)
+	if err != nil {
+		return writeError(stdout, stderr, true, "replay_unavailable", err)
+	}
+	return writeProviderData(stdout, replay)
+}
+
+func openLocalRuntime(args []string, stdout, stderr io.Writer, name string) (*workflow.FixtureRuntime, contractsv1.Identifier, string, int) {
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dir := flags.String("dir", ".", "project directory")
+	campaign := flags.String("campaign", "", "Campaign id; optional for a single-Campaign project")
+	jsonOutput := flags.Bool("json", true, "write a JSON response")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !*jsonOutput {
+		return nil, "", "", 2
+	}
+	return loadLocalRuntime(*dir, contractsv1.Identifier(*campaign), name != "run", stdout, stderr)
+}
+
+func loadLocalRuntime(dir string, campaign contractsv1.Identifier, readOnly bool, stdout, stderr io.Writer) (*workflow.FixtureRuntime, contractsv1.Identifier, string, int) {
+	root, err := canonicalProjectRoot(filepath.Clean(dir))
+	if err != nil {
+		return nil, "", root, writeError(stdout, stderr, true, "project_unsafe", err)
+	}
+	body, err := os.ReadFile(filepath.Join(root, "agent-workflow.json"))
+	if err != nil {
+		return nil, "", root, writeError(stdout, stderr, true, "project_unavailable", errors.New("run agent-workflow init first"))
+	}
+	var fixture contractsv1.ConformanceFixture
+	if err := contract.DecodeDefinition("ConformanceFixture", body, &fixture); err != nil {
+		return nil, "", root, writeError(stdout, stderr, true, "project_invalid", err)
+	}
+	ledgerPath, err := localLedgerPath(root, false)
+	if err != nil {
+		return nil, "", root, writeError(stdout, stderr, true, "ledger_unavailable", err)
+	}
+	var ledger *workflow.FileLedger
+	if readOnly {
+		ledger, err = workflow.OpenFileLedgerReadOnly(ledgerPath)
+	} else {
+		ledger, err = workflow.OpenFileLedger(ledgerPath)
+	}
+	if err != nil {
+		return nil, "", root, writeError(stdout, stderr, true, "ledger_unavailable", err)
+	}
+	runtime, err := workflow.NewFixtureRuntime(fixture, &demoProvider{results: make(map[string]workflow.ProviderResult)}, ledger)
+	if err != nil {
+		return nil, "", root, writeError(stdout, stderr, true, "project_invalid", err)
+	}
+	selected := campaign
+	if selected == "" && len(fixture.Campaigns) == 1 {
+		selected = fixture.Campaigns[0].Id
+	}
+	return runtime, selected, root, 0
+}
+
+func localLedgerPath(root string, allowMissing bool) (string, error) {
+	dir := filepath.Join(root, ".agent-workflow")
+	info, err := os.Lstat(dir)
+	if errors.Is(err, os.ErrNotExist) && allowMissing {
+		return filepath.Join(dir, "ledger.jsonl"), nil
+	}
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", errors.New(".agent-workflow must be a real project directory")
+	}
+	if info.Mode().Perm() != 0o700 {
+		return "", errors.New(".agent-workflow must use mode 0700")
+	}
+	path := filepath.Join(dir, "ledger.jsonl")
+	if !allowMissing {
+		info, err = os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return "", errors.New("ledger must be an initialized regular file")
+		}
+	}
+	return path, nil
+}
+
+func canonicalProjectRoot(root string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", errors.New("project root is unavailable")
+	}
+	info, err := os.Lstat(resolved)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", errors.New("project root must be a real directory")
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return "", errors.New("project root must not be group- or world-writable")
+	}
+	return resolved, nil
 }
 
 func runConformance(args []string, stdout, stderr io.Writer) int {
@@ -611,7 +909,7 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeError(stdout, stderr, *jsonOutput, "invalid_workflow", err)
 	}
-	result := response{OK: true, WorkflowRef: identity.Ref, Hash: identity.Hash}
+	result := response{Kind: "cli_response", SchemaVersion: 1, OK: true, WorkflowRef: identity.Ref, Hash: identity.Hash}
 	if *jsonOutput {
 		_ = json.NewEncoder(stdout).Encode(result)
 	} else {
@@ -798,9 +1096,11 @@ func runProviderConformance(args []string, stdout, stderr io.Writer) int {
 
 func writeProviderData(stdout io.Writer, data any) int {
 	_ = json.NewEncoder(stdout).Encode(struct {
-		OK   bool `json:"ok"`
-		Data any  `json:"data"`
-	}{OK: true, Data: data})
+		Kind          string `json:"kind"`
+		SchemaVersion int    `json:"schema_version"`
+		OK            bool   `json:"ok"`
+		Data          any    `json:"data"`
+	}{Kind: "cli_response", SchemaVersion: 1, OK: true, Data: data})
 	return 0
 }
 
@@ -850,6 +1150,7 @@ func executeDemoWithProvider(definition contractsv1.WorkflowDefinition, cutoff t
 	}, workflow.OutputCatalog{
 		"recommendation@1": validateRecommendation,
 	}, provider, ledger)
+	engine.WithClock(func() time.Time { return cutoff })
 	if _, ok := provider.(*workflow.AgentRunnerProvider); ok {
 		engine.RequireProviderIsolation(contractsv1.ProviderIsolationProfileStagedSubprocess)
 	}
@@ -903,7 +1204,11 @@ func (p *demoProvider) Start(_ context.Context, invocation workflow.Invocation) 
 	if err != nil {
 		return err
 	}
-	p.results[invocation.IdempotencyKey] = workflow.ProviderResult{IdempotencyKey: invocation.IdempotencyKey, CompletedAt: time.Now().UTC(), Artifacts: []contractsv1.ActionArtifact{{
+	completedAt := invocation.Deadline
+	if invocation.Node.DeadlineSeconds != nil {
+		completedAt = completedAt.Add(-time.Duration(*invocation.Node.DeadlineSeconds)*time.Second + time.Millisecond)
+	}
+	p.results[invocation.IdempotencyKey] = workflow.ProviderResult{IdempotencyKey: invocation.IdempotencyKey, CompletedAt: completedAt, Artifacts: []contractsv1.ActionArtifact{{
 		Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: "example-recommendation",
 		ArtifactType: "recommendation", JobId: invocation.JobID, CampaignId: invocation.CampaignID,
 		WorkflowRef: invocation.WorkflowRef, NodeId: invocation.Node.Id,
@@ -922,7 +1227,7 @@ func (*demoProvider) Cancel(context.Context, string) error { return nil }
 
 func writeError(stdout, stderr io.Writer, jsonOutput bool, code string, err error) int {
 	if jsonOutput {
-		_ = json.NewEncoder(stdout).Encode(response{OK: false, Error: err.Error(), Code: code})
+		_ = json.NewEncoder(stdout).Encode(response{Kind: "cli_response", SchemaVersion: 1, OK: false, Error: err.Error(), Code: code})
 	} else {
 		fmt.Fprintln(stderr, err)
 	}

@@ -16,30 +16,59 @@ import (
 )
 
 type FileLedger struct {
-	mu   sync.Mutex
-	path string
+	mu       sync.Mutex
+	path     string
+	readOnly bool
 }
 
+var ErrCanonicalConflict = errors.New("canonical receipt conflict")
+
 func OpenFileLedger(path string) (*FileLedger, error) {
+	return openFileLedger(path, false)
+}
+
+func OpenFileLedgerReadOnly(path string) (*FileLedger, error) {
+	return openFileLedger(path, true)
+}
+
+func openFileLedger(path string, readOnly bool) (*FileLedger, error) {
 	if path == "" {
 		return nil, errors.New("ledger path is required")
 	}
 	path = filepath.Clean(path)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("create ledger directory: %w", err)
+	if !readOnly {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return nil, fmt.Errorf("create ledger directory: %w", err)
+		}
 	}
-	_, statErr := os.Stat(path)
+	directoryInfo, err := os.Stat(filepath.Dir(path))
+	if err != nil || !directoryInfo.IsDir() || directoryInfo.Mode().Perm()&0o022 != 0 {
+		return nil, errors.New("ledger directory must be a private trusted directory")
+	}
+	info, statErr := os.Lstat(path)
 	created := errors.Is(statErr, os.ErrNotExist)
+	if created && readOnly {
+		return nil, errors.New("ledger does not exist")
+	}
 	if statErr != nil && !created {
 		return nil, fmt.Errorf("inspect ledger: %w", statErr)
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if !created && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
+		return nil, errors.New("ledger must be a regular file, not a symlink")
+	}
+	flags := os.O_RDONLY
+	if !readOnly {
+		flags = os.O_CREATE | os.O_APPEND | os.O_WRONLY
+	}
+	file, err := os.OpenFile(path, flags, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open ledger: %w", err)
 	}
-	if err := file.Chmod(0o600); err != nil {
-		file.Close()
-		return nil, fmt.Errorf("secure ledger: %w", err)
+	if !readOnly {
+		if err := file.Chmod(0o600); err != nil {
+			file.Close()
+			return nil, fmt.Errorf("secure ledger: %w", err)
+		}
 	}
 	if err := file.Close(); err != nil {
 		return nil, fmt.Errorf("close ledger: %w", err)
@@ -57,19 +86,28 @@ func OpenFileLedger(path string) (*FileLedger, error) {
 			return nil, fmt.Errorf("close ledger directory: %w", err)
 		}
 	}
-	ledger := &FileLedger{path: path}
-	lock, err := lockLedger(path, true)
+	ledger := &FileLedger{path: path, readOnly: readOnly}
+	lock, err := ledger.lock(!readOnly)
 	if err != nil {
 		return nil, err
 	}
 	defer unlockLedger(lock)
-	if err := recoverTornTail(path); err != nil {
-		return nil, err
+	if !readOnly {
+		if err := recoverTornTail(path); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := ledger.load(); err != nil {
 		return nil, err
 	}
 	return ledger, nil
+}
+
+func (l *FileLedger) lock(exclusive bool) (*os.File, error) {
+	if l.readOnly {
+		return lockExistingLedger(l.path, exclusive)
+	}
+	return lockLedger(l.path, exclusive)
 }
 
 func recoverTornTail(path string) error {
@@ -127,12 +165,15 @@ func (l *FileLedger) AppendAdmission(receipt contractsv1.Receipt, job contractsv
 }
 
 func (l *FileLedger) appendBatch(receipts []contractsv1.Receipt, validate func(map[string][]contractsv1.Receipt) error) error {
+	if l.readOnly {
+		return errors.New("ledger is read-only")
+	}
 	if len(receipts) == 0 {
 		return nil
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	lock, err := lockLedger(l.path, true)
+	lock, err := l.lock(true)
 	if err != nil {
 		return err
 	}
@@ -155,7 +196,7 @@ func (l *FileLedger) appendBatch(receipts []contractsv1.Receipt, validate func(m
 		index := receipt.AggregateVersion - 1
 		if index < len(current) {
 			if current[index].ReceiptHash != receipt.ReceiptHash {
-				return fmt.Errorf("receipt version %d conflicts with canonical history", receipt.AggregateVersion)
+				return fmt.Errorf("%w: receipt version %d conflicts with canonical history", ErrCanonicalConflict, receipt.AggregateVersion)
 			}
 			continue
 		}
@@ -221,7 +262,7 @@ func (l *FileLedger) appendBatch(receipts []contractsv1.Receipt, validate func(m
 func (l *FileLedger) Replay(aggregateID string) (contractsv1.ReplayBundle, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	lock, err := lockLedger(l.path, false)
+	lock, err := l.lock(false)
 	if err != nil {
 		return contractsv1.ReplayBundle{}, err
 	}
@@ -240,7 +281,7 @@ func (l *FileLedger) ReplaysByReceiptType(receiptType contractsv1.ReceiptReceipt
 func (l *FileLedger) ReplaysByReceiptTypes(receiptTypes ...contractsv1.ReceiptReceiptType) ([]contractsv1.ReplayBundle, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	lock, err := lockLedger(l.path, false)
+	lock, err := l.lock(false)
 	if err != nil {
 		return nil, err
 	}

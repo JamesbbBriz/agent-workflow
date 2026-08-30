@@ -218,6 +218,10 @@ type conformanceRuntime struct {
 }
 
 func newConformanceRuntime(fixture contractsv1.ConformanceFixture, provider Provider) (*conformanceRuntime, error) {
+	return newConformanceRuntimeWithLedger(fixture, provider, NewMemoryLedger())
+}
+
+func newConformanceRuntimeWithLedger(fixture contractsv1.ConformanceFixture, provider Provider, ledger Ledger) (*conformanceRuntime, error) {
 	deterministic := provider == nil
 	capabilities := CapabilityCatalog{}
 	manifestHashes := map[contractsv1.SHA256]bool{}
@@ -279,7 +283,9 @@ func newConformanceRuntime(fixture contractsv1.ConformanceFixture, provider Prov
 	if err != nil {
 		return nil, err
 	}
-	ledger := NewMemoryLedger()
+	if ledger == nil {
+		return nil, errors.New("ledger is required")
+	}
 	actors := ApprovalAuthorityCatalog{}
 	for _, policy := range fixture.ApprovalPolicies {
 		actors[policy] = []string{"conformance-human"}
@@ -306,8 +312,16 @@ func (r *conformanceRuntime) admit() error {
 			return err
 		}
 		for _, definition := range definitions {
+			if _, err := r.authoring.AdmissionReplay(string(definition.Id)); err == nil {
+				continue
+			} else if !errors.Is(err, ErrReplayEmpty) {
+				return err
+			}
 			preview, lint, err := r.authoring.Preview(r.fixture.Job, campaign, definition, "conformance-operator")
 			if err != nil {
+				if _, replayErr := r.authoring.AdmissionReplay(string(definition.Id)); replayErr == nil {
+					continue
+				}
 				return fmt.Errorf("Workflow %s lint failed (%v): %w", definition.Id, lint.Issues, err)
 			}
 			receipt, err := r.authoring.Confirm(preview, "conformance-operator", campaign.EvidenceFrontier.Cutoff)

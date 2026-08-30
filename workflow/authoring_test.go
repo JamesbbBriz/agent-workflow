@@ -310,9 +310,10 @@ func TestApprovalBindsBriefActorOptionAndStaleToken(t *testing.T) {
 	barrier := &barrierAdmissionLedger{Ledger: ledger, arrived: make(chan struct{}, 2), release: make(chan struct{})}
 	results := make(chan contractsv1.Receipt, 2)
 	errors := make(chan error, 2)
+	approvalAt := source.Replay.Receipts[len(source.Replay.Receipts)-1].OccurredAt.Add(time.Second)
 	for index, candidate := range []*workflow.AuthoringCore{authoringCoreWithLedger(t, barrier), authoringCoreWithLedger(t, barrier)} {
 		go func(index int, candidate *workflow.AuthoringCore) {
-			receipt, err := candidate.ConfirmApproval(preview, "human@example.com", "approve", time.Date(2026, 8, 28, 12, 0, index, 0, time.UTC))
+			receipt, err := candidate.ConfirmApproval(preview, "human@example.com", "approve", approvalAt.Add(time.Duration(index)*time.Second))
 			results <- receipt
 			errors <- err
 		}(index, candidate)
@@ -330,7 +331,7 @@ func TestApprovalBindsBriefActorOptionAndStaleToken(t *testing.T) {
 	if left.ReceiptHash != right.ReceiptHash {
 		t.Fatal("concurrent exact approval confirmation did not converge")
 	}
-	receipt, err := core.ConfirmApproval(preview, "human@example.com", "approve", time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC))
+	receipt, err := core.ConfirmApproval(preview, "human@example.com", "approve", approvalAt)
 	if err != nil || receipt.ReceiptType != contractsv1.ReceiptReceiptTypeApproval {
 		t.Fatalf("approval failed: %+v %v", receipt, err)
 	}

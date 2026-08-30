@@ -1357,6 +1357,51 @@
         }
       }
     },
+    "LocalProjectInit": {
+      "title": "LocalProjectInit",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "project", "ledger"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["local_project_init"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "project": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "ledger": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    "LocalProjectDoctor": {
+      "title": "LocalProjectDoctor",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "ready", "campaign_id", "status", "core", "provider", "storage"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["local_project_doctor"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "ready": { "type": "boolean" },
+        "campaign_id": { "$ref": "#/$defs/Identifier" },
+        "status": { "type": "string", "enum": ["ready"] },
+        "core": { "type": "string", "enum": ["ready"] },
+        "provider": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "ready", "production"],
+          "properties": {
+            "id": { "$ref": "#/$defs/Identifier" },
+            "ready": { "type": "boolean" },
+            "production": { "type": "boolean" }
+          }
+        },
+        "storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "mode"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+            "mode": { "type": "string", "enum": ["-rw-------"] }
+          }
+        }
+      }
+    },
     "ConformanceFixtureProfile": {
       "type": "string",
       "enum": ["generic", "seo-shaped"]
