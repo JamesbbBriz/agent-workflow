@@ -12,6 +12,17 @@ It is not a chatbot builder, connector marketplace, prompt library, or SEO-speci
 
 > Build a digital Agent workforce whose context, permissions, work, approvals, and outcomes can be inspected and replayed.
 
+## Proof headline
+
+Agent Workflow is not presented as a demo-only architecture. Its contracts are being field-tested by the separate commercial SEO Ops product in a continuous 200-hour Kinmed run covering 4 Jobs, 4 keyword clusters, and 30 canonical keywords. The run records research, evidence refreshes, Agent Invocations, API calls, decisions, accepted artifacts, external effects, readbacks, and measurements as inspectable Receipts and Replay.
+
+Use the claim that matches the evidence state:
+
+- while the window is active: **“Field-tested in a live 200-hour commercial SEO operations run.”**
+- after the end report verifies the full window: **“Proven through a 200-hour commercial SEO operations run, with auditable receipts from research to measurement.”**
+
+The proof is the published evidence report and its canonical references—not the elapsed-time number alone.
+
 ## Thirty-second pitch
 
 Most Agent systems make it easy to call a model but difficult to prove what it knew, what it was allowed to do, why it acted, and whether a retry repeated an external effect. Agent Workflow provides the missing control plane. Humans define Jobs, admit bounded Campaigns, pin versioned Workflows, and give every Node an exact Context Bundle and Capability Manifest. The Go Core validates outputs and records every accepted transition as a hash-bound Receipt and Replay.
@@ -218,7 +229,7 @@ Never collapse those five stages into “13 Agents improved SEO.”
 
 ## Distribution package
 
-The public launch should contain:
+The public launch should lead with the completed 200-hour field report, then contain:
 
 1. a 90-second Control Plane demo using the generic fixture;
 2. the SEO-shaped conformance fixture showing a real vertical without private data;

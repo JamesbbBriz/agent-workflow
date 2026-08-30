@@ -2,6 +2,8 @@
 
 Agent Workflow is an auditable control plane for context-bound Agent work. Humans define a long-lived **Job**, admit bounded **Campaigns**, and run immutable **Workflow** DAGs. Every **Node** receives an exact Context Bundle and Capability Manifest; every accepted transition produces a hash-bound receipt and Replay trail.
 
+It is being field-tested by a separate commercial SEO product in a live 200-hour run across 4 Jobs, 4 keyword clusters, and 30 canonical keywords. The completed evidence report—not the runtime duration alone—will support the public proof claim.
+
 This repository is the domain-neutral Core extracted from patterns dogfooded in [SEO Ops](https://github.com/JamesbbBriz/seo-ops). It does not copy SEO workflows or create another SEO state machine.
 
 For positioning, the separate commercial SEO Ops dogfood story, current evidence, claim boundaries, and selective generic contract extraction, see the [SEO Ops dogfood GTM pack](docs/go-to-market/seo-ops-dogfood-gtm-pack.md).
