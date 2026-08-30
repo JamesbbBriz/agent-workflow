@@ -120,6 +120,57 @@ func TestLocalProjectCLIContractsRejectUnknownFieldsAndVersions(t *testing.T) {
 	}
 }
 
+func TestEvidenceContractsRejectUnknownFieldsAndVersions(t *testing.T) {
+	t.Parallel()
+	compiler := jsonschema.NewCompiler()
+	var catalog any
+	if err := json.Unmarshal(publiccontracts.AgentWorkflowV1, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if err := compiler.AddResource(schemaID, catalog); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := compiler.Compile(schemaID + "#/$defs/AgentRoleCatalog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := map[string]any{
+		"kind": "agent_role_catalog", "schema_version": 1,
+		"roles": []any{map[string]any{"id": "research-agent", "title": "Research", "purpose": "Collect evidence", "responsibilities": []any{"Research"}, "evidence_receipt_types": []any{"invocation"}}},
+	}
+	if err := schema.Validate(document); err != nil {
+		t.Fatal(err)
+	}
+	document["unknown"] = true
+	if err := schema.Validate(document); err == nil {
+		t.Fatal("AgentRoleCatalog accepted an unknown field")
+	}
+	delete(document, "unknown")
+	document["schema_version"] = 2
+	if err := schema.Validate(document); err == nil {
+		t.Fatal("AgentRoleCatalog accepted schema version 2")
+	}
+
+	report, err := compiler.Compile(schemaID + "#/$defs/EvidenceWindowReport")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportDocument := map[string]any{
+		"kind": "evidence_window_report", "schema_version": 1,
+		"window":             map[string]any{"started_at": "2026-08-30T00:00:00Z", "ended_at": "2026-08-30T00:00:00Z", "duration_seconds": 0},
+		"available_role_ids": []any{}, "invoked_role_ids": []any{},
+		"counts":   map[string]any{"context_refreshes": 0, "agent_invocations": 0, "approvals": 0, "effects": 0, "readbacks": 0, "outcomes": 0, "receipts": 0, "replays": 0},
+		"evidence": []any{},
+	}
+	if err := report.Validate(reportDocument); err != nil {
+		t.Fatal(err)
+	}
+	reportDocument["schema_version"] = 2
+	if err := report.Validate(reportDocument); err == nil {
+		t.Fatal("EvidenceWindowReport accepted schema version 2")
+	}
+}
+
 func intentFixture(kind string) map[string]any {
 	return map[string]any{
 		"schema_version": 1, "kind": kind, "title": "Title", "summary": "Summary", "objective": "Objective",

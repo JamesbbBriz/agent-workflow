@@ -51,6 +51,8 @@
     ,"conformance_report": { "$ref": "agent-workflow.v1.schema.json#/$defs/ConformanceReport" }
     ,"local_project_init": { "$ref": "agent-workflow.v1.schema.json#/$defs/LocalProjectInit" }
     ,"local_project_doctor": { "$ref": "agent-workflow.v1.schema.json#/$defs/LocalProjectDoctor" }
+    ,"agent_role_catalog": { "$ref": "agent-workflow.v1.schema.json#/$defs/AgentRoleCatalog" }
+    ,"evidence_window_report": { "$ref": "agent-workflow.v1.schema.json#/$defs/EvidenceWindowReport" }
     ,"campaign_execution_state": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignExecutionState" }
     ,"campaign_drive_preview": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignDrivePreview" }
     ,"campaign_drive_receipt": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignDriveReceipt" }

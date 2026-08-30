@@ -1402,6 +1402,99 @@
         }
       }
     },
+    "AgentRoleReceiptType": {
+      "title": "AgentRoleReceiptType",
+      "type": "string",
+      "enum": ["change_merged", "change_proposed", "context_available", "context_bound", "invocation", "mutation_applied", "mutation_readback", "needs_context", "node_completed", "pack_edition", "provider_execution", "result"]
+    },
+    "AgentRole": {
+      "title": "AgentRole",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "purpose", "responsibilities", "evidence_receipt_types"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "purpose": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "responsibilities": { "$ref": "#/$defs/NonEmptyStrings" },
+        "evidence_receipt_types": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/AgentRoleReceiptType" }
+        }
+      }
+    },
+    "AgentRoleCatalog": {
+      "title": "AgentRoleCatalog",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "roles"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["agent_role_catalog"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "roles": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/AgentRole" } }
+      }
+    },
+    "EvidenceWindow": {
+      "title": "EvidenceWindow",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["started_at", "ended_at", "duration_seconds"],
+      "properties": {
+        "started_at": { "type": "string", "format": "date-time" },
+        "ended_at": { "type": "string", "format": "date-time" },
+        "duration_seconds": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "EvidenceCounts": {
+      "title": "EvidenceCounts",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context_refreshes", "agent_invocations", "approvals", "effects", "readbacks", "outcomes", "receipts", "replays"],
+      "properties": {
+        "context_refreshes": { "type": "integer", "minimum": 0 },
+        "agent_invocations": { "type": "integer", "minimum": 0 },
+        "approvals": { "type": "integer", "minimum": 0 },
+        "effects": { "type": "integer", "minimum": 0 },
+        "readbacks": { "type": "integer", "minimum": 0 },
+        "outcomes": { "type": "integer", "minimum": 0 },
+        "receipts": { "type": "integer", "minimum": 0 },
+        "replays": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "EvidenceReferenceKind": {
+      "title": "EvidenceReferenceKind",
+      "type": "string",
+      "enum": ["receipt", "replay"]
+    },
+    "EvidenceReference": {
+      "title": "EvidenceReference",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "sha256"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/EvidenceReferenceKind" },
+        "id": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "sha256": { "$ref": "#/$defs/SHA256" },
+        "occurred_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "EvidenceWindowReport": {
+      "title": "EvidenceWindowReport",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "window", "available_role_ids", "invoked_role_ids", "counts", "evidence"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["evidence_window_report"] },
+        "schema_version": { "type": "integer", "enum": [1] },
+        "window": { "$ref": "#/$defs/EvidenceWindow" },
+        "available_role_ids": { "type": "array", "items": { "$ref": "#/$defs/Identifier" }, "uniqueItems": true },
+        "invoked_role_ids": { "type": "array", "items": { "$ref": "#/$defs/Identifier" }, "uniqueItems": true },
+        "counts": { "$ref": "#/$defs/EvidenceCounts" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/EvidenceReference" } }
+      }
+    },
     "ConformanceFixtureProfile": {
       "type": "string",
       "enum": ["generic", "seo-shaped"]
