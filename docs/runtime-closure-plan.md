@@ -144,9 +144,9 @@ Definition hashes
 
 Raw Replay is authorized diagnostic data. Redacted Replay uses a versioned policy, preserves canonical IDs/hashes, exposes no private provider references or secrets, and lists excluded classes. Future events never affect an earlier cutoff.
 
-## Delivery plan
+## Delivered slices
 
-These are seven product slices. The final conformance slice requires one PR in each repository, so implementation is eight repository PRs.
+The seven product slices below are complete. The final conformance slice used one PR in each repository, for eight repository PRs in total.
 
 ### PR A — Campaign execution aggregate and bounded driver ([#12](https://github.com/JamesbbBriz/agent-workflow/issues/12))
 
@@ -249,3 +249,5 @@ The parent control-plane spec is complete only when all of these hold together:
 5. exact-cutoff raw and redacted Replay reconstruct the full trail;
 6. Canvas and Builder read the same canonical state without inventing progress;
 7. a generic example and the live SEO Ops consumer pass the same conformance gates.
+
+All seven conditions are implemented. SEO Ops pins the released contract and validates a deterministic non-production multi-Campaign fixture; domain-specific runtime, credentials, ledgers, and production data remain outside this repository.

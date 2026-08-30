@@ -1,0 +1,96 @@
+name: release
+
+on:
+  repository_dispatch:
+    types: [release]
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    if: github.event.sender.login == github.repository_owner
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.tag.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.client_payload.tag }}
+        run: |
+          scripts/validate-release-version.sh "$TAG"
+          tag_type=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.type')
+          tag_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')
+          test "$tag_type" = commit
+          status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${tag_sha}...main" --jq '.status')
+          test "$status" = identical || test "$status" = ahead
+          echo "sha=$tag_sha" >> "$GITHUB_OUTPUT"
+
+  verify:
+    needs: resolve
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
+  package:
+    needs: [resolve, verify]
+    strategy:
+      matrix:
+        include:
+          - { os: linux, arch: amd64 }
+          - { os: linux, arch: arm64 }
+          - { os: darwin, arch: amd64 }
+          - { os: darwin, arch: arm64 }
+          - { os: windows, arch: amd64 }
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: scripts/package-release.sh "${{ github.event.client_payload.tag }}" "${{ matrix.os }}" "${{ matrix.arch }}" dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: "${{ matrix.os }}-${{ matrix.arch }}"
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: [resolve, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: cd dist && sha256sum * > SHA256SUMS
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: dist/*
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+          TAG: ${{ github.event.client_payload.tag }}
+        run: |
+          tag_type=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.type')
+          tag_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')
+          test "$tag_type" = commit
+          test "$tag_sha" = "$RELEASE_SHA"
+          status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${RELEASE_SHA}...main" --jq '.status')
+          test "$status" = identical || test "$status" = ahead
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/immutable-releases" --jq '.enabled')" = true
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --draft --generate-notes --title "agent-workflow $TAG"
+          fi
+          gh release upload "$TAG" --clobber dist/*
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')" = "$RELEASE_SHA"
+          gh release edit "$TAG" --draft=false

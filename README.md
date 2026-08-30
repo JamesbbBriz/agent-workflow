@@ -107,6 +107,15 @@ The browser keeps unfinished drafts in local storage. The Builder reads the Go C
 
 The UI uses plain React with Vite, the open-source shadcn/ui composition model, Radix primitives, and Tailwind. Paid block source is not vendored, so the public repository stays redistributable.
 
+## Install a release
+
+GitHub Releases contain archives for Linux, macOS, and Windows. Each archive
+includes the CLI, the five bundled provider bridges, and the files needed to
+review the security and compatibility boundary. Verify the archive against
+`SHA256SUMS` before installing it, then verify GitHub's signed provenance with
+`gh attestation verify <archive> --repo JamesbbBriz/agent-workflow`. The release
+binaries need no Node.js runtime.
+
 To opt into the browser's experimental `document.modelContext` API for this exact local page origin:
 
 ```bash
@@ -182,7 +191,7 @@ See [Architecture](docs/architecture.md), [Security](SECURITY.md), [Compatibilit
 
 ## Status
 
-The v1 definitions plus versioned Campaign execution, Context recovery, approvals/waits, multi-Campaign Builder/Canvas, exact-cutoff redacted Replay, reference provider isolation, domain-neutral Change Case coordination, and five bundled Agent Runner bridges are implemented. The SEO Ops conformance consumer remains release work; see the [runtime closure plan](docs/runtime-closure-plan.md). WebMCP is not a Core dependency.
+The v1 definitions plus versioned Campaign execution, Context recovery, approvals/waits, multi-Campaign Builder/Canvas, exact-cutoff redacted Replay, reference provider isolation, domain-neutral Change Case coordination, five bundled Agent Runner bridges, CLI-first project path, Evidence report, and optional single-binary React GUI are implemented. SEO Ops consumes the released conformance contract from its own repository without importing this runtime. WebMCP is not a Core dependency.
 
 ## License
 
