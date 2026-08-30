@@ -22,6 +22,22 @@ Context determines what the Agent can know. Capabilities determine what it can d
 
 ## Try the public contract
 
+Run the complete local CLI path first. It uses the bundled non-production
+fixture and demo provider with a private append-only ledger:
+
+```bash
+go run ./cmd/agent-workflow init --dir /tmp/agent-workflow-demo
+go run ./cmd/agent-workflow doctor --dir /tmp/agent-workflow-demo
+go run ./cmd/agent-workflow run --dir /tmp/agent-workflow-demo
+go run ./cmd/agent-workflow approval confirm --dir /tmp/agent-workflow-demo
+go run ./cmd/agent-workflow replay --dir /tmp/agent-workflow-demo
+```
+
+`run` stops at the exact human approval gate. `approval confirm` appends the
+approval receipt and resumes the same Campaign; `status` and `replay` recover
+the canonical state after process restart. The bundled fixture never performs
+production mutation.
+
 ```bash
 go run ./cmd/agent-workflow validate \
   --file examples/research-review.workflow.json \

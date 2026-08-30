@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JamesbbBriz/agent-workflow/canvas"
+	conformanceassets "github.com/JamesbbBriz/agent-workflow/conformance"
 	"github.com/JamesbbBriz/agent-workflow/internal/builderapi"
 	"github.com/JamesbbBriz/agent-workflow/internal/contract"
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
@@ -33,10 +34,22 @@ type response struct {
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder|provider|conformance> [options]")
+		writeUsage(stderr)
 		return 2
 	}
 	switch args[0] {
+	case "init":
+		return runInit(args[1:], stdout, stderr)
+	case "doctor":
+		return runDoctor(args[1:], stdout, stderr)
+	case "run":
+		return runLocal(args[1:], stdout, stderr)
+	case "status":
+		return runStatus(args[1:], stdout, stderr)
+	case "approval":
+		return runApproval(args[1:], stdout, stderr)
+	case "replay":
+		return runReplay(args[1:], stdout, stderr)
 	case "validate":
 		return runValidate(args[1:], stdout, stderr)
 	case "demo":
@@ -50,9 +63,168 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "conformance":
 		return runConformance(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "usage: agent-workflow <validate|demo|canvas|builder|provider|conformance> [options]")
+		writeUsage(stderr)
 		return 2
 	}
+}
+
+func writeUsage(output io.Writer) {
+	fmt.Fprintln(output, "usage: agent-workflow <init|doctor|run|status|approval|replay|validate|demo|canvas|builder|provider|conformance> [options]")
+}
+
+func runInit(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("init", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dir := flags.String("dir", ".", "project directory")
+	_ = flags.Bool("json", true, "write a JSON response")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return 2
+	}
+	root := filepath.Clean(*dir)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return writeError(stdout, stderr, true, "project_unavailable", errors.New("project directory is unavailable"))
+	}
+	want := conformanceassets.GenericFixture()
+	definitionPath := filepath.Join(root, "agent-workflow.json")
+	if existing, err := os.ReadFile(definitionPath); err == nil {
+		if !reflect.DeepEqual(existing, want) {
+			return writeError(stdout, stderr, true, "project_exists", errors.New("agent-workflow.json already exists with different content"))
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return writeError(stdout, stderr, true, "project_unavailable", errors.New("project definition is unavailable"))
+	} else if err := os.WriteFile(definitionPath, want, 0o600); err != nil {
+		return writeError(stdout, stderr, true, "project_unavailable", errors.New("project definition could not be written"))
+	}
+	ledger, err := workflow.OpenFileLedger(filepath.Join(root, ".agent-workflow", "ledger.jsonl"))
+	if err != nil {
+		return writeError(stdout, stderr, true, "ledger_unavailable", err)
+	}
+	_ = ledger
+	return writeProviderData(stdout, map[string]any{"project": definitionPath, "ledger": filepath.Join(root, ".agent-workflow", "ledger.jsonl")})
+}
+
+func runDoctor(args []string, stdout, stderr io.Writer) int {
+	runtime, _, root, code := openLocalRuntime(args, stdout, stderr, "doctor")
+	if code != 0 {
+		return code
+	}
+	preview, err := runtime.Preview(context.Background(), "")
+	if err != nil {
+		return writeError(stdout, stderr, true, "project_invalid", err)
+	}
+	ledgerPath := filepath.Join(root, ".agent-workflow", "ledger.jsonl")
+	info, err := os.Stat(ledgerPath)
+	if err != nil {
+		return writeError(stdout, stderr, true, "ledger_unavailable", errors.New("ledger is unavailable"))
+	}
+	return writeProviderData(stdout, map[string]any{
+		"ready": true, "campaign_id": preview.State.CampaignId, "status": preview.State.Status,
+		"core": "ready", "provider": map[string]any{"id": "demo", "ready": true, "production": false},
+		"storage": map[string]any{"path": ledgerPath, "mode": info.Mode().Perm().String()},
+	})
+}
+
+func runLocal(args []string, stdout, stderr io.Writer) int {
+	runtime, campaign, _, code := openLocalRuntime(args, stdout, stderr, "run")
+	if code != 0 {
+		return code
+	}
+	if _, err := runtime.Drive(context.Background(), campaign, 100); err != nil {
+		return writeError(stdout, stderr, true, "run_failed", err)
+	}
+	preview, err := runtime.Preview(context.Background(), campaign)
+	if err != nil {
+		return writeError(stdout, stderr, true, "run_failed", err)
+	}
+	return writeProviderData(stdout, preview)
+}
+
+func runStatus(args []string, stdout, stderr io.Writer) int {
+	runtime, campaign, _, code := openLocalRuntime(args, stdout, stderr, "status")
+	if code != 0 {
+		return code
+	}
+	preview, err := runtime.Preview(context.Background(), campaign)
+	if err != nil {
+		return writeError(stdout, stderr, true, "status_failed", err)
+	}
+	return writeProviderData(stdout, preview)
+}
+
+func runApproval(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "confirm" {
+		fmt.Fprintln(stderr, "usage: agent-workflow approval confirm [--dir .] [--campaign id] [--option approve]")
+		return 2
+	}
+	option := "approve"
+	filtered := make([]string, 0, len(args)-1)
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--option" && i+1 < len(args) {
+			option, i = args[i+1], i+1
+			continue
+		}
+		filtered = append(filtered, args[i])
+	}
+	runtime, campaign, _, code := openLocalRuntime(filtered, stdout, stderr, "approval confirm")
+	if code != 0 {
+		return code
+	}
+	preview, err := runtime.PreviewApproval(context.Background(), campaign)
+	if err != nil {
+		return writeError(stdout, stderr, true, "approval_unavailable", err)
+	}
+	if _, err := runtime.ConfirmApproval(preview, option); err != nil {
+		return writeError(stdout, stderr, true, "approval_failed", err)
+	}
+	if _, err := runtime.Drive(context.Background(), campaign, 100); err != nil {
+		return writeError(stdout, stderr, true, "resume_failed", err)
+	}
+	completed, err := runtime.Preview(context.Background(), campaign)
+	if err != nil {
+		return writeError(stdout, stderr, true, "resume_failed", err)
+	}
+	return writeProviderData(stdout, completed)
+}
+
+func runReplay(args []string, stdout, stderr io.Writer) int {
+	runtime, campaign, _, code := openLocalRuntime(args, stdout, stderr, "replay")
+	if code != 0 {
+		return code
+	}
+	replay, err := runtime.Replay(campaign)
+	if err != nil {
+		return writeError(stdout, stderr, true, "replay_unavailable", err)
+	}
+	return writeProviderData(stdout, replay)
+}
+
+func openLocalRuntime(args []string, stdout, stderr io.Writer, name string) (*workflow.FixtureRuntime, contractsv1.Identifier, string, int) {
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dir := flags.String("dir", ".", "project directory")
+	campaign := flags.String("campaign", "", "Campaign id; optional for a single-Campaign project")
+	_ = flags.Bool("json", true, "write a JSON response")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return nil, "", "", 2
+	}
+	root := filepath.Clean(*dir)
+	body, err := os.ReadFile(filepath.Join(root, "agent-workflow.json"))
+	if err != nil {
+		return nil, "", root, writeError(stdout, stderr, true, "project_unavailable", errors.New("run agent-workflow init first"))
+	}
+	var fixture contractsv1.ConformanceFixture
+	if err := contract.DecodeDefinition("ConformanceFixture", body, &fixture); err != nil {
+		return nil, "", root, writeError(stdout, stderr, true, "project_invalid", err)
+	}
+	ledger, err := workflow.OpenFileLedger(filepath.Join(root, ".agent-workflow", "ledger.jsonl"))
+	if err != nil {
+		return nil, "", root, writeError(stdout, stderr, true, "ledger_unavailable", err)
+	}
+	runtime, err := workflow.NewFixtureRuntime(fixture, &demoProvider{results: make(map[string]workflow.ProviderResult)}, ledger)
+	if err != nil {
+		return nil, "", root, writeError(stdout, stderr, true, "project_invalid", err)
+	}
+	return runtime, contractsv1.Identifier(*campaign), root, 0
 }
 
 func runConformance(args []string, stdout, stderr io.Writer) int {

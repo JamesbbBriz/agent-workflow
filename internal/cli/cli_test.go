@@ -142,6 +142,78 @@ func TestDemoRunsOneContextBoundNodeAndReturnsReplay(t *testing.T) {
 	}
 }
 
+func TestLocalProjectGoldenPathPersistsApprovalAndReplay(t *testing.T) {
+	dir := t.TempDir()
+	call := func(args ...string) map[string]any {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		if code := cli.Run(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%v exited %d: stdout=%s stderr=%s", args, code, stdout.String(), stderr.String())
+		}
+		var response map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+			t.Fatalf("decode %v: %v\n%s", args, err, stdout.String())
+		}
+		return response
+	}
+
+	initialized := call("init", "--dir", dir)
+	if initialized["ok"] != true {
+		t.Fatalf("init response: %#v", initialized)
+	}
+	if info, err := os.Stat(filepath.Join(dir, ".agent-workflow", "ledger.jsonl")); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("secure ledger was not created: info=%v err=%v", info, err)
+	}
+	doctor := call("doctor", "--dir", dir, "--json")
+	doctorData := doctor["data"].(map[string]any)
+	if doctorData["ready"] != true || doctorData["provider"].(map[string]any)["production"] != false || doctorData["storage"].(map[string]any)["mode"] != "-rw-------" {
+		t.Fatalf("doctor omitted readiness or storage security: %#v", doctor)
+	}
+
+	waiting := call("run", "--dir", dir, "--json")
+	waitingData := waiting["data"].(map[string]any)
+	state := waitingData["state"].(map[string]any)
+	if state["status"] != "running" || waitingData["next_action"] != "wait" || state["nodes"].([]any)[1].(map[string]any)["status"] != "awaiting_approval" {
+		t.Fatalf("run did not stop at approval: %#v", waiting)
+	}
+
+	status := call("status", "--dir", dir)
+	if status["data"].(map[string]any)["next_action"] != "wait" {
+		t.Fatalf("restart did not recover approval state: %#v", status)
+	}
+
+	completed := call("approval", "confirm", "--dir", dir)
+	if completed["data"].(map[string]any)["state"].(map[string]any)["status"] != "completed" {
+		t.Fatalf("approval did not resume Campaign: %#v", completed)
+	}
+
+	replay := call("replay", "--dir", dir)
+	if replay["data"].(map[string]any)["bundle_hash"] == "" || len(replay["data"].(map[string]any)["receipts"].([]any)) == 0 {
+		t.Fatalf("replay was not exported: %#v", replay)
+	}
+
+	redelivered := call("init", "--dir", dir)
+	if redelivered["ok"] != true {
+		t.Fatalf("idempotent init failed: %#v", redelivered)
+	}
+}
+
+func TestLocalProjectInitRefusesToOverwriteDifferentDefinition(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent-workflow.json")
+	if err := os.WriteFile(path, []byte(`{"owned_by":"user"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"init", "--dir", dir}, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "project_exists") {
+		t.Fatalf("init overwrote or misreported existing project: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || string(body) != `{"owned_by":"user"}` {
+		t.Fatalf("existing project changed: body=%s err=%v", body, err)
+	}
+}
+
 func TestConformanceCommandEmitsMachineReadableReport(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{"conformance", "--file", "../../conformance/fixtures/generic.json"}, &stdout, &stderr)
