@@ -35,7 +35,7 @@ The safe workforce claim is therefore **“13 specialized Agent Roles”**, not 
 
 ## SEO Ops vertical: a 13-Agent digital SEO team
 
-SEO Ops is the first dogfood vertical. Its current registry contains 13 unique Agent Roles, reused across versioned Workflow Nodes:
+SEO Ops is a separate commercial product and the first real-world dogfood source for the open-source Core. Its current registry contains 13 unique Agent Roles, reused across versioned Workflow Nodes:
 
 ### Search and market intelligence
 
@@ -172,16 +172,20 @@ Generalize the Kinmed 200-hour marker into a report contract containing:
 
 Markdown, HTML, charts, and case-study copy should remain deterministic views of that JSON report.
 
-### 3. Vertical Pack boundary
+### 3. Commercial-product boundary
 
-Define a thin consumer package containing Role metadata, Workflow definitions, Context producers, output schemas, and conformance fixtures. SEO Ops becomes the first vertical pack and consumer; it should not fork the Core.
+Keep SEO Ops and Agent Workflow as different products with different roadmaps, positioning, and release rights. SEO Ops may consume tagged Core contracts where that reduces duplicated infrastructure, but its commercial runtime, workflows, integrations, data products, and customer experience remain private product capabilities.
+
+Only a deliberately selected, domain-neutral contract should move upstream. The extraction must be useful without SEO Ops and must arrive with synthetic conformance evidence rather than private project data. SEO Ops should not become a public plugin bundle or a fork that must track the open-source repository file for file.
 
 The dependency direction remains:
 
 ```text
-agent-workflow Core <- versioned contracts consumed by SEO Ops
-SEO Ops             -> contributes synthetic conformance evidence back
+SEO Ops commercial product --selective extraction--> Agent Workflow open-source Core
+SEO Ops commercial product <--tagged contracts------ Agent Workflow open-source Core
 ```
+
+This is shared learning, not shared product identity.
 
 ### 4. Release the current mainline
 
@@ -198,7 +202,7 @@ Do not move these into the Core:
 - SEO-specific Operating Products and reports;
 - Kinmed and Muriersilk project data.
 
-The Core owns how governed Agent work runs. SEO Ops owns what good SEO work means.
+The open-source Core demonstrates how governed Agent work can run. SEO Ops owns the commercial SEO operating system: what work matters, how it is automated, which integrations perform it, and how customers receive measurable value.
 
 ## Claim ladder
 
