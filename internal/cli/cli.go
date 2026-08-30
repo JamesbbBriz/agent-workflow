@@ -457,7 +457,12 @@ func runConformance(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+var buildVersion string
+
 func toolVersion() string {
+	if buildVersion != "" {
+		return buildVersion
+	}
 	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
 		return info.Main.Version
 	}

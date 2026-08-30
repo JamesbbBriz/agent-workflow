@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Until the first tagged release, only the latest `main` commit receives security fixes.
+The latest tagged minor release and the latest `main` commit receive security fixes. Pre-1.0 releases may require upgrading to the newest minor release rather than receiving a backport.
 
 ## Reporting
 
