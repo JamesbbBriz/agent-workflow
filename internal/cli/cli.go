@@ -166,7 +166,7 @@ func runLocal(args []string, stdout, stderr io.Writer) int {
 				return writeError(stdout, stderr, true, "admission_failed", err)
 			}
 			var reloadCode int
-			runtime, campaign, _, reloadCode = loadLocalRuntime(root, campaign, stdout, stderr)
+			runtime, campaign, _, reloadCode = loadLocalRuntime(root, campaign, false, stdout, stderr)
 			if reloadCode != 0 {
 				return reloadCode
 			}
@@ -178,7 +178,7 @@ func runLocal(args []string, stdout, stderr io.Writer) int {
 			return writeError(stdout, stderr, true, "run_failed", err)
 		}
 		var reloadCode int
-		runtime, campaign, _, reloadCode = loadLocalRuntime(root, campaign, stdout, stderr)
+		runtime, campaign, _, reloadCode = loadLocalRuntime(root, campaign, false, stdout, stderr)
 		if reloadCode != 0 {
 			return reloadCode
 		}
@@ -216,7 +216,7 @@ func runApproval(args []string, stdout, stderr io.Writer) int {
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || !*jsonOutput {
 		return 2
 	}
-	runtime, campaign, root, code := loadLocalRuntime(*dir, contractsv1.Identifier(*campaignFlag), stdout, stderr)
+	runtime, campaign, root, code := loadLocalRuntime(*dir, contractsv1.Identifier(*campaignFlag), false, stdout, stderr)
 	if code != 0 {
 		return code
 	}
@@ -243,7 +243,7 @@ func runApproval(args []string, stdout, stderr io.Writer) int {
 			return writeError(stdout, stderr, true, "resume_failed", err)
 		}
 		var reloadCode int
-		runtime, campaign, _, reloadCode = loadLocalRuntime(root, campaign, stdout, stderr)
+		runtime, campaign, _, reloadCode = loadLocalRuntime(root, campaign, false, stdout, stderr)
 		if reloadCode != 0 {
 			return reloadCode
 		}
@@ -276,10 +276,10 @@ func openLocalRuntime(args []string, stdout, stderr io.Writer, name string) (*wo
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !*jsonOutput {
 		return nil, "", "", 2
 	}
-	return loadLocalRuntime(*dir, contractsv1.Identifier(*campaign), stdout, stderr)
+	return loadLocalRuntime(*dir, contractsv1.Identifier(*campaign), name != "run", stdout, stderr)
 }
 
-func loadLocalRuntime(dir string, campaign contractsv1.Identifier, stdout, stderr io.Writer) (*workflow.FixtureRuntime, contractsv1.Identifier, string, int) {
+func loadLocalRuntime(dir string, campaign contractsv1.Identifier, readOnly bool, stdout, stderr io.Writer) (*workflow.FixtureRuntime, contractsv1.Identifier, string, int) {
 	root, err := canonicalProjectRoot(filepath.Clean(dir))
 	if err != nil {
 		return nil, "", root, writeError(stdout, stderr, true, "project_unsafe", err)
@@ -296,7 +296,12 @@ func loadLocalRuntime(dir string, campaign contractsv1.Identifier, stdout, stder
 	if err != nil {
 		return nil, "", root, writeError(stdout, stderr, true, "ledger_unavailable", err)
 	}
-	ledger, err := workflow.OpenFileLedger(ledgerPath)
+	var ledger *workflow.FileLedger
+	if readOnly {
+		ledger, err = workflow.OpenFileLedgerReadOnly(ledgerPath)
+	} else {
+		ledger, err = workflow.OpenFileLedger(ledgerPath)
+	}
 	if err != nil {
 		return nil, "", root, writeError(stdout, stderr, true, "ledger_unavailable", err)
 	}
@@ -1145,6 +1150,7 @@ func executeDemoWithProvider(definition contractsv1.WorkflowDefinition, cutoff t
 	}, workflow.OutputCatalog{
 		"recommendation@1": validateRecommendation,
 	}, provider, ledger)
+	engine.WithClock(func() time.Time { return cutoff })
 	if _, ok := provider.(*workflow.AgentRunnerProvider); ok {
 		engine.RequireProviderIsolation(contractsv1.ProviderIsolationProfileStagedSubprocess)
 	}

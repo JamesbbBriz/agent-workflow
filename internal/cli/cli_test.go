@@ -128,6 +128,13 @@ func TestDemoRunsOneContextBoundNodeAndReturnsReplay(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("demo exited %d: %s", exit, stderr.String())
 	}
+	var repeatedOut, repeatedErr bytes.Buffer
+	if exit := cli.Run([]string{
+		"demo", "--file", filepath.Join(root, "examples", "research-review.workflow.json"),
+		"--at", "2026-08-27T00:00:00Z", "--json",
+	}, &repeatedOut, &repeatedErr); exit != 0 || !bytes.Equal(stdout.Bytes(), repeatedOut.Bytes()) {
+		t.Fatalf("fixed --at demo changed: exit=%d first=%s second=%s stderr=%s", exit, stdout.String(), repeatedOut.String(), repeatedErr.String())
+	}
 	var response struct {
 		OK   bool `json:"ok"`
 		Data struct {
@@ -289,6 +296,32 @@ func TestDoctorRejectsInvalidCampaignPlanWithoutWritingLedger(t *testing.T) {
 	after, err := os.ReadFile(ledgerPath)
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatalf("doctor mutated ledger: err=%v before=%q after=%q", err, before, after)
+	}
+}
+
+func TestReadOnlyLocalCommandsPreserveTornLedger(t *testing.T) {
+	for _, command := range []string{"doctor", "status", "replay"} {
+		t.Run(command, func(t *testing.T) {
+			dir := t.TempDir()
+			var stdout, stderr bytes.Buffer
+			if code := cli.Run([]string{"init", "--dir", dir}, &stdout, &stderr); code != 0 {
+				t.Fatalf("init: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+			ledgerPath := filepath.Join(dir, ".agent-workflow", "ledger.jsonl")
+			torn := []byte(`{"kind":`)
+			if err := os.WriteFile(ledgerPath, torn, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			stdout.Reset()
+			stderr.Reset()
+			if code := cli.Run([]string{command, "--dir", dir}, &stdout, &stderr); code != 1 {
+				t.Fatalf("%s accepted torn ledger: code=%d stdout=%s stderr=%s", command, code, stdout.String(), stderr.String())
+			}
+			after, err := os.ReadFile(ledgerPath)
+			if err != nil || !bytes.Equal(after, torn) {
+				t.Fatalf("%s changed torn ledger: after=%q err=%v", command, after, err)
+			}
+		})
 	}
 }
 

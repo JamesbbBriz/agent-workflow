@@ -115,6 +115,13 @@ func NewEngine(registry *Registry, capabilities CapabilityCatalog, outputs Outpu
 	return &Engine{registry: registry, capabilities: capabilityCopy, outputs: outputCopy, provider: provider, ledger: ledger, approvalActors: map[string]map[string]bool{}, clock: func() time.Time { return time.Now().UTC() }}
 }
 
+func (e *Engine) WithClock(clock func() time.Time) *Engine {
+	if clock != nil {
+		e.clock = clock
+	}
+	return e
+}
+
 func (e *Engine) now() time.Time { return e.clock().UTC() }
 
 func (e *Engine) WithApprovalAuthorities(authorities ApprovalAuthorityCatalog) *Engine {
