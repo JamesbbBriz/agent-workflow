@@ -54,6 +54,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runApproval(args[1:], stdout, stderr)
 	case "replay":
 		return runReplay(args[1:], stdout, stderr)
+	case "report":
+		return runReport(args[1:], stdout, stderr)
 	case "validate":
 		return runValidate(args[1:], stdout, stderr)
 	case "demo":
@@ -73,7 +75,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func writeUsage(output io.Writer) {
-	fmt.Fprintln(output, "usage: agent-workflow <init|doctor|run|status|approval|replay|validate|demo|canvas|builder|provider|conformance> [options]")
+	fmt.Fprintln(output, "usage: agent-workflow <init|doctor|run|status|approval|replay|report|validate|demo|canvas|builder|provider|conformance> [options]")
 }
 
 func runInit(args []string, stdout, stderr io.Writer) int {
@@ -265,6 +267,73 @@ func runReplay(args []string, stdout, stderr io.Writer) int {
 		return writeError(stdout, stderr, true, "replay_unavailable", err)
 	}
 	return writeProviderData(stdout, replay)
+}
+
+func runReport(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("report", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dir := flags.String("dir", ".", "project directory")
+	from := flags.String("from", "", "inclusive RFC3339 window start; defaults to first receipt")
+	to := flags.String("to", "", "inclusive RFC3339 window end; defaults to last receipt")
+	format := flags.String("format", "json", "json or markdown")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || (*format != "json" && *format != "markdown") {
+		return 2
+	}
+	root, err := canonicalProjectRoot(filepath.Clean(*dir))
+	if err != nil {
+		return writeError(stdout, stderr, true, "project_unsafe", err)
+	}
+	ledgerPath, err := localLedgerPath(root, false)
+	if err != nil {
+		return writeError(stdout, stderr, true, "ledger_unavailable", err)
+	}
+	ledger, err := workflow.OpenFileLedgerReadOnly(ledgerPath)
+	if err != nil {
+		return writeError(stdout, stderr, true, "ledger_unavailable", err)
+	}
+	replays, err := ledger.Replays()
+	if err != nil {
+		return writeError(stdout, stderr, true, "report_unavailable", err)
+	}
+	var startedAt, endedAt time.Time
+	for _, replay := range replays {
+		for _, receipt := range replay.Receipts {
+			if startedAt.IsZero() || receipt.OccurredAt.Before(startedAt) {
+				startedAt = receipt.OccurredAt
+			}
+			if endedAt.IsZero() || receipt.OccurredAt.After(endedAt) {
+				endedAt = receipt.OccurredAt
+			}
+		}
+	}
+	if startedAt.IsZero() {
+		return writeError(stdout, stderr, true, "report_unavailable", errors.New("ledger has no evidence receipts"))
+	}
+	if *from != "" {
+		startedAt, err = time.Parse(time.RFC3339, *from)
+		if err != nil {
+			return writeError(stdout, stderr, true, "invalid_window", errors.New("--from must be RFC3339"))
+		}
+	}
+	if *to != "" {
+		endedAt, err = time.Parse(time.RFC3339, *to)
+		if err != nil {
+			return writeError(stdout, stderr, true, "invalid_window", errors.New("--to must be RFC3339"))
+		}
+	}
+	report, err := workflow.BuildEvidenceWindowReport(workflow.DefaultAgentRoleCatalog(), replays, startedAt, endedAt)
+	if err != nil {
+		return writeError(stdout, stderr, true, "report_failed", err)
+	}
+	if *format == "json" {
+		return writeProviderData(stdout, report)
+	}
+	markdown, err := workflow.RenderEvidenceWindowMarkdown(report)
+	if err != nil {
+		return writeError(stdout, stderr, true, "report_failed", err)
+	}
+	_, _ = io.WriteString(stdout, markdown)
+	return 0
 }
 
 func openLocalRuntime(args []string, stdout, stderr io.Writer, name string) (*workflow.FixtureRuntime, contractsv1.Identifier, string, int) {

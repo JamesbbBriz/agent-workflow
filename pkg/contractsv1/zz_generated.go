@@ -56,9 +56,62 @@ const ActionArtifactKindActionArtifact ActionArtifactKind = "action_artifact"
 
 type ActionArtifactSchemaVersion int
 
+type AgentRole struct {
+	// EvidenceReceiptTypes corresponds to the JSON schema field
+	// "evidence_receipt_types".
+	EvidenceReceiptTypes []AgentRoleReceiptType `json:"evidence_receipt_types"`
+
+	// Id corresponds to the JSON schema field "id".
+	Id Identifier `json:"id"`
+
+	// Purpose corresponds to the JSON schema field "purpose".
+	Purpose string `json:"purpose"`
+
+	// Responsibilities corresponds to the JSON schema field "responsibilities".
+	Responsibilities NonEmptyStrings `json:"responsibilities"`
+
+	// Title corresponds to the JSON schema field "title".
+	Title string `json:"title"`
+}
+
+type AgentRoleCatalog struct {
+	// Kind corresponds to the JSON schema field "kind".
+	Kind AgentRoleCatalogKind `json:"kind"`
+
+	// Roles corresponds to the JSON schema field "roles".
+	Roles []AgentRole `json:"roles"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion AgentRoleCatalogSchemaVersion `json:"schema_version"`
+}
+
+type AgentRoleCatalogKind string
+
+const AgentRoleCatalogKindAgentRoleCatalog AgentRoleCatalogKind = "agent_role_catalog"
+
+type AgentRoleCatalogSchemaVersion int
+
+type AgentRoleReceiptType string
+
+const AgentRoleReceiptTypeChangeMerged AgentRoleReceiptType = "change_merged"
+const AgentRoleReceiptTypeChangeProposed AgentRoleReceiptType = "change_proposed"
+const AgentRoleReceiptTypeContextAvailable AgentRoleReceiptType = "context_available"
+const AgentRoleReceiptTypeContextBound AgentRoleReceiptType = "context_bound"
+const AgentRoleReceiptTypeInvocation AgentRoleReceiptType = "invocation"
+const AgentRoleReceiptTypeMutationApplied AgentRoleReceiptType = "mutation_applied"
+const AgentRoleReceiptTypeMutationReadback AgentRoleReceiptType = "mutation_readback"
+const AgentRoleReceiptTypeNeedsContext AgentRoleReceiptType = "needs_context"
+const AgentRoleReceiptTypeNodeCompleted AgentRoleReceiptType = "node_completed"
+const AgentRoleReceiptTypePackEdition AgentRoleReceiptType = "pack_edition"
+const AgentRoleReceiptTypeProviderExecution AgentRoleReceiptType = "provider_execution"
+const AgentRoleReceiptTypeResult AgentRoleReceiptType = "result"
+
 type AgentWorkflowContractCatalog struct {
 	// ActionArtifact corresponds to the JSON schema field "action_artifact".
 	ActionArtifact *ActionArtifact `json:"action_artifact,omitempty,omitzero"`
+
+	// AgentRoleCatalog corresponds to the JSON schema field "agent_role_catalog".
+	AgentRoleCatalog *AgentRoleCatalog `json:"agent_role_catalog,omitempty,omitzero"`
 
 	// ApprovalBrief corresponds to the JSON schema field "approval_brief".
 	ApprovalBrief *ApprovalBrief `json:"approval_brief,omitempty,omitzero"`
@@ -164,6 +217,10 @@ type AgentWorkflowContractCatalog struct {
 	// CoreCompletedEventPayload corresponds to the JSON schema field
 	// "core_completed_event_payload".
 	CoreCompletedEventPayload *CoreCompletedEventPayload `json:"core_completed_event_payload,omitempty,omitzero"`
+
+	// EvidenceWindowReport corresponds to the JSON schema field
+	// "evidence_window_report".
+	EvidenceWindowReport *EvidenceWindowReport `json:"evidence_window_report,omitempty,omitzero"`
 
 	// ExecutorProfile corresponds to the JSON schema field "executor_profile".
 	ExecutorProfile *ExecutorProfile `json:"executor_profile,omitempty,omitzero"`
@@ -1658,6 +1715,32 @@ type CoreCompletedEventPayloadStatus string
 const CoreCompletedEventPayloadStatusCompleted CoreCompletedEventPayloadStatus = "completed"
 const CoreCompletedEventPayloadStatusCompletedNoAction CoreCompletedEventPayloadStatus = "completed_no_action"
 
+type EvidenceCounts struct {
+	// AgentInvocations corresponds to the JSON schema field "agent_invocations".
+	AgentInvocations int `json:"agent_invocations"`
+
+	// Approvals corresponds to the JSON schema field "approvals".
+	Approvals int `json:"approvals"`
+
+	// ContextRefreshes corresponds to the JSON schema field "context_refreshes".
+	ContextRefreshes int `json:"context_refreshes"`
+
+	// Effects corresponds to the JSON schema field "effects".
+	Effects int `json:"effects"`
+
+	// Outcomes corresponds to the JSON schema field "outcomes".
+	Outcomes int `json:"outcomes"`
+
+	// Readbacks corresponds to the JSON schema field "readbacks".
+	Readbacks int `json:"readbacks"`
+
+	// Receipts corresponds to the JSON schema field "receipts".
+	Receipts int `json:"receipts"`
+
+	// Replays corresponds to the JSON schema field "replays".
+	Replays int `json:"replays"`
+}
+
 type EvidenceFrontier struct {
 	// Cutoff corresponds to the JSON schema field "cutoff".
 	Cutoff time.Time `json:"cutoff"`
@@ -1665,6 +1748,65 @@ type EvidenceFrontier struct {
 	// SourceHashes corresponds to the JSON schema field "source_hashes".
 	SourceHashes []SHA256 `json:"source_hashes"`
 }
+
+type EvidenceReference struct {
+	// Id corresponds to the JSON schema field "id".
+	Id string `json:"id"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind EvidenceReferenceKind `json:"kind"`
+
+	// OccurredAt corresponds to the JSON schema field "occurred_at".
+	OccurredAt *time.Time `json:"occurred_at,omitempty,omitzero"`
+
+	// Sha256 corresponds to the JSON schema field "sha256".
+	Sha256 SHA256 `json:"sha256"`
+}
+
+type EvidenceReferenceKind string
+
+const EvidenceReferenceKindReceipt EvidenceReferenceKind = "receipt"
+const EvidenceReferenceKindReplay EvidenceReferenceKind = "replay"
+
+type EvidenceWindow struct {
+	// DurationSeconds corresponds to the JSON schema field "duration_seconds".
+	DurationSeconds int `json:"duration_seconds"`
+
+	// EndedAt corresponds to the JSON schema field "ended_at".
+	EndedAt time.Time `json:"ended_at"`
+
+	// StartedAt corresponds to the JSON schema field "started_at".
+	StartedAt time.Time `json:"started_at"`
+}
+
+type EvidenceWindowReport struct {
+	// AvailableRoleIds corresponds to the JSON schema field "available_role_ids".
+	AvailableRoleIds []Identifier `json:"available_role_ids"`
+
+	// Counts corresponds to the JSON schema field "counts".
+	Counts EvidenceCounts `json:"counts"`
+
+	// Evidence corresponds to the JSON schema field "evidence".
+	Evidence []EvidenceReference `json:"evidence"`
+
+	// InvokedRoleIds corresponds to the JSON schema field "invoked_role_ids".
+	InvokedRoleIds []Identifier `json:"invoked_role_ids"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind EvidenceWindowReportKind `json:"kind"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion EvidenceWindowReportSchemaVersion `json:"schema_version"`
+
+	// Window corresponds to the JSON schema field "window".
+	Window EvidenceWindow `json:"window"`
+}
+
+type EvidenceWindowReportKind string
+
+const EvidenceWindowReportKindEvidenceWindowReport EvidenceWindowReportKind = "evidence_window_report"
+
+type EvidenceWindowReportSchemaVersion int
 
 type ExecutorProfile struct {
 	// AdapterVersion corresponds to the JSON schema field "adapter_version".
@@ -2986,21 +3128,11 @@ type WorkflowAdmissionPreview struct {
 
 type WorkflowAdmissionPreviewKind string
 
-type RedactedReceiptPreviousReceiptHash_0 = SHA256
-
-type ReceiptPreviousReceiptHash_0 = SHA256
-
-type WorkflowDefinitionKind string
-
-type WorkflowAdmissionSchemaVersion int
-
-const WorkflowDefinitionKindWorkflowDefinition WorkflowDefinitionKind = "workflow_definition"
-
-type WorkflowDefinitionSchemaVersion int
-
 const WorkflowAdmissionPreviewKindWorkflowAdmissionPreview WorkflowAdmissionPreviewKind = "workflow_admission_preview"
 
 type WorkflowAdmissionPreviewSchemaVersion int
+
+type WorkflowAdmissionSchemaVersion int
 
 type WorkflowDefinition struct {
 	// Blockers corresponds to the JSON schema field "blockers".
@@ -3037,10 +3169,17 @@ type WorkflowDefinition struct {
 	Version int `json:"version"`
 }
 
-type WorkflowLintIssueSeverity string
+type WorkflowDefinitionKind string
 
-const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
-const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
+const WorkflowDefinitionKindWorkflowDefinition WorkflowDefinitionKind = "workflow_definition"
+
+type RedactedReceiptPreviousReceiptHash_0 = SHA256
+
+type WorkflowRef string
+
+type ReceiptPreviousReceiptHash_0 = SHA256
+
+type WorkflowDefinitionSchemaVersion int
 
 type WorkflowLintIssue struct {
 	// Code corresponds to the JSON schema field "code".
@@ -3056,11 +3195,10 @@ type WorkflowLintIssue struct {
 	Severity WorkflowLintIssueSeverity `json:"severity"`
 }
 
-type WorkflowLintReportKind string
+type WorkflowLintIssueSeverity string
 
-const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflow_lint_report"
-
-type WorkflowLintReportSchemaVersion int
+const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
+const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
 
 type WorkflowLintReport struct {
 	// Issues corresponds to the JSON schema field "issues".
@@ -3076,4 +3214,8 @@ type WorkflowLintReport struct {
 	Valid bool `json:"valid"`
 }
 
-type WorkflowRef string
+type WorkflowLintReportKind string
+
+const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflow_lint_report"
+
+type WorkflowLintReportSchemaVersion int

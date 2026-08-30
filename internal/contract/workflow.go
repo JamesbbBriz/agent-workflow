@@ -75,7 +75,7 @@ func ValidateDefinition(name string, value any) error {
 	switch name {
 	case "JobDefinition", "CampaignDefinition", "ContextPackEdition", "ContextBundle", "CapabilityManifest", "ActionArtifact", "Receipt", "ReplayBundle", "RedactedReplay", "ProviderIsolationEvidence", "CanvasSnapshot", "CanvasPortfolioSnapshot", "ControlPlaneSnapshot", "CampaignExecutionState", "CampaignDrivePreview", "CampaignDriveReceipt",
 		"AuthoringCatalog", "WorkflowLintReport", "WorkflowAdmissionPreview", "WorkflowAdmission", "ApprovalBrief", "ApprovalPreview",
-		"ConformanceFixture", "ConformanceCheck", "ConformanceReport", "LocalProjectInit", "LocalProjectDoctor",
+		"ConformanceFixture", "ConformanceCheck", "ConformanceReport", "LocalProjectInit", "LocalProjectDoctor", "AgentRoleCatalog", "EvidenceWindowReport",
 		"ResourceRef", "ProposalReplacement", "ChangeProposal", "ConflictSet", "ResolutionArtifact", "MutationLease", "MutationEvidence", "ChangeCaseState", "ChangeCaseEventPayload", "ChangeCaseCanvas",
 		"ProviderDescriptor", "ProviderReadiness", "ExecutorProfile", "ProviderRunRef", "ProviderEvent", "ProviderEventPage", "ProviderObservation", "ProviderCancellation", "ProviderProtocolRequest", "ProviderProtocolResponse":
 	default:

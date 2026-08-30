@@ -32,12 +32,18 @@ go run ./cmd/agent-workflow run --dir /tmp/agent-workflow-demo
 go run ./cmd/agent-workflow status --dir /tmp/agent-workflow-demo
 go run ./cmd/agent-workflow approval confirm --dir /tmp/agent-workflow-demo
 go run ./cmd/agent-workflow replay --dir /tmp/agent-workflow-demo
+go run ./cmd/agent-workflow report --dir /tmp/agent-workflow-demo --format markdown
 ```
 
 `run` stops at the exact human approval gate. `approval confirm` appends the
 approval receipt and resumes the same Campaign; `status` and `replay` recover
 the canonical state after process restart. The bundled fixture never performs
 production mutation.
+
+`report` projects the same read-only ledger into the closed
+`EvidenceWindowReport@1` JSON contract or deterministic Markdown. Available
+Agent roles remain separate from roles actually evidenced by canonical
+receipts; role metadata never grants execution authority.
 
 The local project path and its ancestors are a caller-trusted boundary and
 must not be replaced during a command. The CLI resolves that path once, rejects

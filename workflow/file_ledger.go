@@ -278,6 +278,34 @@ func (l *FileLedger) ReplaysByReceiptType(receiptType contractsv1.ReceiptReceipt
 	return l.ReplaysByReceiptTypes(receiptType)
 }
 
+func (l *FileLedger) Replays() ([]contractsv1.ReplayBundle, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	lock, err := l.lock(false)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockLedger(lock)
+	all, err := l.load()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(all))
+	for id := range all {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	replays := make([]contractsv1.ReplayBundle, 0, len(ids))
+	for _, id := range ids {
+		replay, err := replayBundle(id, all[id])
+		if err != nil {
+			return nil, err
+		}
+		replays = append(replays, replay)
+	}
+	return replays, nil
+}
+
 func (l *FileLedger) ReplaysByReceiptTypes(receiptTypes ...contractsv1.ReceiptReceiptType) ([]contractsv1.ReplayBundle, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

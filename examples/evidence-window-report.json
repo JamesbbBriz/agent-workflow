@@ -1,0 +1,27 @@
+{
+  "kind": "evidence_window_report",
+  "schema_version": 1,
+  "window": {
+    "started_at": "2026-08-30T00:00:00Z",
+    "ended_at": "2026-08-30T02:00:00Z",
+    "duration_seconds": 7200
+  },
+  "available_role_ids": ["bounded-execution-agent", "change-verification-agent", "context-preparation-agent"],
+  "invoked_role_ids": ["bounded-execution-agent", "context-preparation-agent"],
+  "counts": {
+    "context_refreshes": 1,
+    "agent_invocations": 1,
+    "approvals": 0,
+    "effects": 0,
+    "readbacks": 0,
+    "outcomes": 1,
+    "receipts": 3,
+    "replays": 1
+  },
+  "evidence": [
+    {"kind": "receipt", "id": "synthetic-run:1", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "occurred_at": "2026-08-30T00:00:00Z"},
+    {"kind": "receipt", "id": "synthetic-run:2", "sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111", "occurred_at": "2026-08-30T00:01:00Z"},
+    {"kind": "receipt", "id": "synthetic-run:3", "sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222", "occurred_at": "2026-08-30T00:02:00Z"},
+    {"kind": "replay", "id": "synthetic-run", "sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333"}
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "kind": "agent_role_catalog",
+  "schema_version": 1,
+  "roles": [
+    {
+      "id": "bounded-execution-agent",
+      "title": "Bounded execution agent",
+      "purpose": "Executes one admitted Node with exact Context and capabilities.",
+      "responsibilities": ["Run admitted work", "Return typed artifacts"],
+      "evidence_receipt_types": ["invocation", "provider_execution", "result", "node_completed"]
+    },
+    {
+      "id": "change-verification-agent",
+      "title": "Change verification agent",
+      "purpose": "Verifies proposed effects against canonical readback evidence.",
+      "responsibilities": ["Resolve change evidence", "Verify applied state"],
+      "evidence_receipt_types": ["change_proposed", "change_merged", "mutation_applied", "mutation_readback"]
+    },
+    {
+      "id": "context-preparation-agent",
+      "title": "Context preparation agent",
+      "purpose": "Refreshes and binds exact Context Packs before execution.",
+      "responsibilities": ["Refresh evidence", "Bind Context Packs"],
+      "evidence_receipt_types": ["pack_edition", "context_available", "context_bound", "needs_context"]
+    }
+  ]
+}

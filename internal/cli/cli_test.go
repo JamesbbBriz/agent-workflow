@@ -211,6 +211,23 @@ func TestLocalProjectGoldenPathPersistsApprovalAndReplay(t *testing.T) {
 	if replay["data"].(map[string]any)["bundle_hash"] == "" || len(replay["data"].(map[string]any)["receipts"].([]any)) == 0 {
 		t.Fatalf("replay was not exported: %#v", replay)
 	}
+	report := call("report", "--dir", dir)
+	reportData := report["data"].(map[string]any)
+	if reportData["kind"] != "evidence_window_report" || len(reportData["available_role_ids"].([]any)) != 3 || len(reportData["invoked_role_ids"].([]any)) == 0 || reportData["counts"].(map[string]any)["receipts"].(float64) == 0 {
+		t.Fatalf("report omitted workforce or evidence: %#v", report)
+	}
+	ledgerBeforeMarkdown, err := os.ReadFile(filepath.Join(dir, ".agent-workflow", "ledger.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var markdownOut, markdownErr bytes.Buffer
+	if code := cli.Run([]string{"report", "--dir", dir, "--format", "markdown"}, &markdownOut, &markdownErr); code != 0 || !strings.Contains(markdownOut.String(), "# Evidence window report") {
+		t.Fatalf("Markdown report failed: code=%d stdout=%s stderr=%s", code, markdownOut.String(), markdownErr.String())
+	}
+	ledgerAfterMarkdown, err := os.ReadFile(filepath.Join(dir, ".agent-workflow", "ledger.jsonl"))
+	if err != nil || !bytes.Equal(ledgerBeforeMarkdown, ledgerAfterMarkdown) {
+		t.Fatalf("report mutated ledger: err=%v", err)
+	}
 
 	redelivered := call("init", "--dir", dir)
 	if redelivered["ok"] != true {

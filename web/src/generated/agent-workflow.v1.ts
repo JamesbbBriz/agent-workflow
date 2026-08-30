@@ -1,5 +1,6 @@
 export interface AgentWorkflowV1 {
     action_artifact?:                  ActionArtifact;
+    agent_role_catalog?:               AgentRoleCatalog;
     approval_brief?:                   ApprovalBrief;
     approval_decided_event_payload?:   ApprovalDecidedEventPayload;
     approval_preview?:                 ApprovalPreview;
@@ -30,6 +31,7 @@ export interface AgentWorkflowV1 {
     context_transition_event_payload?: ContextTransitionEventPayload;
     control_plane_snapshot?:           ControlPlaneSnapshot;
     core_completed_event_payload?:     CoreCompletedEventPayload;
+    evidence_window_report?:           EvidenceWindowReport;
     executor_profile?:                 ExecutorProfile;
     job_definition?:                   Job;
     local_project_doctor?:             LocalProjectDoctor;
@@ -81,6 +83,24 @@ export interface ActionArtifact {
 export type ApprovalState = "not_required" | "pending" | "approved" | "rejected" | "stale";
 
 export type ActionArtifactKind = "action_artifact";
+
+export interface AgentRoleCatalog {
+    kind:           AgentRoleCatalogKind;
+    roles:          [AgentRole, ...AgentRole[]];
+    schema_version: number;
+}
+
+export type AgentRoleCatalogKind = "agent_role_catalog";
+
+export interface AgentRole {
+    evidence_receipt_types: [AgentRoleReceiptType, ...AgentRoleReceiptType[]];
+    id:                     string;
+    purpose:                string;
+    responsibilities:       [string, ...string[]];
+    title:                  string;
+}
+
+export type AgentRoleReceiptType = "change_merged" | "change_proposed" | "context_available" | "context_bound" | "invocation" | "mutation_applied" | "mutation_readback" | "needs_context" | "node_completed" | "pack_edition" | "provider_execution" | "result";
 
 export interface ApprovalBrief {
     action:                ActionArtifact;
@@ -858,6 +878,44 @@ export interface CoreCompletedEventPayload {
 }
 
 export type CoreCompletedEventPayloadStatus = "completed" | "completed_no_action";
+
+export interface EvidenceWindowReport {
+    available_role_ids: string[];
+    counts:             EvidenceCounts;
+    evidence:           EvidenceReference[];
+    invoked_role_ids:   string[];
+    kind:               EvidenceWindowReportKind;
+    schema_version:     number;
+    window:             EvidenceWindow;
+}
+
+export interface EvidenceCounts {
+    agent_invocations: number;
+    approvals:         number;
+    context_refreshes: number;
+    effects:           number;
+    outcomes:          number;
+    readbacks:         number;
+    receipts:          number;
+    replays:           number;
+}
+
+export interface EvidenceReference {
+    id:           string;
+    kind:         EvidenceReferenceKind;
+    occurred_at?: string;
+    sha256:       string;
+}
+
+export type EvidenceReferenceKind = "receipt" | "replay";
+
+export type EvidenceWindowReportKind = "evidence_window_report";
+
+export interface EvidenceWindow {
+    duration_seconds: number;
+    ended_at:         string;
+    started_at:       string;
+}
 
 export interface ExecutorProfile {
     adapter_version:   string;
