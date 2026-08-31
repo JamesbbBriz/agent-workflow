@@ -15,6 +15,7 @@ cat >> "$out" <<'EOF'
 // Stable v1 export aliases. Quicktype names shared schemas by first use, so
 // adding a new catalog entry must not rename existing downstream imports.
 export type NodeElement = DefinitionElement;
+export type OutputElement = InputElement;
 export type ReplayBundleElement = CampaignReplay;
 export type Status = ContextPortStatus;
 export type Mode = WaitModeEnum;

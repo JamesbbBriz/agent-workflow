@@ -321,6 +321,9 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 	if err := verifyInvocationInputBinding(invocation); err != nil {
 		return RunResult{}, err
 	}
+	if err := validateInvocationProducerScope(invocation, request.Campaign); err != nil {
+		return RunResult{}, err
+	}
 	if err := validateJSONLimit("invocation material", invocation, maxReceiptMaterialBytes); err != nil {
 		return RunResult{}, err
 	}
@@ -795,6 +798,9 @@ func verifyDefinitionBinding(bundle contractsv1.ReplayBundle, admissionReplay *c
 	if err := verifyInvocationInputBinding(invocation); err != nil {
 		return Invocation{}, err
 	}
+	if err := validateInvocationProducerScope(invocation, campaign); err != nil {
+		return Invocation{}, err
+	}
 	return invocation, nil
 }
 
@@ -832,6 +838,33 @@ func validateReplayBinding(invocation Invocation, request RunRequest, compiled C
 	if err := verifyInvocationInputBinding(invocation); err != nil {
 		return err
 	}
+	if err := validateInvocationProducerScope(invocation, request.Campaign); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateInvocationProducerScope(invocation Invocation, campaign contractsv1.CampaignDefinition) error {
+	current := -1
+	for index, ref := range campaign.WorkflowPlan {
+		if ref == invocation.WorkflowRef {
+			current = index
+			break
+		}
+	}
+	for _, artifact := range invocation.Inputs {
+		source := -1
+		for index, ref := range campaign.WorkflowPlan {
+			if ref == artifact.WorkflowRef {
+				source = index
+				break
+			}
+		}
+		direct := source == current && containsString(invocation.Node.DependsOn, string(artifact.NodeId))
+		if current < 0 || source < 0 || (source >= current && !direct) {
+			return errors.New("recorded invocation artifact producer is not an earlier pinned Workflow")
+		}
+	}
 	return nil
 }
 
@@ -860,7 +893,7 @@ func verifyInvocationInputBinding(invocation Invocation) error {
 		if err != nil || contractsv1.SHA256(hash) != artifact.ContentSha256 || invocation.InputHashes[index+offset] != artifact.ContentSha256 {
 			return errors.New("recorded invocation artifact hash is invalid")
 		}
-		if artifact.JobId != invocation.JobID || artifact.CampaignId != invocation.CampaignID || artifact.ApprovalState == contractsv1.ActionArtifactApprovalStateRejected || artifact.ApprovalState == contractsv1.ActionArtifactApprovalStateStale {
+		if artifact.JobId != invocation.JobID || artifact.CampaignId != invocation.CampaignID || (artifact.ApprovalState != contractsv1.ActionArtifactApprovalStateApproved && artifact.ApprovalState != contractsv1.ActionArtifactApprovalStateNotRequired) {
 			return errors.New("recorded invocation artifact authority is invalid")
 		}
 	}

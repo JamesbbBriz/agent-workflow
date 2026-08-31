@@ -33,19 +33,32 @@ func TestCandidateSlotRejectsBatchedRecordsInOneArtifact(t *testing.T) {
 	}
 }
 
-func TestInvocationRejectsStaleArtifactInput(t *testing.T) {
+func TestInvocationRejectsUnapprovedArtifactInput(t *testing.T) {
 	content := map[string]any{"candidate": "a"}
 	hash, err := Digest(content)
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifact := contractsv1.ActionArtifact{
-		Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: "candidate-a", ArtifactType: "candidate",
-		JobId: "job-a", CampaignId: "campaign-a", WorkflowRef: "source@1", NodeId: "research",
-		InputHashes: []contractsv1.SHA256{repeatedSHA('6')}, Content: content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: contractsv1.ActionArtifactApprovalStateStale,
+	for _, state := range []contractsv1.ActionArtifactApprovalState{contractsv1.ActionArtifactApprovalStatePending, contractsv1.ActionArtifactApprovalStateRejected, contractsv1.ActionArtifactApprovalStateStale} {
+		artifact := contractsv1.ActionArtifact{
+			Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: "candidate-a", ArtifactType: "candidate",
+			JobId: "job-a", CampaignId: "campaign-a", WorkflowRef: "source@1", NodeId: "research",
+			InputHashes: []contractsv1.SHA256{repeatedSHA('6')}, Content: content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: state,
+		}
+		invocation := Invocation{JobID: "job-a", CampaignID: "campaign-a", Inputs: []contractsv1.ActionArtifact{artifact}, InputHashes: []contractsv1.SHA256{repeatedSHA('0'), repeatedSHA('1'), repeatedSHA('2'), repeatedSHA('3'), repeatedSHA('4'), repeatedSHA('5'), contractsv1.SHA256(hash)}}
+		if err := verifyInvocationInputBinding(invocation); err == nil || !strings.Contains(err.Error(), "authority") {
+			t.Fatalf("%s artifact crossed the invocation boundary: %v", state, err)
+		}
 	}
-	invocation := Invocation{JobID: "job-a", CampaignID: "campaign-a", Inputs: []contractsv1.ActionArtifact{artifact}, InputHashes: []contractsv1.SHA256{repeatedSHA('0'), repeatedSHA('1'), repeatedSHA('2'), repeatedSHA('3'), repeatedSHA('4'), repeatedSHA('5'), contractsv1.SHA256(hash)}}
-	if err := verifyInvocationInputBinding(invocation); err == nil || !strings.Contains(err.Error(), "authority") {
-		t.Fatalf("stale artifact crossed the invocation boundary: %v", err)
+}
+
+func TestInvocationRejectsArtifactFromNonEarlierWorkflow(t *testing.T) {
+	invocation := Invocation{
+		WorkflowRef: "current@1",
+		Inputs:      []contractsv1.ActionArtifact{{WorkflowRef: "later@1"}},
+	}
+	campaign := contractsv1.CampaignDefinition{WorkflowPlan: []contractsv1.WorkflowRef{"source@1", "current@1", "later@1"}}
+	if err := validateInvocationProducerScope(invocation, campaign); err == nil || !strings.Contains(err.Error(), "earlier pinned") {
+		t.Fatalf("later Workflow artifact crossed the Replay boundary: %v", err)
 	}
 }

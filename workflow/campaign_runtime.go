@@ -807,6 +807,29 @@ func (e *Engine) resolveNodeInputs(prepared preparedCampaign, current preparedWo
 		var artifacts []contractsv1.ActionArtifact
 		for _, producer := range producers {
 			for _, producerNodeID := range producer.nodeIDs {
+				producerNode, ok := compiledNodeByID(producer.workflow.compiled, producerNodeID)
+				if ok && producerNode.Definition.Kind == contractsv1.NodeDefinitionKindApproval {
+					campaignReplay, err := e.ledger.Replay(prepared.initial.AggregateId)
+					if err != nil {
+						return nil, err
+					}
+					if _, err := e.reduceCampaignReplay(campaignReplay, prepared); err != nil {
+						return nil, err
+					}
+					for _, receipt := range campaignReplay.Receipts {
+						if receipt.ReceiptType != contractsv1.ReceiptReceiptTypeApprovalDecided {
+							continue
+						}
+						var payload contractsv1.ApprovalDecidedEventPayload
+						if err := decodePayload(receipt.Payload, &payload); err != nil {
+							return nil, err
+						}
+						if payload.WorkflowRef == producer.workflow.compiled.WorkflowRef && string(payload.NodeId) == producerNodeID && payload.Artifact.ArtifactType == input.ArtifactType {
+							artifacts = append(artifacts, payload.Artifact)
+						}
+					}
+					continue
+				}
 				childID, err := executionID(RunRequest{Job: prepared.request.Job, Campaign: prepared.request.Campaign, Workflow: producer.workflow.definition, NodeID: producerNodeID})
 				if err != nil {
 					return nil, err

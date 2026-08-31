@@ -28,7 +28,7 @@ func TestCampaignRuntimeDerivesDependenciesAndCompletesTheDAG(t *testing.T) {
 	campaign.Budget = contractsv1.Budget{MaxAttempts: 3, MaxActions: 2, MaxCandidates: 4}
 	ledger := workflow.NewMemoryLedger()
 	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
-	provider := &dagProvider{results: map[string]workflow.ProviderResult{}}
+	provider := &dagProvider{results: map[string]workflow.ProviderResult{}, approvalStates: map[string]contractsv1.ActionArtifactApprovalState{"research": contractsv1.ActionArtifactApprovalStateNotRequired}}
 	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger).
 		WithApprovalAuthorities(workflow.ApprovalAuthorityCatalog{"human-confirm": []string{"human@example.com"}})
 
@@ -214,17 +214,33 @@ func TestCampaignRuntimeWaitsForExactHumanApprovalAndResumes(t *testing.T) {
 		t.Fatal(err)
 	}
 	definition := loadExample(t)
+	consumer := loadExample(t)
+	consumer.Id = "approval-consumer"
+	consumer.Intent.Title = "Consume approved decision"
+	consumer.Nodes = consumer.Nodes[:1]
+	consumer.Nodes[0].Id = "consume"
+	consumer.Nodes[0].DependsOn = contractsv1.Strings{}
+	input := definition.Outputs[0]
+	input.Id = "approved-decision"
+	input.Consumers = []string{"consume"}
+	consumer.Inputs = []contractsv1.Slot{input}
+	consumer.Nodes[0].InputSlots = []contractsv1.Slot{input}
+	consumer.Nodes[0].OutputSlots[0].Consumers = []string{"workflow-output"}
+	consumer.Outputs = append([]contractsv1.Slot(nil), consumer.Nodes[0].OutputSlots...)
+	consumer.Outputs[0].Consumers = append([]string(nil), consumer.Intent.Consumers...)
 	job := jobFixture(scope)
 	campaign := campaignFixture(scope, cutoff)
-	campaign.Budget = contractsv1.Budget{MaxAttempts: 2, MaxActions: 3, MaxCandidates: 4}
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@1", "approval-consumer@1"}
+	campaign.Budget = contractsv1.Budget{MaxAttempts: 3, MaxActions: 3, MaxCandidates: 4}
 	ledger := workflow.NewMemoryLedger()
 	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
+	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: consumer, NodeID: "consume"})
 	provider := &dagProvider{results: map[string]workflow.ProviderResult{}}
 	outputs := dagOutputCatalog()
 	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputs, provider, ledger).
 		WithApprovalAuthorities(workflow.ApprovalAuthorityCatalog{"human-confirm": []string{"human@example.com"}})
 
-	waiting, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}, MaxTransitions: 10})
+	waiting, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflows: []contractsv1.WorkflowDefinition{definition, consumer}}, MaxTransitions: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,12 +268,12 @@ func TestCampaignRuntimeWaitsForExactHumanApprovalAndResumes(t *testing.T) {
 	if _, err := core.ConfirmApproval(preview, "human@example.com", "approve", time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	completed, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}, MaxTransitions: 10})
+	completed, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflows: []contractsv1.WorkflowDefinition{definition, consumer}}, MaxTransitions: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if completed.State.Status != contractsv1.CampaignExecutionStateStatusCompleted || completed.State.Nodes[1].Status != contractsv1.CampaignNodeExecutionStatusCompleted || provider.starts != 1 {
-		t.Fatalf("approval did not resume the same Campaign without another provider effect: state=%+v starts=%d", completed.State, provider.starts)
+	if completed.State.Status != contractsv1.CampaignExecutionStateStatusCompleted || completed.State.Nodes[1].Status != contractsv1.CampaignNodeExecutionStatusCompleted || completed.State.Nodes[2].Status != contractsv1.CampaignNodeExecutionStatusCompleted || provider.starts != 2 {
+		t.Fatalf("approval output did not resume into the next Workflow exactly once: state=%+v starts=%d", completed.State, provider.starts)
 	}
 }
 
@@ -716,6 +732,7 @@ type dagProvider struct {
 	results          map[string]workflow.ProviderResult
 	invocations      []workflow.Invocation
 	approvalState    contractsv1.ActionArtifactApprovalState
+	approvalStates   map[string]contractsv1.ActionArtifactApprovalState
 	outcomes         map[string]contractsv1.CampaignNodeExecutionStatus
 	blockers         map[string]*contractsv1.Identifier
 	empty            map[string]bool
@@ -742,6 +759,9 @@ func (p *dagProvider) Start(_ context.Context, invocation workflow.Invocation) e
 			return err
 		}
 		state := p.approvalState
+		if nodeState := p.approvalStates[string(invocation.Node.Id)]; nodeState != "" {
+			state = nodeState
+		}
 		if state == "" {
 			state = contractsv1.ActionArtifactApprovalStatePending
 		}

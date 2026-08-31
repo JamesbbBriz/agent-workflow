@@ -14,9 +14,9 @@ rejects undeclared consumers, incompatible slots, and ambiguous producers.
 Campaign Runtime resolves the exact completed producer Replay, materializes
 its Action Artifacts, and places them in `Invocation.inputs`. Their content
 hashes participate in the idempotency key, `input_hashes`, redelivery checks,
-and public Replay verification. Rejected and stale artifacts fail before the
-provider starts. Pending artifacts may be inspected by a downstream agent;
-mutation authority remains separately capability- and approval-gated.
+and public Replay verification. Only `approved` and `not_required` artifacts
+may reach a provider. Pending artifacts remain reserved for an Approval Node;
+rejected and stale artifacts fail before provider start.
 
 The field is optional in the v1 JSON contract so existing Workflow documents
 and historical input-free Replays remain valid. No second artifact store or
