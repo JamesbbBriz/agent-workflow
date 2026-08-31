@@ -3192,6 +3192,9 @@ type WorkflowDefinition struct {
 	// Id corresponds to the JSON schema field "id".
 	Id Identifier `json:"id"`
 
+	// Inputs corresponds to the JSON schema field "inputs".
+	Inputs []Slot `json:"inputs,omitempty,omitzero"`
+
 	// Intent corresponds to the JSON schema field "intent".
 	Intent IntentCard `json:"intent"`
 
@@ -3233,12 +3236,12 @@ type WorkflowLintIssue struct {
 
 type WorkflowLintIssueSeverity string
 
-type RedactedReceiptPreviousReceiptHash_0 = SHA256
-
 const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
 const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
 
-type ReceiptPreviousReceiptHash_0 = SHA256
+type WorkflowRef string
+
+type RedactedReceiptPreviousReceiptHash_0 = SHA256
 
 type WorkflowLintReport struct {
 	// Issues corresponds to the JSON schema field "issues".
@@ -3260,4 +3263,4 @@ const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflo
 
 type WorkflowLintReportSchemaVersion int
 
-type WorkflowRef string
+type ReceiptPreviousReceiptHash_0 = SHA256

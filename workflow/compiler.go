@@ -203,17 +203,17 @@ func compileNodeContext(defaults, explicit []contractsv1.ContextRequirement, reg
 func validateSlotFlow(definition contractsv1.WorkflowDefinition) error {
 	nodes := make(map[string]contractsv1.NodeDefinition, len(definition.Nodes))
 	dependents := make(map[string]map[string]struct{}, len(definition.Nodes))
-	globalOutputIDs := make(map[string]string)
+	globalOutputs := make(map[string]contractsv1.Slot)
 	for _, node := range definition.Nodes {
 		nodes[string(node.Id)] = node
 		for _, output := range node.OutputSlots {
 			if output.ArtifactKind != nil && *output.ArtifactKind == contractsv1.SlotArtifactKindContextPack {
 				return fmt.Errorf("node %q output slot %q uses reserved context_pack output support", node.Id, output.Id)
 			}
-			if owner, exists := globalOutputIDs[string(output.Id)]; exists {
-				return fmt.Errorf("output slot %q is declared by both %q and %q", output.Id, owner, node.Id)
+			if existing, exists := globalOutputs[string(output.Id)]; exists && !slotProducerCompatible(existing, output) {
+				return fmt.Errorf("output slot %q has incompatible producer definitions: %+v and %+v", output.Id, existing, output)
 			}
-			globalOutputIDs[string(output.Id)] = string(node.Id)
+			globalOutputs[string(output.Id)] = output
 		}
 		for _, dependency := range node.DependsOn {
 			if dependents[dependency] == nil {
@@ -222,7 +222,26 @@ func validateSlotFlow(definition contractsv1.WorkflowDefinition) error {
 			dependents[dependency][string(node.Id)] = struct{}{}
 		}
 	}
+	workflowInputs := make(map[string]contractsv1.Slot, len(definition.Inputs))
+	for _, input := range definition.Inputs {
+		if input.ArtifactKind == nil || *input.ArtifactKind != contractsv1.SlotArtifactKindActionArtifact || input.ContentSchema == nil || len(input.Consumers) == 0 {
+			return fmt.Errorf("workflow input slot %q must declare action_artifact kind, content_schema, and consumers", input.Id)
+		}
+		if _, duplicate := workflowInputs[string(input.Id)]; duplicate {
+			return fmt.Errorf("workflow input slot %q is duplicated", input.Id)
+		}
+		for _, consumer := range input.Consumers {
+			node, ok := nodes[consumer]
+			if !ok || !hasMatchingSlot(node.InputSlots, input) {
+				return fmt.Errorf("workflow input slot %q has unknown consumer %q", input.Id, consumer)
+			}
+		}
+		workflowInputs[string(input.Id)] = input
+	}
 	for _, node := range definition.Nodes {
+		if len(node.OutputSlots) > 0 && !nodeUsesProvider(node) && node.Kind != contractsv1.NodeDefinitionKindApproval {
+			return fmt.Errorf("core-owned node %q cannot declare Action Artifact outputs", node.Id)
+		}
 		outputTypes := make(map[contractsv1.Identifier]struct{}, len(node.OutputSlots))
 		for _, output := range node.OutputSlots {
 			if output.ArtifactKind == nil || output.ContentSchema == nil || len(output.Consumers) == 0 {
@@ -244,14 +263,32 @@ func validateSlotFlow(definition contractsv1.WorkflowDefinition) error {
 	}
 	for _, node := range definition.Nodes {
 		available := make(map[string]contractsv1.Slot)
+		owners := make(map[string]string)
 		for _, dependency := range node.DependsOn {
 			for _, slot := range nodes[dependency].OutputSlots {
+				if owner, duplicate := owners[string(slot.Id)]; duplicate && !slotProducerCompatible(available[string(slot.Id)], slot) {
+					return fmt.Errorf("node %q input slot %q has incompatible dependency producers %q and %q", node.Id, slot.Id, owner, dependency)
+				}
 				available[string(slot.Id)] = slot
+				owners[string(slot.Id)] = dependency
 			}
 		}
 		for _, input := range node.InputSlots {
 			output, ok := available[string(input.Id)]
-			if !ok || output.ArtifactType != input.ArtifactType || output.MaxItems < input.MinItems || (input.ArtifactKind != nil && output.ArtifactKind != nil && *input.ArtifactKind != *output.ArtifactKind) || (input.ContentSchema != nil && output.ContentSchema != nil && *input.ContentSchema != *output.ContentSchema) {
+			direct := ok && slotSupplies(output, input)
+			if !direct {
+				for _, candidate := range available {
+					if artifactContractSupplies(candidate, input) {
+						direct = true
+						break
+					}
+				}
+			}
+			external := workflowInputSupplies(workflowInputs[string(input.Id)], input, string(node.Id))
+			if direct && external {
+				return fmt.Errorf("node %q input slot %q has both dependency and Workflow producers", node.Id, input.Id)
+			}
+			if !direct && !external {
 				return fmt.Errorf("node %q input slot %q is not supplied by a direct dependency", node.Id, input.Id)
 			}
 		}
@@ -277,6 +314,22 @@ func validateSlotFlow(definition contractsv1.WorkflowDefinition) error {
 		}
 	}
 	return nil
+}
+
+func slotSupplies(output, input contractsv1.Slot) bool {
+	return output.Id == input.Id && artifactContractSupplies(output, input)
+}
+
+func artifactContractSupplies(output, input contractsv1.Slot) bool {
+	return output.ArtifactType == input.ArtifactType && output.MaxItems >= input.MinItems && output.ArtifactKind != nil && input.ArtifactKind != nil && *output.ArtifactKind == *input.ArtifactKind && output.ContentSchema != nil && input.ContentSchema != nil && *output.ContentSchema == *input.ContentSchema
+}
+
+func slotProducerCompatible(left, right contractsv1.Slot) bool {
+	return left.Id == right.Id && left.ArtifactType == right.ArtifactType && left.MaxItems == right.MaxItems && left.CountsAsCandidates == right.CountsAsCandidates && reflect.DeepEqual(left.ArtifactKind, right.ArtifactKind) && reflect.DeepEqual(left.ContentSchema, right.ContentSchema) && reflect.DeepEqual(left.Consumers, right.Consumers)
+}
+
+func workflowInputSupplies(input, wanted contractsv1.Slot, consumer string) bool {
+	return slotSupplies(input, wanted) && containsString(input.Consumers, consumer)
 }
 
 func containsString(values []string, wanted string) bool {

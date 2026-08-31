@@ -50,6 +50,7 @@ type Invocation struct {
 	Context         []contractsv1.ContextPackEdition       `json:"context"`
 	Bundle          contractsv1.ContextBundle              `json:"bundle"`
 	Capabilities    contractsv1.CapabilityManifest         `json:"capabilities"`
+	Inputs          []contractsv1.ActionArtifact           `json:"inputs,omitempty"`
 	InputHashes     []contractsv1.SHA256                   `json:"input_hashes"`
 	Budget          contractsv1.Budget                     `json:"budget"`
 	BudgetEnforced  bool                                   `json:"budget_enforced,omitempty"`
@@ -147,10 +148,10 @@ func (e *Engine) runAgentNode(ctx context.Context, request RunRequest) (RunResul
 }
 
 func (e *Engine) runAgentNodeAt(ctx context.Context, request RunRequest, reservedAt *time.Time) (RunResult, error) {
-	return e.runAgentNodeResolvedAt(ctx, request, reservedAt, nil)
+	return e.runAgentNodeResolvedAt(ctx, request, reservedAt, nil, nil)
 }
 
-func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest, reservedAt *time.Time, preparedContext *resolvedContext) (RunResult, error) {
+func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest, reservedAt *time.Time, preparedContext *resolvedContext, inputs []contractsv1.ActionArtifact) (RunResult, error) {
 	if e == nil || e.provider == nil || e.ledger == nil {
 		return RunResult{}, errors.New("provider and ledger are required")
 	}
@@ -219,7 +220,7 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 		if invocation, ok, err := materializeInvocation(replay); err != nil {
 			return RunResult{}, err
 		} else if ok {
-			if err := validateReplayBinding(invocation, request, compiled, node, jobHash, campaignHash); err != nil {
+			if err := validateReplayBinding(invocation, request, compiled, node, jobHash, campaignHash, inputs); err != nil {
 				return RunResult{}, err
 			}
 			if hasReceipt(replay, contractsv1.ReceiptReceiptTypeTerminal) {
@@ -261,6 +262,10 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 	if err != nil {
 		return RunResult{}, err
 	}
+	artifactHashes := make([]contractsv1.SHA256, len(inputs))
+	for index, artifact := range inputs {
+		artifactHashes[index] = artifact.ContentSha256
+	}
 	invocationKey, err := Digest(struct {
 		AggregateID  string
 		NodeID       contractsv1.Identifier
@@ -269,7 +274,8 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 		CompileHash  contractsv1.SHA256
 		BundleHash   contractsv1.SHA256
 		Manifest     contractsv1.SHA256
-	}{aggregateID, node.Definition.Id, jobHash, campaignHash, compiled.CompileHash, resolved.Bundle.BundleHash, manifest.ManifestHash})
+		Artifacts    []contractsv1.SHA256
+	}{aggregateID, node.Definition.Id, jobHash, campaignHash, compiled.CompileHash, resolved.Bundle.BundleHash, manifest.ManifestHash, artifactHashes})
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -304,12 +310,19 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 		IdempotencyKey: invocationKey, JobID: request.Job.Id, CampaignID: request.Campaign.Id,
 		WorkflowRef: compiled.WorkflowRef, Node: node.Definition, Playbook: request.Workflow.Intent,
 		IntentChain: intentChain, Context: resolved.Packs,
-		Bundle: resolved.Bundle, Capabilities: manifest, Budget: node.Definition.Budget, BudgetEnforced: budgetEnforced, Deadline: deadline,
+		Bundle: resolved.Bundle, Capabilities: manifest, Inputs: append([]contractsv1.ActionArtifact(nil), inputs...), Budget: node.Definition.Budget, BudgetEnforced: budgetEnforced, Deadline: deadline,
 		InputHashes: []contractsv1.SHA256{admission.Receipt.ReceiptHash, jobHash, campaignHash, compiled.CompileHash, resolved.Bundle.BundleHash, manifest.ManifestHash, isolation.EvidenceHash},
 		Isolation:   &isolation, ExecutorProfile: executorProfile,
 	}
 	if executorProfile != nil {
 		invocation.InputHashes = append(invocation.InputHashes, executorProfile.ConfigHash)
+	}
+	invocation.InputHashes = append(invocation.InputHashes, artifactHashes...)
+	if err := verifyInvocationInputBinding(invocation); err != nil {
+		return RunResult{}, err
+	}
+	if err := validateInvocationProducerScope(invocation, request.Campaign); err != nil {
+		return RunResult{}, err
 	}
 	if err := validateJSONLimit("invocation material", invocation, maxReceiptMaterialBytes); err != nil {
 		return RunResult{}, err
@@ -340,6 +353,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 	if storedResult, ok, err := materializeProviderResult(replay); err != nil {
 		return RunResult{}, err
 	} else if ok {
+		storedResult = normalizeProviderArtifactAuthority(storedResult)
 		artifacts := storedResult.Artifacts
 		if err := validateProviderResult(storedResult, invocation); err != nil {
 			return RunResult{}, err
@@ -402,6 +416,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 	if err := validateProviderResult(providerResult, invocation); err != nil {
 		return RunResult{}, err
 	}
+	providerResult = normalizeProviderArtifactAuthority(providerResult)
 	deadlinePassed := !e.now().Before(invocation.Deadline)
 	acknowledged := false
 	if deadlinePassed {
@@ -437,6 +452,13 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		return RunResult{}, err
 	}
 	return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: artifacts, AdmissionReplay: admissionReplay, Replay: replay}, nil
+}
+
+func normalizeProviderArtifactAuthority(result ProviderResult) ProviderResult {
+	for index := range result.Artifacts {
+		result.Artifacts[index].ApprovalState = contractsv1.ActionArtifactApprovalStatePending
+	}
+	return result
 }
 
 func providerAcknowledged(replay contractsv1.ReplayBundle, invocation Invocation, result ProviderResult) (bool, error) {
@@ -723,6 +745,11 @@ func MaterializeInvocation(bundle contractsv1.ReplayBundle) (Invocation, error) 
 	if err := VerifyCapabilityManifest(invocation.Capabilities); err != nil {
 		return Invocation{}, err
 	}
+	if len(invocation.Inputs) > 0 {
+		if err := verifyInvocationInputBinding(invocation); err != nil {
+			return Invocation{}, err
+		}
+	}
 	return invocation, nil
 }
 
@@ -772,16 +799,16 @@ func verifyDefinitionBinding(bundle contractsv1.ReplayBundle, admissionReplay *c
 	if err != nil || !reflect.DeepEqual(admission.Job, job) || !reflect.DeepEqual(admission.Campaign, campaign) || !reflect.DeepEqual(admission.Workflow, definition) || admission.Receipt.ReceiptHash != compileReceipt.InputHashes[1] {
 		return Invocation{}, errors.New("replay does not bind a canonical Workflow admission")
 	}
-	if (len(invocation.InputHashes) < 6 || len(invocation.InputHashes) > 8) || invocation.InputHashes[0] != compileReceipt.InputHashes[1] || invocation.InputHashes[1] != jobHash || invocation.InputHashes[2] != campaignHash ||
+	if len(invocation.InputHashes) < 6 || invocation.InputHashes[0] != compileReceipt.InputHashes[1] || invocation.InputHashes[1] != jobHash || invocation.InputHashes[2] != campaignHash ||
 		invocation.InputHashes[3] != compileReceipt.OutputHashes[0] || invocation.InputHashes[4] != invocation.Bundle.BundleHash ||
 		invocation.InputHashes[5] != invocation.Capabilities.ManifestHash || compileReceipt.InputHashes[0] != contractsv1.SHA256(identity.Hash) {
 		return Invocation{}, errors.New("replay does not bind the displayed definitions")
 	}
-	if len(invocation.InputHashes) >= 7 && (invocation.Isolation == nil || invocation.InputHashes[6] != invocation.Isolation.EvidenceHash || verifyProviderIsolation(*invocation.Isolation) != nil) {
-		return Invocation{}, errors.New("replay does not bind valid provider isolation evidence")
+	if err := verifyInvocationInputBinding(invocation); err != nil {
+		return Invocation{}, err
 	}
-	if len(invocation.InputHashes) == 8 && (invocation.ExecutorProfile == nil || invocation.InputHashes[7] != invocation.ExecutorProfile.ConfigHash || VerifyExecutorProfile(*invocation.ExecutorProfile) != nil) {
-		return Invocation{}, errors.New("replay does not bind a valid executor profile")
+	if err := validateInvocationProducerScope(invocation, campaign); err != nil {
+		return Invocation{}, err
 	}
 	return invocation, nil
 }
@@ -807,18 +834,77 @@ func contextPackByType(packs []contractsv1.ContextPackEdition, packType string) 
 	return contractsv1.ContextPackEdition{}, false
 }
 
-func validateReplayBinding(invocation Invocation, request RunRequest, compiled CompiledWorkflow, node CompiledNode, jobHash, campaignHash contractsv1.SHA256) error {
+func validateReplayBinding(invocation Invocation, request RunRequest, compiled CompiledWorkflow, node CompiledNode, jobHash, campaignHash contractsv1.SHA256, inputs []contractsv1.ActionArtifact) error {
 	if invocation.JobID != request.Job.Id || invocation.CampaignID != request.Campaign.Id || invocation.WorkflowRef != compiled.WorkflowRef || invocation.Node.Id != node.Definition.Id {
 		return errors.New("recorded invocation identity does not match redelivery")
 	}
-	if (len(invocation.InputHashes) < 6 || len(invocation.InputHashes) > 8) || invocation.InputHashes[1] != jobHash || invocation.InputHashes[2] != campaignHash || invocation.InputHashes[3] != compiled.CompileHash {
+	if len(invocation.InputHashes) < 6 || invocation.InputHashes[1] != jobHash || invocation.InputHashes[2] != campaignHash || invocation.InputHashes[3] != compiled.CompileHash {
 		return errors.New("recorded invocation inputs do not match redelivery")
 	}
-	if len(invocation.InputHashes) >= 7 && (invocation.Isolation == nil || invocation.InputHashes[6] != invocation.Isolation.EvidenceHash || verifyProviderIsolation(*invocation.Isolation) != nil) {
-		return errors.New("recorded invocation isolation evidence is invalid")
+	if len(inputs) != len(invocation.Inputs) || (len(inputs) > 0 && !reflect.DeepEqual(inputs, invocation.Inputs)) {
+		return errors.New("recorded invocation artifacts do not match redelivery")
 	}
-	if len(invocation.InputHashes) == 8 && (invocation.ExecutorProfile == nil || invocation.InputHashes[7] != invocation.ExecutorProfile.ConfigHash || VerifyExecutorProfile(*invocation.ExecutorProfile) != nil) {
-		return errors.New("recorded invocation executor profile is invalid")
+	if err := verifyInvocationInputBinding(invocation); err != nil {
+		return err
+	}
+	if err := validateInvocationProducerScope(invocation, request.Campaign); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateInvocationProducerScope(invocation Invocation, campaign contractsv1.CampaignDefinition) error {
+	current := -1
+	for index, ref := range campaign.WorkflowPlan {
+		if ref == invocation.WorkflowRef {
+			current = index
+			break
+		}
+	}
+	for _, artifact := range invocation.Inputs {
+		source := -1
+		for index, ref := range campaign.WorkflowPlan {
+			if ref == artifact.WorkflowRef {
+				source = index
+				break
+			}
+		}
+		direct := source == current && containsString(invocation.Node.DependsOn, string(artifact.NodeId))
+		if current < 0 || source < 0 || (source >= current && !direct) {
+			return errors.New("recorded invocation artifact producer is not an earlier pinned Workflow")
+		}
+	}
+	return nil
+}
+
+func verifyInvocationInputBinding(invocation Invocation) error {
+	index := 6
+	if invocation.Isolation != nil {
+		if len(invocation.InputHashes) <= index || invocation.InputHashes[index] != invocation.Isolation.EvidenceHash || verifyProviderIsolation(*invocation.Isolation) != nil {
+			return errors.New("recorded invocation isolation evidence is invalid")
+		}
+		index++
+	}
+	if invocation.ExecutorProfile != nil {
+		if len(invocation.InputHashes) <= index || invocation.InputHashes[index] != invocation.ExecutorProfile.ConfigHash || VerifyExecutorProfile(*invocation.ExecutorProfile) != nil {
+			return errors.New("recorded invocation executor profile is invalid")
+		}
+		index++
+	}
+	if len(invocation.InputHashes) != index+len(invocation.Inputs) {
+		return errors.New("recorded invocation artifact hashes are incomplete")
+	}
+	for offset, artifact := range invocation.Inputs {
+		if err := contract.ValidateDefinition("ActionArtifact", artifact); err != nil {
+			return err
+		}
+		hash, err := Digest(artifact.Content)
+		if err != nil || contractsv1.SHA256(hash) != artifact.ContentSha256 || invocation.InputHashes[index+offset] != artifact.ContentSha256 {
+			return errors.New("recorded invocation artifact hash is invalid")
+		}
+		if artifact.JobId != invocation.JobID || artifact.CampaignId != invocation.CampaignID || (artifact.ApprovalState != contractsv1.ActionArtifactApprovalStateApproved && artifact.ApprovalState != contractsv1.ActionArtifactApprovalStateNotRequired) {
+			return errors.New("recorded invocation artifact authority is invalid")
+		}
 	}
 	return nil
 }
