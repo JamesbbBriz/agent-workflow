@@ -12,13 +12,18 @@ import (
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
 
-// CampaignRuntime is the canonical whole-Workflow execution seam. Callers may
-// bound work per delivery, but they cannot select the next Node.
+// CampaignRuntime is the supported downstream embedding seam for canonical
+// whole-Workflow execution. Callers may bound work per delivery, but they
+// cannot select the next Node. Durable workers should Drive one transition per
+// delivery and treat a successful typed wait as state, not as a transport
+// error.
 type CampaignRuntime interface {
 	Preview(context.Context, CampaignRunRequest) (contractsv1.CampaignDrivePreview, error)
 	Drive(context.Context, CampaignDriveCommand) (contractsv1.CampaignDriveReceipt, error)
 	ReplayAt(context.Context, CampaignRef, ReceiptID, ReplayView) (CampaignReplay, error)
 }
+
+var _ CampaignRuntime = (*Engine)(nil)
 
 type CampaignRunRequest struct {
 	Job       contractsv1.JobDefinition

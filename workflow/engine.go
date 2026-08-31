@@ -95,9 +95,11 @@ type Ledger interface {
 	Replay(string) (contractsv1.ReplayBundle, error)
 }
 
-// AtomicLedger is required for provider execution so accepted results and
-// terminal state cannot be split by a crash. Basic Ledger implementations
-// remain readable for historical Replay.
+// AtomicLedger is required for canonical writes so a transition's receipts
+// cannot be split by a crash. Implementations must compare each receipt's
+// aggregate version and previous hash while committing the whole batch in one
+// transaction. A stale or conflicting batch must fail without a partial write.
+// Basic Ledger implementations remain readable for historical Replay.
 type AtomicLedger interface {
 	Ledger
 	AppendBatch([]contractsv1.Receipt) error
