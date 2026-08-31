@@ -151,6 +151,34 @@ func TestEngineRejectsUnadmittedWorkflowBeforeProviderExecution(t *testing.T) {
 	}
 }
 
+func TestEngineReusesCanonicalWorkflowAdmissionAcrossCampaigns(t *testing.T) {
+	definition := loadExample(t)
+	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := workflow.NewMemoryLedger()
+	first := workflow.RunRequest{Job: jobFixture(scope), Campaign: campaignFixture(scope, cutoff), Workflow: definition, NodeID: "research"}
+	admit(t, ledger, registry, first)
+	second := first
+	second.Job.Id = "job-b"
+	second.Campaign.Id = "campaign-b"
+	second.Campaign.JobId = second.Job.Id
+	provider := &memoProvider{results: make(map[string]workflow.ProviderResult)}
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, outputCatalog(), provider, ledger)
+	if _, err := engine.RunNode(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.RunNode(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+	if provider.work != 2 {
+		t.Fatalf("provider performed %d units of work, want one per Campaign", provider.work)
+	}
+}
+
 func TestEngineRejectsNonAtomicLedgerBeforeProviderExecution(t *testing.T) {
 	definition := loadExample(t)
 	cutoff := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)

@@ -769,7 +769,7 @@ func verifyDefinitionBinding(bundle contractsv1.ReplayBundle, admissionReplay *c
 		return Invocation{}, errors.New("replay compile receipt is incomplete")
 	}
 	admission, err := MaterializeAdmission(*admissionReplay, definition.Version)
-	if err != nil || !reflect.DeepEqual(admission.Job, job) || !reflect.DeepEqual(admission.Campaign, campaign) || !reflect.DeepEqual(admission.Workflow, definition) || admission.Receipt.ReceiptHash != compileReceipt.InputHashes[1] {
+	if err != nil || !reflect.DeepEqual(admission.Workflow, definition) || admission.Receipt.ReceiptHash != compileReceipt.InputHashes[1] {
 		return Invocation{}, errors.New("replay does not bind a canonical Workflow admission")
 	}
 	if (len(invocation.InputHashes) < 6 || len(invocation.InputHashes) > 8) || invocation.InputHashes[0] != compileReceipt.InputHashes[1] || invocation.InputHashes[1] != jobHash || invocation.InputHashes[2] != campaignHash ||
@@ -899,8 +899,8 @@ func (e *Engine) admissionForRun(request RunRequest) (contractsv1.WorkflowAdmiss
 	if err != nil {
 		return contractsv1.WorkflowAdmission{}, contractsv1.ReplayBundle{}, err
 	}
-	if !reflect.DeepEqual(admission.Job, request.Job) || !reflect.DeepEqual(admission.Campaign, request.Campaign) || !reflect.DeepEqual(admission.Workflow, request.Workflow) {
-		return contractsv1.WorkflowAdmission{}, contractsv1.ReplayBundle{}, errors.New("Workflow admission does not bind this Job and Campaign")
+	if !reflect.DeepEqual(admission.Workflow, request.Workflow) {
+		return contractsv1.WorkflowAdmission{}, contractsv1.ReplayBundle{}, errors.New("Workflow admission does not bind this Workflow definition")
 	}
 	return admission, replay, nil
 }
