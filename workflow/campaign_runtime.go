@@ -847,6 +847,9 @@ func (e *Engine) resolveNodeInputs(prepared preparedCampaign, current preparedWo
 				}
 				for _, artifact := range material.Artifacts {
 					if artifact.ArtifactType == input.ArtifactType && artifact.WorkflowRef == producer.workflow.compiled.WorkflowRef && string(artifact.NodeId) == producerNodeID {
+						if node.Definition.Kind != contractsv1.NodeDefinitionKindApproval {
+							artifact.ApprovalState = contractsv1.ActionArtifactApprovalStateNotRequired
+						}
 						artifacts = append(artifacts, artifact)
 					}
 				}

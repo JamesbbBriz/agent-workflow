@@ -64,6 +64,14 @@ func TestInvocationRejectsUnapprovedArtifactInput(t *testing.T) {
 	}
 }
 
+func TestProviderCannotAssertArtifactAuthority(t *testing.T) {
+	result := ProviderResult{Artifacts: []contractsv1.ActionArtifact{{ApprovalState: contractsv1.ActionArtifactApprovalStateApproved}}}
+	normalized := normalizeProviderArtifactAuthority(result)
+	if normalized.Artifacts[0].ApprovalState != contractsv1.ActionArtifactApprovalStatePending {
+		t.Fatalf("provider authority survived normalization: %s", normalized.Artifacts[0].ApprovalState)
+	}
+}
+
 func TestInvocationRejectsArtifactFromNonEarlierWorkflow(t *testing.T) {
 	invocation := Invocation{
 		WorkflowRef: "current@1",

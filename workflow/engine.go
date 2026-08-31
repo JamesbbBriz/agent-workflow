@@ -353,6 +353,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 	if storedResult, ok, err := materializeProviderResult(replay); err != nil {
 		return RunResult{}, err
 	} else if ok {
+		storedResult = normalizeProviderArtifactAuthority(storedResult)
 		artifacts := storedResult.Artifacts
 		if err := validateProviderResult(storedResult, invocation); err != nil {
 			return RunResult{}, err
@@ -415,6 +416,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 	if err := validateProviderResult(providerResult, invocation); err != nil {
 		return RunResult{}, err
 	}
+	providerResult = normalizeProviderArtifactAuthority(providerResult)
 	deadlinePassed := !e.now().Before(invocation.Deadline)
 	acknowledged := false
 	if deadlinePassed {
@@ -450,6 +452,13 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		return RunResult{}, err
 	}
 	return RunResult{Compiled: compiled, Bundle: invocation.Bundle, Artifacts: artifacts, AdmissionReplay: admissionReplay, Replay: replay}, nil
+}
+
+func normalizeProviderArtifactAuthority(result ProviderResult) ProviderResult {
+	for index := range result.Artifacts {
+		result.Artifacts[index].ApprovalState = contractsv1.ActionArtifactApprovalStatePending
+	}
+	return result
 }
 
 func providerAcknowledged(replay contractsv1.ReplayBundle, invocation Invocation, result ProviderResult) (bool, error) {
