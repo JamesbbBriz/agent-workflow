@@ -2,7 +2,10 @@
 
 Agent Workflow is an auditable control plane for context-bound Agent work. Humans define a long-lived **Job**, admit bounded **Campaigns**, and run immutable **Workflow** DAGs. Every **Node** receives an exact Context Bundle and Capability Manifest; every accepted transition produces a hash-bound receipt and Replay trail.
 
-It is being field-tested by a separate commercial SEO product in a live 200-hour run across 4 Jobs, 4 keyword clusters, and 30 canonical keywords. The completed evidence report—not the runtime duration alone—will support the public proof claim.
+A separate commercial SEO product is preparing a fresh 200-hour field test
+across 4 Jobs, 4 keyword clusters, and 30 canonical keywords after runtime
+convergence. Only the completed evidence report—not planned duration or setup—
+will support the public proof claim.
 
 This repository is the domain-neutral Core extracted from patterns dogfooded in [SEO Ops](https://github.com/JamesbbBriz/seo-ops). It does not copy SEO workflows or create another SEO state machine.
 
@@ -187,11 +190,11 @@ The Go Core is the only canonical mutation authority. Storage, provider Agents, 
 
 `CampaignRuntime.ReplayAt` reads one exact receipt prefix as raw diagnostic data or as the `public_metadata@1` redacted projection. `ChangeCaseCore` coordinates completed Campaign Node proposals against one exact Resource generation, then requires deterministic merge/conflict handling, exact approval, one Mutation Lease, apply evidence, and matching readback. `NewSubprocessProvider` is the Linux reference production isolation seam; its staged root must contain read-only `input/` and the single bounded writable file `output/result`. Ordinary in-process providers remain explicitly trusted/testing adapters, and a production Engine can reject them with `RequireProviderIsolation(staged_subprocess)` before Campaign admission. Platforms without Bubblewrap PID-namespace containment fail closed.
 
-See [Architecture](docs/architecture.md), [Security](SECURITY.md), [Compatibility](COMPATIBILITY.md), and [Contributing](CONTRIBUTING.md).
+See [Architecture](docs/architecture.md), [supported runtime embedding](docs/supported-runtime-embedding.md), [Runtime Convergence V0.9](docs/runtime-convergence-v0.9.md), [Security](SECURITY.md), [Compatibility](COMPATIBILITY.md), and [Contributing](CONTRIBUTING.md).
 
 ## Status
 
-The v1 definitions plus versioned Campaign execution, Context recovery, approvals/waits, multi-Campaign Builder/Canvas, exact-cutoff redacted Replay, reference provider isolation, domain-neutral Change Case coordination, five bundled Agent Runner bridges, CLI-first project path, Evidence report, and optional single-binary React GUI are implemented. SEO Ops consumes the released conformance contract from its own repository without importing this runtime. WebMCP is not a Core dependency.
+The v1 definitions plus versioned Campaign execution, Context recovery, approvals/waits, multi-Campaign Builder/Canvas, exact-cutoff redacted Replay, reference provider isolation, domain-neutral Change Case coordination, five bundled Agent Runner bridges, CLI-first project path, Evidence report, and optional single-binary React GUI are implemented. SEO Ops currently consumes the released conformance contract; direct runtime import follows the five-PR V0.9 migration. WebMCP is not a Core dependency.
 
 ## License
 
