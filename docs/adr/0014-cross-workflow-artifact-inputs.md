@@ -17,6 +17,8 @@ hashes participate in the idempotency key, `input_hashes`, redelivery checks,
 and public Replay verification. Only `approved` and `not_required` artifacts
 may reach a provider. Pending artifacts remain reserved for an Approval Node;
 rejected and stale artifacts fail before provider start.
+Core-owned deterministic, wait, and terminal Nodes cannot declare Action
+Artifact outputs because they have no canonical artifact materialization path.
 
 The field is optional in the v1 JSON contract so existing Workflow documents
 and historical input-free Replays remain valid. No second artifact store or

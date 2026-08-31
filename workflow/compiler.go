@@ -239,6 +239,9 @@ func validateSlotFlow(definition contractsv1.WorkflowDefinition) error {
 		workflowInputs[string(input.Id)] = input
 	}
 	for _, node := range definition.Nodes {
+		if len(node.OutputSlots) > 0 && !nodeUsesProvider(node) && node.Kind != contractsv1.NodeDefinitionKindApproval {
+			return fmt.Errorf("core-owned node %q cannot declare Action Artifact outputs", node.Id)
+		}
 		outputTypes := make(map[contractsv1.Identifier]struct{}, len(node.OutputSlots))
 		for _, output := range node.OutputSlots {
 			if output.ArtifactKind == nil || output.ContentSchema == nil || len(output.Consumers) == 0 {

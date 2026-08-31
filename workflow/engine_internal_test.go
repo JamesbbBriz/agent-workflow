@@ -7,6 +7,18 @@ import (
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
 
+func TestCompilerRejectsCoreOwnedActionOutputs(t *testing.T) {
+	kind := contractsv1.SlotArtifactKindActionArtifact
+	schema := contractsv1.WorkflowRef("result@1")
+	definition := contractsv1.WorkflowDefinition{Nodes: []contractsv1.NodeDefinition{{
+		Id: "core", Kind: contractsv1.NodeDefinitionKindDeterministic,
+		OutputSlots: []contractsv1.Slot{{Id: "result", ArtifactType: "result", ArtifactKind: &kind, ContentSchema: &schema, Consumers: []string{"workflow-output"}, MaxItems: 1}},
+	}}}
+	if err := validateSlotFlow(definition); err == nil || !strings.Contains(err.Error(), "core-owned") {
+		t.Fatalf("core-owned output survived compile: %v", err)
+	}
+}
+
 func TestCandidateSlotRejectsBatchedRecordsInOneArtifact(t *testing.T) {
 	content := []any{map[string]any{"candidate": "a"}, map[string]any{"candidate": "b"}}
 	hash, err := Digest(content)
