@@ -224,7 +224,7 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 		if !ok {
 			return contractsv1.CampaignDriveReceipt{}, errors.New("derived Node is absent from the compiled Campaign plan")
 		}
-		if node.Definition.Kind != contractsv1.NodeDefinitionKindAgent {
+		if !nodeUsesProvider(node.Definition) {
 			advanced, err := e.driveCoreNode(command, state, *replay, prepared, workflow, node)
 			if err != nil {
 				return contractsv1.CampaignDriveReceipt{}, err
@@ -590,7 +590,7 @@ func (e *Engine) reserveCampaignAttempt(state *contractsv1.CampaignExecutionStat
 }
 
 func (e *Engine) completeCampaignNode(state *contractsv1.CampaignExecutionState, replay contractsv1.ReplayBundle, workflowRef contractsv1.WorkflowRef, nodeID string, material ReplayMaterial, childReplay contractsv1.ReplayBundle) error {
-	_, ok, err := materializeProviderResult(childReplay)
+	result, ok, err := materializeProviderResult(childReplay)
 	if err != nil {
 		return err
 	}
@@ -604,11 +604,16 @@ func (e *Engine) completeCampaignNode(state *contractsv1.CampaignExecutionState,
 		duration = int(math.Ceil(completedAt.Sub(*startedAt).Seconds()))
 	}
 	usage := contractsv1.CampaignExecutionUsage{Attempts: 1, Actions: len(material.Artifacts), Candidates: artifactCandidateCount(material.Artifacts, material.Invocation.Node.OutputSlots), DurationSeconds: duration}
-	status := contractsv1.CampaignNodeExecutionStatusCompleted
-	if len(material.Artifacts) == 0 {
-		status = contractsv1.CampaignNodeExecutionStatusCompletedNoAction
+	status := providerOutcome(result)
+	route, err := providerRoute(result, material.Invocation.Node)
+	if err != nil {
+		return err
 	}
-	return e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeNodeCompleted, completedAt, []contractsv1.SHA256{material.Invocation.Bundle.BundleHash}, []contractsv1.SHA256{childReplay.BundleHash}, map[string]any{"workflow_ref": workflowRef, "node_id": nodeID, "status": status, "usage": usage, "completed_at": completedAt, "result_replay_hash": childReplay.BundleHash})
+	payload := map[string]any{"workflow_ref": workflowRef, "node_id": nodeID, "status": status, "route": route, "usage": usage, "completed_at": completedAt, "result_replay_hash": childReplay.BundleHash}
+	if result.BlockerCode != nil {
+		payload["blocker_code"] = *result.BlockerCode
+	}
+	return e.appendCampaignEvent(replay, contractsv1.ReceiptReceiptTypeNodeCompleted, completedAt, []contractsv1.SHA256{material.Invocation.Bundle.BundleHash}, []contractsv1.SHA256{childReplay.BundleHash}, payload)
 }
 
 func (e *Engine) exhaustCampaignNode(state *contractsv1.CampaignExecutionState, replay contractsv1.ReplayBundle, workflowRef contractsv1.WorkflowRef, nodeID string, code contractsv1.Identifier, childReplay *contractsv1.ReplayBundle) error {
@@ -945,7 +950,7 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			node := nodeStatePtr(&state, payload.WorkflowRef, string(payload.NodeId))
 			_, definition, exists := preparedNode(prepared, payload.WorkflowRef, string(payload.NodeId))
 			resolved := resolvedContext{Bundle: payload.Bundle, Packs: payload.Packs}
-			if node == nil || !exists || !campaignNodeReadyForContext(state, prepared, payload.WorkflowRef, string(payload.NodeId)) || definition.Definition.Kind != contractsv1.NodeDefinitionKindAgent || validateRecordedContextForNode(resolved, definition, prepared.request.Campaign.Scope, prepared.request.Campaign.EvidenceFrontier.Cutoff) != nil || payload.Bundle.JobId != state.JobId || payload.Bundle.CampaignId != state.CampaignId || payload.Bundle.WorkflowRef != payload.WorkflowRef || payload.Bundle.NodeId != payload.NodeId || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) {
+			if node == nil || !exists || !campaignNodeReadyForContext(state, prepared, payload.WorkflowRef, string(payload.NodeId)) || !nodeUsesProvider(definition.Definition) || validateRecordedContextForNode(resolved, definition, prepared.request.Campaign.Scope, prepared.request.Campaign.EvidenceFrontier.Cutoff) != nil || payload.Bundle.JobId != state.JobId || payload.Bundle.CampaignId != state.CampaignId || payload.Bundle.WorkflowRef != payload.WorkflowRef || payload.Bundle.NodeId != payload.NodeId || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.Bundle.BundleHash}) {
 				return state, errors.New("Campaign Context transition binding is invalid")
 			}
 			if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeContextBound {
@@ -977,7 +982,7 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 				Requirements []string
 				Reasons      map[string]string
 			}{payload.WorkflowRef, string(payload.NodeId), []string(payload.Requirements), reasons})
-			if err != nil || node == nil || !exists || definition.Definition.Kind != contractsv1.NodeDefinitionKindAgent || !campaignNodeReadyForContext(state, prepared, payload.WorkflowRef, string(payload.NodeId)) || contractsv1.SHA256(fingerprint) != payload.BlockerFingerprint || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{state.CampaignHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.BlockerFingerprint}) {
+			if err != nil || node == nil || !exists || !nodeUsesProvider(definition.Definition) || !campaignNodeReadyForContext(state, prepared, payload.WorkflowRef, string(payload.NodeId)) || contractsv1.SHA256(fingerprint) != payload.BlockerFingerprint || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{state.CampaignHash}) || !reflect.DeepEqual(receipt.OutputHashes, []contractsv1.SHA256{payload.BlockerFingerprint}) {
 				return state, errors.New("Campaign needs_context binding is invalid")
 			}
 			node.Status, node.BlockerFingerprint, node.ContextBundleHash = contractsv1.CampaignNodeExecutionStatusNeedsContext, &payload.BlockerFingerprint, nil
@@ -1131,7 +1136,7 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 				return state, err
 			}
 			node := nodeStatePtr(&state, workflowRef, nodeID)
-			if node == nil || node.Status != contractsv1.CampaignNodeExecutionStatusRunning || (status != contractsv1.CampaignNodeExecutionStatusCompleted && status != contractsv1.CampaignNodeExecutionStatusCompletedNoAction) || usage.Attempts != 1 {
+			if node == nil || node.Status != contractsv1.CampaignNodeExecutionStatusRunning || (status != contractsv1.CampaignNodeExecutionStatusCompleted && status != contractsv1.CampaignNodeExecutionStatusCompletedNoAction && status != contractsv1.CampaignNodeExecutionStatusBlocked) || usage.Attempts != 1 {
 				return state, errors.New("Campaign Node completion is not eligible")
 			}
 			workflow, ok := preparedWorkflowByRef(prepared, workflowRef)
@@ -1158,19 +1163,39 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			if err != nil {
 				return state, err
 			}
-			_, hasResult, err := materializeProviderResult(childReplay)
+			providerResult, hasResult, err := materializeProviderResult(childReplay)
+			route, routeErr := providerRoute(providerResult, invocation.Node)
 			duration := 0
 			if node.StartedAt != nil && completedAt.After(*node.StartedAt) {
 				duration = int(math.Ceil(completedAt.Sub(*node.StartedAt).Seconds()))
 			}
-			if err != nil || !hasResult || !completedAt.Equal(receipt.OccurredAt) || usage.Actions != len(material.Artifacts) || usage.Candidates != artifactCandidateCount(material.Artifacts, invocation.Node.OutputSlots) || usage.DurationSeconds != duration {
+			if err != nil || !hasResult || routeErr != nil || validateProviderResult(providerResult, invocation) != nil || providerOutcome(providerResult) != status || !completedAt.Equal(receipt.OccurredAt) || usage.Actions != len(material.Artifacts) || usage.Candidates != artifactCandidateCount(material.Artifacts, invocation.Node.OutputSlots) || usage.DurationSeconds != duration {
 				return state, errors.New("Campaign Node completion usage does not match the child Replay")
+			}
+			if raw, exists := receipt.Payload["route"]; exists {
+				var recorded contractsv1.NodeOutcomeRoute
+				if err := decodePayload(raw, &recorded); err != nil || recorded != route {
+					return state, errors.New("Campaign Node route does not match the child Replay")
+				}
+			} else if providerResult.Outcome != "" {
+				return state, errors.New("legacy Campaign completion cannot acquire an explicit route")
+			}
+			if status == contractsv1.CampaignNodeExecutionStatusBlocked {
+				var blocker contractsv1.Identifier
+				if err := decodePayload(receipt.Payload["blocker_code"], &blocker); err != nil || providerResult.BlockerCode == nil || blocker != *providerResult.BlockerCode {
+					return state, errors.New("Campaign Node blocker does not match the child Replay")
+				}
+				node.BlockerCode = &blocker
+				state.Status, state.BlockerCode = contractsv1.CampaignExecutionStateStatusBlocked, &blocker
 			}
 			node.Status, node.CompletedAt, node.ResultReplayHash = status, &completedAt, &replayHash
 			node.Usage.Actions, node.Usage.Candidates, node.Usage.DurationSeconds = usage.Actions, usage.Candidates, usage.DurationSeconds
 			state.Usage.Actions += usage.Actions
 			state.Usage.Candidates += usage.Candidates
 			state.Usage.DurationSeconds += usage.DurationSeconds
+			if route == contractsv1.NodeOutcomeRouteCompleteBranch {
+				markCampaignBranchSkipped(&state, prepared, workflowRef, nodeID)
+			}
 		case contractsv1.ReceiptReceiptTypeBudgetExhausted:
 			var workflowRef contractsv1.WorkflowRef
 			var nodeID string
@@ -1232,7 +1257,7 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 					}
 				} else {
 					result, ok, err := materializeProviderResult(childReplay)
-					if err != nil || !ok || validateProviderResult(result, invocation) != nil || validateArtifactContracts(result.Artifacts, invocation, e.outputs) != nil {
+					if err != nil || !ok || validateProviderResult(result, invocation) != nil || validateArtifactContracts(result.Artifacts, invocation, e.outputs, providerOutcome(result) != contractsv1.CampaignNodeExecutionStatusBlocked) != nil {
 						return state, errors.New("Campaign budget exhaustion child result is invalid")
 					}
 					remaining, actual := remainingBudgetAt(state, prepared.request.Campaign.Budget, workflowRef, definition.Definition, receipt.OccurredAt)
@@ -1390,7 +1415,7 @@ func workflowCompleted(state contractsv1.CampaignExecutionState, ref contractsv1
 			continue
 		}
 		found = true
-		if node.Status != contractsv1.CampaignNodeExecutionStatusCompleted && node.Status != contractsv1.CampaignNodeExecutionStatusCompletedNoAction {
+		if node.Status != contractsv1.CampaignNodeExecutionStatusCompleted && node.Status != contractsv1.CampaignNodeExecutionStatusCompletedNoAction && node.Status != contractsv1.CampaignNodeExecutionStatusSkipped {
 			return false
 		}
 	}
@@ -1534,9 +1559,37 @@ func nodeCompletedReplay(replay contractsv1.ReplayBundle) bool {
 
 func allNodesCompleted(state contractsv1.CampaignExecutionState) bool {
 	for _, node := range state.Nodes {
-		if node.Status != contractsv1.CampaignNodeExecutionStatusCompleted && node.Status != contractsv1.CampaignNodeExecutionStatusCompletedNoAction {
+		if node.Status != contractsv1.CampaignNodeExecutionStatusCompleted && node.Status != contractsv1.CampaignNodeExecutionStatusCompletedNoAction && node.Status != contractsv1.CampaignNodeExecutionStatusSkipped {
 			return false
 		}
 	}
 	return true
+}
+
+func markCampaignBranchSkipped(state *contractsv1.CampaignExecutionState, prepared preparedCampaign, ref contractsv1.WorkflowRef, completedNodeID string) {
+	skipped := map[string]bool{completedNodeID: true}
+	for changed := true; changed; {
+		changed = false
+		for _, workflow := range prepared.workflows {
+			if workflow.compiled.WorkflowRef != ref {
+				continue
+			}
+			for _, compiled := range workflow.compiled.Nodes {
+				id := string(compiled.Definition.Id)
+				if skipped[id] {
+					continue
+				}
+				for _, dependency := range compiled.Definition.DependsOn {
+					if skipped[dependency] {
+						node := nodeStatePtr(state, ref, id)
+						if node != nil && node.Status == contractsv1.CampaignNodeExecutionStatusPending {
+							node.Status = contractsv1.CampaignNodeExecutionStatusSkipped
+						}
+						skipped[id], changed = true, true
+						break
+					}
+				}
+			}
+		}
+	}
 }

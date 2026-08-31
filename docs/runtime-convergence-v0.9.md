@@ -84,6 +84,9 @@ Repository: Agent Workflow.
 - document atomic compare-and-append and durable redelivery obligations;
 - rely on the existing external-package tests for Preview, bounded Drive,
   Context recovery, approval/wait, provider retry, and exact Replay;
+- let deterministic product effects opt into provider execution and bind an
+  explicit completed, no-action, or blocked outcome plus its Core-declared
+  route to the child Replay;
 - preserve all existing hashes, fixtures, CLI, GUI, and provider behavior.
 
 ### PR 2: read-only shadow parity

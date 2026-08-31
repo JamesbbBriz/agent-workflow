@@ -27,7 +27,7 @@ func TestCandidateSlotRejectsBatchedRecordsInOneArtifact(t *testing.T) {
 		JobId: invocation.JobID, CampaignId: invocation.CampaignID, WorkflowRef: invocation.WorkflowRef, NodeId: invocation.Node.Id,
 		InputHashes: invocation.InputHashes, Content: content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: contractsv1.ActionArtifactApprovalStatePending,
 	}
-	err = validateArtifacts([]contractsv1.ActionArtifact{artifact}, invocation, OutputCatalog{"candidate@1": func(any) error { return nil }})
+	err = validateArtifacts([]contractsv1.ActionArtifact{artifact}, invocation, OutputCatalog{"candidate@1": func(any) error { return nil }}, true)
 	if err == nil || !strings.Contains(err.Error(), "one Action Artifact per candidate") {
 		t.Fatalf("batched candidates crossed the budget boundary: %v", err)
 	}

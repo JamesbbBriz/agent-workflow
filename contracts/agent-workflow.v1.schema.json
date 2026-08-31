@@ -48,6 +48,15 @@
       "items": { "type": "string", "minLength": 1, "maxLength": 500 },
       "uniqueItems": true
     },
+    "NodeOutcomeRoute": {
+      "type": "string",
+      "enum": ["continue", "complete_branch", "stop"]
+    },
+    "NodeOutcomeRoutes": {
+      "type": "object",
+      "propertyNames": { "enum": ["completed", "completed_no_action", "blocked"] },
+      "additionalProperties": { "$ref": "#/$defs/NodeOutcomeRoute" }
+    },
     "Budget": {
       "type": "object",
       "additionalProperties": false,
@@ -110,6 +119,8 @@
       "properties": {
         "id": { "$ref": "#/$defs/Identifier" },
         "kind": { "enum": ["deterministic", "agent", "approval", "wait", "terminal"] },
+        "execution_mode": { "enum": ["core", "provider"] },
+        "outcome_routes": { "$ref": "#/$defs/NodeOutcomeRoutes" },
         "executor": { "type": "string", "pattern": "^[a-z][a-z0-9-]*@[1-9][0-9]*$" },
         "depends_on": { "$ref": "#/$defs/Strings" },
         "context": { "type": "array", "items": { "$ref": "#/$defs/ContextRequirement" } },
@@ -485,10 +496,12 @@
       "properties": {
         "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
         "node_id": { "$ref": "#/$defs/Identifier" },
-        "status": { "enum": ["completed", "completed_no_action"] },
+        "status": { "enum": ["completed", "completed_no_action", "blocked"] },
         "usage": { "$ref": "#/$defs/CampaignExecutionUsage" },
         "completed_at": { "type": "string", "format": "date-time" },
-        "result_replay_hash": { "$ref": "#/$defs/SHA256" }
+        "result_replay_hash": { "$ref": "#/$defs/SHA256" },
+        "route": { "$ref": "#/$defs/NodeOutcomeRoute" },
+        "blocker_code": { "$ref": "#/$defs/Identifier" }
       }
     },
     "BudgetExhaustedEventPayload": {
@@ -603,6 +616,9 @@
         "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 200 },
         "completed_at": { "type": "string", "format": "date-time" },
         "isolation": { "$ref": "#/$defs/ProviderIsolationEvidence" },
+        "outcome": { "enum": ["completed", "completed_no_action", "blocked"] },
+        "route": { "$ref": "#/$defs/NodeOutcomeRoute" },
+        "blocker_code": { "$ref": "#/$defs/Identifier" },
         "executor_profile": { "$ref": "#/$defs/ExecutorProfile" },
         "provider_run": { "$ref": "#/$defs/ProviderRunRef" },
         "provider_events": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/$defs/ProviderEvent" } },
@@ -964,7 +980,7 @@
       "properties": {
         "workflow_ref": { "$ref": "#/$defs/WorkflowRef" },
         "node_id": { "$ref": "#/$defs/Identifier" },
-        "status": { "enum": ["pending", "needs_context", "running", "awaiting_approval", "waiting", "completed", "completed_no_action", "blocked", "budget_exhausted"] },
+        "status": { "enum": ["pending", "needs_context", "running", "awaiting_approval", "waiting", "completed", "completed_no_action", "skipped", "blocked", "budget_exhausted"] },
         "usage": { "$ref": "#/$defs/CampaignExecutionUsage" },
         "started_at": { "type": "string", "format": "date-time" },
         "completed_at": { "type": "string", "format": "date-time" },

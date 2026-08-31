@@ -329,6 +329,25 @@ func validateWorkflowSemantics(workflow contractsv1.WorkflowDefinition) error {
 }
 
 func validateNodeKind(node contractsv1.NodeDefinition) error {
+	providerOwned := node.ExecutionMode != nil && *node.ExecutionMode == contractsv1.NodeDefinitionExecutionModeProvider
+	usesProvider := providerOwned || node.Kind == contractsv1.NodeDefinitionKindAgent
+	if providerOwned && node.Kind != contractsv1.NodeDefinitionKindAgent && node.Kind != contractsv1.NodeDefinitionKindDeterministic {
+		return errors.New("provider execution is only valid on agent and deterministic nodes")
+	}
+	if node.Kind == contractsv1.NodeDefinitionKindAgent && node.ExecutionMode != nil && !providerOwned {
+		return errors.New("agent nodes must use provider execution")
+	}
+	if len(node.OutcomeRoutes) > 0 && !usesProvider {
+		return errors.New("outcome_routes are only valid on provider-owned nodes")
+	}
+	for outcome, route := range node.OutcomeRoutes {
+		valid := outcome == string(contractsv1.CampaignNodeExecutionStatusCompleted) && route == contractsv1.NodeOutcomeRouteContinue ||
+			outcome == string(contractsv1.CampaignNodeExecutionStatusCompletedNoAction) && (route == contractsv1.NodeOutcomeRouteContinue || route == contractsv1.NodeOutcomeRouteCompleteBranch) ||
+			outcome == string(contractsv1.CampaignNodeExecutionStatusBlocked) && route == contractsv1.NodeOutcomeRouteStop
+		if !valid {
+			return errors.New("outcome_routes contains an invalid outcome and route pair")
+		}
+	}
 	if node.Kind == contractsv1.NodeDefinitionKindWait {
 		if node.WaitMode == nil {
 			return errors.New("wait node requires wait_mode")
@@ -352,8 +371,8 @@ func validateNodeKind(node contractsv1.NodeDefinition) error {
 	if node.Kind != contractsv1.NodeDefinitionKindApproval && node.ApprovalPolicy != nil {
 		return errors.New("approval_policy is only valid on approval nodes")
 	}
-	if (node.Kind == contractsv1.NodeDefinitionKindDeterministic || node.Kind == contractsv1.NodeDefinitionKindTerminal) && len(node.OutputSlots) != 0 {
-		return errors.New("built-in deterministic and terminal nodes cannot declare outputs")
+	if ((node.Kind == contractsv1.NodeDefinitionKindDeterministic && !providerOwned) || node.Kind == contractsv1.NodeDefinitionKindTerminal) && len(node.OutputSlots) != 0 {
+		return errors.New("Core-owned deterministic and terminal nodes cannot declare outputs")
 	}
 	return nil
 }
