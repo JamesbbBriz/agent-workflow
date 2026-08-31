@@ -349,6 +349,7 @@ func TestCampaignRuntimeExecutesEveryPinnedWorkflowInOrder(t *testing.T) {
 	second := first
 	second.Id = "follow-up-review"
 	second.Intent.Title = "Follow-up review"
+	second.Nodes = append([]contractsv1.NodeDefinition(nil), first.Nodes...)
 	job := jobFixture(scope)
 	campaign := campaignFixture(scope, cutoff)
 	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@1", "follow-up-review@1"}
@@ -368,6 +369,80 @@ func TestCampaignRuntimeExecutesEveryPinnedWorkflowInOrder(t *testing.T) {
 	}
 	if receipt.State.Nodes[0].WorkflowRef != "research-review@1" || receipt.State.Nodes[1].WorkflowRef != "follow-up-review@1" {
 		t.Fatalf("same-named Nodes lost their Workflow identity: %+v", receipt.State.Nodes)
+	}
+}
+
+func TestCampaignRuntimeBindsPriorWorkflowOutputAsInvocationInput(t *testing.T) {
+	t.Parallel()
+	cutoff := time.Now().UTC().Add(-time.Hour)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := loadExample(t)
+	first.Nodes = first.Nodes[:1]
+	first.Nodes[0].OutputSlots[0].Consumers = []string{"workflow-output"}
+	first.Outputs = append([]contractsv1.Slot(nil), first.Nodes[0].OutputSlots...)
+	first.Outputs[0].Consumers = append([]string(nil), first.Intent.Consumers...)
+	second := first
+	second.Id = "follow-up-review"
+	second.Intent.Title = "Follow-up review"
+	second.Nodes = append([]contractsv1.NodeDefinition(nil), first.Nodes...)
+	input := first.Outputs[0]
+	input.Id = "research-input"
+	input.Consumers = []string{"research"}
+	second.Inputs = []contractsv1.Slot{input}
+	second.Nodes[0].InputSlots = []contractsv1.Slot{input}
+	job := jobFixture(scope)
+	campaign := campaignFixture(scope, cutoff)
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@1", "follow-up-review@1"}
+	campaign.Budget = contractsv1.Budget{MaxAttempts: 2, MaxActions: 2, MaxCandidates: 2}
+	ledger := workflow.NewMemoryLedger()
+	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: first, NodeID: "research"})
+	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: second, NodeID: "research"})
+	provider := &dagProvider{results: map[string]workflow.ProviderResult{}, approvalState: contractsv1.ActionArtifactApprovalStateNotRequired}
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger)
+
+	receipt, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflows: []contractsv1.WorkflowDefinition{first, second}}, MaxTransitions: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.State.Status != contractsv1.CampaignExecutionStateStatusCompleted || len(provider.invocations) != 2 {
+		t.Fatalf("Campaign did not complete both Workflows: state=%+v invocations=%d", receipt.State, len(provider.invocations))
+	}
+	upstream := provider.results[provider.invocations[0].IdempotencyKey].Artifacts[0]
+	downstream := provider.invocations[1]
+	if len(downstream.Inputs) != 1 || downstream.Inputs[0].ContentSha256 != upstream.ContentSha256 || !containsHash(downstream.InputHashes, upstream.ContentSha256) {
+		t.Fatalf("downstream invocation did not bind the exact upstream artifact: input=%+v hashes=%+v upstream=%+v", downstream.Inputs, downstream.InputHashes, upstream)
+	}
+}
+
+func TestCampaignPreviewRejectsMissingWorkflowInputProducer(t *testing.T) {
+	t.Parallel()
+	cutoff := time.Now().UTC().Add(-time.Hour)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := loadExample(t)
+	definition.Nodes = definition.Nodes[:1]
+	definition.Nodes[0].OutputSlots[0].Consumers = []string{"workflow-output"}
+	definition.Outputs = append([]contractsv1.Slot(nil), definition.Nodes[0].OutputSlots...)
+	definition.Outputs[0].Consumers = append([]string(nil), definition.Intent.Consumers...)
+	input := definition.Nodes[0].OutputSlots[0]
+	input.Consumers = []string{"research"}
+	definition.Inputs = []contractsv1.Slot{input}
+	definition.Nodes[0].InputSlots = []contractsv1.Slot{input}
+	job, campaign := jobFixture(scope), campaignFixture(scope, cutoff)
+	ledger := workflow.NewMemoryLedger()
+	admit(t, ledger, registry, workflow.RunRequest{Job: job, Campaign: campaign, Workflow: definition, NodeID: "research"})
+	provider := &dagProvider{results: map[string]workflow.ProviderResult{}}
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger)
+
+	if _, err := engine.Preview(context.Background(), workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}); err == nil || !strings.Contains(err.Error(), "no earlier Workflow producer") || provider.starts != 0 {
+		t.Fatalf("missing cross-Workflow source reached runtime: err=%v starts=%d", err, provider.starts)
 	}
 }
 
@@ -639,6 +714,8 @@ type dagProvider struct {
 	starts           int
 	artifactsPerNode int
 	results          map[string]workflow.ProviderResult
+	invocations      []workflow.Invocation
+	approvalState    contractsv1.ActionArtifactApprovalState
 	outcomes         map[string]contractsv1.CampaignNodeExecutionStatus
 	blockers         map[string]*contractsv1.Identifier
 	empty            map[string]bool
@@ -649,6 +726,7 @@ func (p *dagProvider) Start(_ context.Context, invocation workflow.Invocation) e
 		return nil
 	}
 	p.starts++
+	p.invocations = append(p.invocations, invocation)
 	count := p.artifactsPerNode
 	if count == 0 && !p.empty[string(invocation.Node.Id)] {
 		count = 1
@@ -663,7 +741,11 @@ func (p *dagProvider) Start(_ context.Context, invocation workflow.Invocation) e
 		if err != nil {
 			return err
 		}
-		artifacts = append(artifacts, contractsv1.ActionArtifact{Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: fmtID(artifactType, index), ArtifactType: contractsv1.Identifier(artifactType), JobId: invocation.JobID, CampaignId: invocation.CampaignID, WorkflowRef: invocation.WorkflowRef, NodeId: invocation.Node.Id, InputHashes: invocation.InputHashes, Content: content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: contractsv1.ActionArtifactApprovalStatePending})
+		state := p.approvalState
+		if state == "" {
+			state = contractsv1.ActionArtifactApprovalStatePending
+		}
+		artifacts = append(artifacts, contractsv1.ActionArtifact{Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: fmtID(artifactType, index), ArtifactType: contractsv1.Identifier(artifactType), JobId: invocation.JobID, CampaignId: invocation.CampaignID, WorkflowRef: invocation.WorkflowRef, NodeId: invocation.Node.Id, InputHashes: invocation.InputHashes, Content: content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: state})
 	}
 	p.results[invocation.IdempotencyKey] = workflow.ProviderResult{IdempotencyKey: invocation.IdempotencyKey, CompletedAt: time.Now().UTC(), Artifacts: artifacts, Outcome: p.outcomes[string(invocation.Node.Id)], BlockerCode: p.blockers[string(invocation.Node.Id)]}
 	return nil
@@ -719,4 +801,13 @@ func fmtID(prefix string, index int) string {
 		return prefix + "-artifact"
 	}
 	return prefix + "-artifact-" + string(rune('a'+index))
+}
+
+func containsHash(hashes []contractsv1.SHA256, want contractsv1.SHA256) bool {
+	for _, hash := range hashes {
+		if hash == want {
+			return true
+		}
+	}
+	return false
 }

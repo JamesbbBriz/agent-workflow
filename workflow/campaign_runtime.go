@@ -338,7 +338,11 @@ func (e *Engine) drive(ctx context.Context, command CampaignDriveCommand) (contr
 			}
 		}
 		startedAt := nodeState(state, workflowRef, nodeID).StartedAt
-		run, runErr := e.runAgentNodeResolvedAt(ctx, RunRequest{Job: prepared.request.Job, Campaign: prepared.request.Campaign, Workflow: workflow.definition, NodeID: nodeID, BudgetOverride: &remaining}, startedAt, &resolved)
+		inputs, err := e.resolveNodeInputs(prepared, workflow, node)
+		if err != nil {
+			return contractsv1.CampaignDriveReceipt{}, err
+		}
+		run, runErr := e.runAgentNodeResolvedAt(ctx, RunRequest{Job: prepared.request.Job, Campaign: prepared.request.Campaign, Workflow: workflow.definition, NodeID: nodeID, BudgetOverride: &remaining}, startedAt, &resolved, inputs)
 		if runErr != nil {
 			var exceeded budgetExceededError
 			if errors.As(runErr, &exceeded) {
@@ -502,7 +506,27 @@ func (e *Engine) prepareCampaign(request CampaignRunRequest) (preparedCampaign, 
 			prepared.initial.Nodes = append(prepared.initial.Nodes, contractsv1.CampaignNodeExecution{WorkflowRef: compiled.WorkflowRef, NodeId: node.Definition.Id, Status: contractsv1.CampaignNodeExecutionStatusPending})
 		}
 	}
+	if err := validateCampaignInputSources(prepared); err != nil {
+		return preparedCampaign{}, err
+	}
 	return prepared, nil
+}
+
+func validateCampaignInputSources(prepared preparedCampaign) error {
+	for _, workflow := range prepared.workflows {
+		for _, node := range workflow.compiled.Nodes {
+			for _, input := range node.Definition.InputSlots {
+				producers := inputProducers(prepared, workflow, node, input)
+				if len(producers) > 1 {
+					return fmt.Errorf("Workflow %q node %q input slot %q has ambiguous Workflow producers", workflow.compiled.WorkflowRef, node.Definition.Id, input.Id)
+				}
+				if input.MinItems > 0 && len(producers) == 0 {
+					return fmt.Errorf("Workflow %q node %q input slot %q has no earlier Workflow producer", workflow.compiled.WorkflowRef, node.Definition.Id, input.Id)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func campaignWorkflowDefinitions(request CampaignRunRequest) ([]contractsv1.WorkflowDefinition, error) {
@@ -766,6 +790,103 @@ func (e *Engine) driveCoreNode(command CampaignDriveCommand, state contractsv1.C
 	default:
 		return false, fmt.Errorf("unsupported Node kind %q", node.Definition.Kind)
 	}
+}
+
+type artifactProducer struct {
+	workflow preparedWorkflow
+	nodeIDs  []string
+}
+
+func (e *Engine) resolveNodeInputs(prepared preparedCampaign, current preparedWorkflow, node CompiledNode) ([]contractsv1.ActionArtifact, error) {
+	var resolved []contractsv1.ActionArtifact
+	for _, input := range node.Definition.InputSlots {
+		producers := inputProducers(prepared, current, node, input)
+		if len(producers) > 1 {
+			return nil, fmt.Errorf("node %q input slot %q has ambiguous Workflow producers", node.Definition.Id, input.Id)
+		}
+		var artifacts []contractsv1.ActionArtifact
+		for _, producer := range producers {
+			for _, producerNodeID := range producer.nodeIDs {
+				childID, err := executionID(RunRequest{Job: prepared.request.Job, Campaign: prepared.request.Campaign, Workflow: producer.workflow.definition, NodeID: producerNodeID})
+				if err != nil {
+					return nil, err
+				}
+				replay, err := e.ledger.Replay(childID)
+				if errors.Is(err, ErrReplayEmpty) {
+					continue
+				}
+				if err != nil || !nodeCompletedReplay(replay) {
+					return nil, fmt.Errorf("node %q input slot %q has no completed canonical producer Replay", node.Definition.Id, input.Id)
+				}
+				material, err := MaterializeReplay(replay, e.outputs)
+				if err != nil {
+					return nil, err
+				}
+				for _, artifact := range material.Artifacts {
+					if artifact.ArtifactType == input.ArtifactType && artifact.WorkflowRef == producer.workflow.compiled.WorkflowRef && string(artifact.NodeId) == producerNodeID {
+						artifacts = append(artifacts, artifact)
+					}
+				}
+			}
+		}
+		if len(artifacts) < input.MinItems || len(artifacts) > input.MaxItems {
+			return nil, fmt.Errorf("node %q input slot %q resolved %d items outside [%d,%d]", node.Definition.Id, input.Id, len(artifacts), input.MinItems, input.MaxItems)
+		}
+		resolved = append(resolved, artifacts...)
+	}
+	return resolved, nil
+}
+
+func inputProducers(prepared preparedCampaign, current preparedWorkflow, node CompiledNode, input contractsv1.Slot) []artifactProducer {
+	var producers []artifactProducer
+	direct := artifactProducer{workflow: current}
+	for _, dependency := range node.Definition.DependsOn {
+		dependencyNode, ok := compiledNodeByID(current.compiled, dependency)
+		if output, matched := matchingArtifactSlot(dependencyNode.Definition.OutputSlots, input); ok && matched && artifactContractSupplies(output, input) {
+			direct.nodeIDs = append(direct.nodeIDs, dependency)
+		}
+	}
+	if len(direct.nodeIDs) > 0 {
+		producers = append(producers, direct)
+	}
+	declared, ok := matchingSlot(current.definition.Inputs, input)
+	if !ok || !workflowInputSupplies(declared, input, string(node.Definition.Id)) {
+		return producers
+	}
+	for _, workflow := range prepared.workflows {
+		if workflow.compiled.WorkflowRef == current.compiled.WorkflowRef {
+			break
+		}
+		output, exported := matchingArtifactSlot(workflow.definition.Outputs, input)
+		if !exported || !artifactContractSupplies(output, input) {
+			continue
+		}
+		producer := artifactProducer{workflow: workflow}
+		for _, candidate := range workflow.compiled.Nodes {
+			if source, supplied := matchingSlot(candidate.Definition.OutputSlots, output); supplied && slotSupplies(source, output) {
+				producer.nodeIDs = append(producer.nodeIDs, string(candidate.Definition.Id))
+			}
+		}
+		if len(producer.nodeIDs) > 0 {
+			producers = append(producers, producer)
+		}
+	}
+	return producers
+}
+
+func matchingArtifactSlot(slots []contractsv1.Slot, wanted contractsv1.Slot) (contractsv1.Slot, bool) {
+	var match contractsv1.Slot
+	found := false
+	for _, slot := range slots {
+		if !artifactContractSupplies(slot, wanted) {
+			continue
+		}
+		if found {
+			return contractsv1.Slot{}, false
+		}
+		match, found = slot, true
+	}
+	return match, found
 }
 
 func (e *Engine) approvalSource(prepared preparedCampaign, workflow preparedWorkflow, node CompiledNode) (contractsv1.ReplayBundle, contractsv1.ActionArtifact, contractsv1.Receipt, error) {

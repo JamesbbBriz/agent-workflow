@@ -32,3 +32,20 @@ func TestCandidateSlotRejectsBatchedRecordsInOneArtifact(t *testing.T) {
 		t.Fatalf("batched candidates crossed the budget boundary: %v", err)
 	}
 }
+
+func TestInvocationRejectsStaleArtifactInput(t *testing.T) {
+	content := map[string]any{"candidate": "a"}
+	hash, err := Digest(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := contractsv1.ActionArtifact{
+		Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: "candidate-a", ArtifactType: "candidate",
+		JobId: "job-a", CampaignId: "campaign-a", WorkflowRef: "source@1", NodeId: "research",
+		InputHashes: []contractsv1.SHA256{repeatedSHA('6')}, Content: content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: contractsv1.ActionArtifactApprovalStateStale,
+	}
+	invocation := Invocation{JobID: "job-a", CampaignID: "campaign-a", Inputs: []contractsv1.ActionArtifact{artifact}, InputHashes: []contractsv1.SHA256{repeatedSHA('0'), repeatedSHA('1'), repeatedSHA('2'), repeatedSHA('3'), repeatedSHA('4'), repeatedSHA('5'), contractsv1.SHA256(hash)}}
+	if err := verifyInvocationInputBinding(invocation); err == nil || !strings.Contains(err.Error(), "authority") {
+		t.Fatalf("stale artifact crossed the invocation boundary: %v", err)
+	}
+}

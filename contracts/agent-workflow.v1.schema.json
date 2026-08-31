@@ -147,6 +147,7 @@
         "version": { "type": "integer", "minimum": 1 },
         "intent": { "$ref": "#/$defs/IntentCard" },
         "default_context": { "type": "array", "items": { "$ref": "#/$defs/ContextRequirement" } },
+        "inputs": { "type": "array", "items": { "$ref": "#/$defs/Slot" } },
         "nodes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NodeDefinition" } },
         "outputs": { "type": "array", "items": { "$ref": "#/$defs/Slot" } },
         "completion": { "$ref": "#/$defs/NonEmptyStrings" },

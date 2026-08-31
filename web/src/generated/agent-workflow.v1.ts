@@ -455,10 +455,11 @@ export interface WorkflowDefinitionElement {
     default_context:  DefaultContextElement[];
     definition_hash?: string;
     id:               string;
+    inputs?:          InputElement[];
     intent:           Intent;
     kind:             WorkflowDefinitionKind;
     nodes:            [DefinitionElement, ...DefinitionElement[]];
-    outputs:          OutputElement[];
+    outputs:          InputElement[];
     schema_version:   number;
     version:          number;
 }
@@ -475,6 +476,19 @@ export interface DefaultContextElement {
     subject_key?:     string;
 }
 
+export interface InputElement {
+    artifact_kind?:        ArtifactKind;
+    artifact_type:         string;
+    consumers?:            string[];
+    content_schema?:       string;
+    counts_as_candidates?: boolean;
+    id:                    string;
+    max_items:             number;
+    min_items:             number;
+}
+
+export type ArtifactKind = "context_pack" | "action_artifact";
+
 export type WorkflowDefinitionKind = "workflow_definition";
 
 export interface DefinitionElement {
@@ -488,29 +502,16 @@ export interface DefinitionElement {
     execution_mode?:     ExecutionMode;
     executor:            string;
     id:                  string;
-    input_slots:         OutputElement[];
+    input_slots:         InputElement[];
     kind:                NodeKindEnum;
     outcome_routes?:     { [key: string]: RouteValue };
-    output_slots:        OutputElement[];
+    output_slots:        InputElement[];
     wait_delay_seconds?: number;
     wait_mode?:          WaitModeEnum;
     wait_signal?:        string;
 }
 
 export type ExecutionMode = "core" | "provider";
-
-export interface OutputElement {
-    artifact_kind?:        ArtifactKind;
-    artifact_type:         string;
-    consumers?:            string[];
-    content_schema?:       string;
-    counts_as_candidates?: boolean;
-    id:                    string;
-    max_items:             number;
-    min_items:             number;
-}
-
-export type ArtifactKind = "context_pack" | "action_artifact";
 
 export type RouteValue = "continue" | "complete_branch" | "stop";
 
