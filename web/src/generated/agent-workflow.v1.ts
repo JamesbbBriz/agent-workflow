@@ -260,7 +260,7 @@ export interface CampaignExecutionStateNode {
     workflow_ref:         string;
 }
 
-export type NodeStatus = "pending" | "needs_context" | "running" | "awaiting_approval" | "waiting" | "completed" | "completed_no_action" | "blocked" | "budget_exhausted";
+export type NodeStatus = "pending" | "needs_context" | "running" | "awaiting_approval" | "waiting" | "completed" | "completed_no_action" | "skipped" | "blocked" | "budget_exhausted";
 
 export interface NodeUsage {
     actions:          number;
@@ -485,15 +485,19 @@ export interface DefinitionElement {
     context:             DefaultContextElement[];
     deadline_seconds?:   number;
     depends_on:          string[];
+    execution_mode?:     ExecutionMode;
     executor:            string;
     id:                  string;
     input_slots:         OutputElement[];
     kind:                NodeKindEnum;
+    outcome_routes?:     { [key: string]: RouteValue };
     output_slots:        OutputElement[];
     wait_delay_seconds?: number;
     wait_mode?:          WaitModeEnum;
     wait_signal?:        string;
 }
+
+export type ExecutionMode = "core" | "provider";
 
 export interface OutputElement {
     artifact_kind?:        ArtifactKind;
@@ -507,6 +511,8 @@ export interface OutputElement {
 }
 
 export type ArtifactKind = "context_pack" | "action_artifact";
+
+export type RouteValue = "continue" | "complete_branch" | "stop";
 
 export type WaitModeEnum = "time" | "signal";
 
@@ -983,13 +989,17 @@ export interface NeedsContextEventPayload {
 export type ReasonValue = "unavailable" | "unusable";
 
 export interface NodeCompletedEventPayload {
+    blocker_code?:      string;
     completed_at:       string;
     node_id:            string;
     result_replay_hash: string;
-    status:             CoreCompletedEventPayloadStatus;
+    route?:             RouteValue;
+    status:             OutcomeEnum;
     usage:              NodeUsage;
     workflow_ref:       string;
 }
+
+export type OutcomeEnum = "completed" | "completed_no_action" | "blocked";
 
 export interface ProviderCancellation {
     kind:           ProviderCancellationKind;
@@ -1028,14 +1038,17 @@ export interface ProviderEventPage {
 export type ProviderEventPageKind = "provider_event_page";
 
 export interface ProviderExecutionEventPayload {
+    blocker_code?:         string;
     completed_at:          string;
     executor_profile?:     ExecutorProfile;
     idempotency_key:       string;
     isolation:             ProviderIsolation;
     node_id:               string;
+    outcome?:              OutcomeEnum;
     provider_events?:      ProviderEvent[];
     provider_observation?: ProviderObservation;
     provider_run?:         ProviderRun;
+    route?:                RouteValue;
 }
 
 export interface ProviderObservation {

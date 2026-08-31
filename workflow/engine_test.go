@@ -1,6 +1,7 @@
 package workflow_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -60,11 +61,79 @@ func TestEngineCompilesResolvesExecutesAndReplaysWithoutDuplicateProviderWork(t 
 	if len(first.Artifacts) != 1 || len(first.Replay.Receipts) != 7 {
 		t.Fatalf("unexpected result: artifacts=%d receipts=%d", len(first.Artifacts), len(first.Replay.Receipts))
 	}
+	semanticTamper := cloneReplayForTest(t, first.Replay)
+	providerIndex := -1
+	for index := range semanticTamper.Receipts {
+		if semanticTamper.Receipts[index].ReceiptType == contractsv1.ReceiptReceiptTypeProviderExecution {
+			providerIndex = index
+			semanticTamper.Receipts[index].Payload["outcome"] = contractsv1.CampaignNodeExecutionStatusCompletedNoAction
+			break
+		}
+	}
+	semanticTamper = rehashReplayForTest(t, semanticTamper, providerIndex)
+	if err := workflow.VerifyReplay(semanticTamper); err != nil {
+		t.Fatalf("semantic tamper fixture is not hash-chain valid: %v", err)
+	}
+	if _, err := workflow.MaterializeReplay(semanticTamper, outputCatalog()); err == nil || !strings.Contains(err.Error(), "outcome does not match") {
+		t.Fatalf("finished Replay accepted divergent provider outcome: %v", err)
+	}
 	tampered := first.Replay
 	tampered.Receipts[3].Payload["accepted"] = false
 	if err := workflow.VerifyReplay(tampered); err == nil {
 		t.Fatal("tampered replay was accepted")
 	}
+}
+
+func cloneReplayForTest(t *testing.T, replay contractsv1.ReplayBundle) contractsv1.ReplayBundle {
+	t.Helper()
+	body, err := json.Marshal(replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clone contractsv1.ReplayBundle
+	if err := json.Unmarshal(body, &clone); err != nil {
+		t.Fatal(err)
+	}
+	return clone
+}
+
+func rehashReplayForTest(t *testing.T, replay contractsv1.ReplayBundle, from int) contractsv1.ReplayBundle {
+	t.Helper()
+	if from < 0 {
+		t.Fatal("provider execution receipt is missing")
+	}
+	previous := replay.Receipts[from-1].ReceiptHash
+	for index := from; index < len(replay.Receipts); index++ {
+		receipt := replay.Receipts[index]
+		receipt.PreviousReceiptHash = previous
+		receipt.ReceiptHash = ""
+		receipt.ReceiptHash = contractsv1.SHA256(canonicalDigestForTest(t, receipt))
+		replay.Receipts[index] = receipt
+		previous = receipt.ReceiptHash
+	}
+	replay.CutoffReceiptHash = previous
+	replay.BundleHash = ""
+	replay.BundleHash = contractsv1.SHA256(canonicalDigestForTest(t, replay))
+	return replay
+}
+
+func canonicalDigestForTest(t *testing.T, value any) string {
+	t.Helper()
+	body, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var wire any
+	if err := decoder.Decode(&wire); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := workflow.Digest(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hash
 }
 
 func TestEngineRejectsUnadmittedWorkflowBeforeProviderExecution(t *testing.T) {
@@ -153,6 +222,21 @@ func TestProviderResultRecoveryConvergesAfterLedgerFailure(t *testing.T) {
 	if !hasReceiptType(partial, contractsv1.ReceiptReceiptTypeProviderExecution) || hasReceiptType(partial, contractsv1.ReceiptReceiptTypeResult) || hasReceiptType(partial, contractsv1.ReceiptReceiptTypeTerminal) {
 		t.Fatalf("failed atomic result batch left a partial accepted result: %+v", partial.Receipts)
 	}
+	key := provider.last.IdempotencyKey
+	original := provider.results[key]
+	tampered := original
+	tampered.Outcome = contractsv1.CampaignNodeExecutionStatusCompletedNoAction
+	provider.results[key] = tampered
+	if _, err := engine.RunNode(context.Background(), request); err == nil {
+		t.Fatal("redelivery accepted an outcome that differs from the recorded provider execution")
+	}
+	blocker := contractsv1.Identifier("context-missing")
+	tampered.Outcome, tampered.BlockerCode = contractsv1.CampaignNodeExecutionStatusBlocked, &blocker
+	provider.results[key] = tampered
+	if _, err := engine.RunNode(context.Background(), request); err == nil {
+		t.Fatal("redelivery accepted a blocker that differs from the recorded provider execution")
+	}
+	provider.results[key] = original
 	time.Sleep(1100 * time.Millisecond)
 	result, err := engine.RunNode(context.Background(), request)
 	if err != nil {

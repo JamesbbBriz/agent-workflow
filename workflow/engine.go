@@ -29,12 +29,14 @@ type Provider interface {
 }
 
 type ProviderResult struct {
-	IdempotencyKey string                           `json:"idempotency_key"`
-	CompletedAt    time.Time                        `json:"completed_at"`
-	Artifacts      []contractsv1.ActionArtifact     `json:"artifacts"`
-	Run            *contractsv1.ProviderRunRef      `json:"provider_run,omitempty"`
-	Events         []contractsv1.ProviderEvent      `json:"provider_events,omitempty"`
-	Observation    *contractsv1.ProviderObservation `json:"provider_observation,omitempty"`
+	IdempotencyKey string                                  `json:"idempotency_key"`
+	CompletedAt    time.Time                               `json:"completed_at"`
+	Artifacts      []contractsv1.ActionArtifact            `json:"artifacts"`
+	Run            *contractsv1.ProviderRunRef             `json:"provider_run,omitempty"`
+	Events         []contractsv1.ProviderEvent             `json:"provider_events,omitempty"`
+	Observation    *contractsv1.ProviderObservation        `json:"provider_observation,omitempty"`
+	Outcome        contractsv1.CampaignNodeExecutionStatus `json:"outcome,omitempty"`
+	BlockerCode    *contractsv1.Identifier                 `json:"blocker_code,omitempty"`
 }
 
 type Invocation struct {
@@ -198,8 +200,8 @@ func (e *Engine) runAgentNodeResolvedAt(ctx context.Context, request RunRequest,
 	if !ok {
 		return RunResult{}, fmt.Errorf("node %q is not in the workflow", request.NodeID)
 	}
-	if node.Definition.Kind != contractsv1.NodeDefinitionKindAgent {
-		return RunResult{}, fmt.Errorf("node %q is not an agent node", request.NodeID)
+	if !nodeUsesProvider(node.Definition) {
+		return RunResult{}, fmt.Errorf("node %q is not provider-owned", request.NodeID)
 	}
 	budgetEnforced := request.BudgetOverride != nil
 	if budgetEnforced {
@@ -342,7 +344,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		if err := validateProviderResult(storedResult, invocation); err != nil {
 			return RunResult{}, err
 		}
-		if err := validateArtifactContracts(artifacts, invocation, e.outputs); err != nil {
+		if err := validateArtifactContracts(artifacts, invocation, e.outputs, providerOutcome(storedResult) != contractsv1.CampaignNodeExecutionStatusBlocked); err != nil {
 			return RunResult{}, err
 		}
 		if err := validateArtifactBudget(artifacts, invocation); err != nil {
@@ -418,7 +420,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		return RunResult{}, ErrProviderDeadline
 	}
 	artifacts := providerResult.Artifacts
-	if err := validateArtifactContracts(artifacts, invocation, e.outputs); err != nil {
+	if err := validateArtifactContracts(artifacts, invocation, e.outputs, providerOutcome(providerResult) != contractsv1.CampaignNodeExecutionStatusBlocked); err != nil {
 		return RunResult{}, err
 	}
 	if err := validateArtifactBudget(artifacts, invocation); err != nil {
@@ -451,11 +453,14 @@ func providerAcknowledged(replay contractsv1.ReplayBundle, invocation Invocation
 		return false, err
 	}
 	if invocation.Isolation == nil {
-		return false, errors.New("provider execution has no isolation binding")
-	}
-	var isolation contractsv1.ProviderIsolationEvidence
-	if err := decodePayload(receipt.Payload["isolation"], &isolation); err != nil || isolation.EvidenceHash != invocation.Isolation.EvidenceHash {
-		return false, errors.New("provider execution isolation does not match the invocation")
+		if result.Outcome != "" || result.BlockerCode != nil || receipt.Payload["outcome"] != nil || receipt.Payload["route"] != nil || receipt.Payload["blocker_code"] != nil {
+			return false, errors.New("legacy provider execution cannot acquire outcome routing")
+		}
+	} else {
+		var isolation contractsv1.ProviderIsolationEvidence
+		if err := decodePayload(receipt.Payload["isolation"], &isolation); err != nil || isolation.EvidenceHash != invocation.Isolation.EvidenceHash {
+			return false, errors.New("provider execution isolation does not match the invocation")
+		}
 	}
 	if invocation.ExecutorProfile != nil {
 		var profile contractsv1.ExecutorProfile
@@ -470,6 +475,37 @@ func providerAcknowledged(replay contractsv1.ReplayBundle, invocation Invocation
 		if err := decodePayload(receipt.Payload["provider_observation"], &observation); err != nil || result.Observation == nil || !reflect.DeepEqual(observation, *result.Observation) {
 			return false, errors.New("provider execution observation does not match the result")
 		}
+	}
+	var outcome contractsv1.CampaignNodeExecutionStatus
+	if raw, exists := receipt.Payload["outcome"]; exists {
+		if err := decodePayload(raw, &outcome); err != nil || outcome != providerOutcome(result) {
+			return false, errors.New("provider execution outcome does not match the result")
+		}
+	} else if result.Outcome != "" {
+		return false, errors.New("legacy provider execution cannot acquire an explicit outcome")
+	}
+	expectedRoute, err := providerRoute(result, invocation.Node)
+	if err != nil {
+		return false, err
+	}
+	if raw, exists := receipt.Payload["route"]; exists {
+		var route contractsv1.NodeOutcomeRoute
+		if err := decodePayload(raw, &route); err != nil || route != expectedRoute {
+			return false, errors.New("provider execution route does not match the result")
+		}
+	} else if result.Outcome != "" {
+		return false, errors.New("legacy provider execution cannot acquire an explicit route")
+	}
+	var blocker *contractsv1.Identifier
+	if raw, exists := receipt.Payload["blocker_code"]; exists {
+		var value contractsv1.Identifier
+		if err := decodePayload(raw, &value); err != nil {
+			return false, err
+		}
+		blocker = &value
+	}
+	if !reflect.DeepEqual(blocker, result.BlockerCode) {
+		return false, errors.New("provider execution blocker does not match the result")
 	}
 	hashes, err := actionArtifactHashes(result.Artifacts)
 	if err != nil {
@@ -487,7 +523,52 @@ func validateProviderResult(result ProviderResult, invocation Invocation) error 
 			return errors.New("provider result does not bind the admitted executor run")
 		}
 	}
-	return nil
+	outcome := providerOutcome(result)
+	switch outcome {
+	case contractsv1.CampaignNodeExecutionStatusCompleted, contractsv1.CampaignNodeExecutionStatusCompletedNoAction:
+		if result.BlockerCode != nil {
+			return errors.New("successful provider result cannot declare a blocker")
+		}
+	case contractsv1.CampaignNodeExecutionStatusBlocked:
+		if result.BlockerCode == nil || !containsString(invocation.Node.BlockerCodes, string(*result.BlockerCode)) {
+			return errors.New("blocked provider result must use an admitted blocker code")
+		}
+	default:
+		return errors.New("provider result outcome is invalid")
+	}
+	_, err := providerRoute(result, invocation.Node)
+	return err
+}
+
+func nodeUsesProvider(node contractsv1.NodeDefinition) bool {
+	return node.Kind == contractsv1.NodeDefinitionKindAgent || node.ExecutionMode != nil && *node.ExecutionMode == contractsv1.NodeDefinitionExecutionModeProvider
+}
+
+func providerOutcome(result ProviderResult) contractsv1.CampaignNodeExecutionStatus {
+	if result.Outcome != "" {
+		return result.Outcome
+	}
+	if len(result.Artifacts) == 0 {
+		return contractsv1.CampaignNodeExecutionStatusCompletedNoAction
+	}
+	return contractsv1.CampaignNodeExecutionStatusCompleted
+}
+
+func providerRoute(result ProviderResult, node contractsv1.NodeDefinition) (contractsv1.NodeOutcomeRoute, error) {
+	if result.Outcome == "" {
+		return contractsv1.NodeOutcomeRouteContinue, nil
+	}
+	route, ok := node.OutcomeRoutes[string(result.Outcome)]
+	if !ok {
+		return "", errors.New("provider result outcome has no admitted route")
+	}
+	valid := result.Outcome == contractsv1.CampaignNodeExecutionStatusCompleted && route == contractsv1.NodeOutcomeRouteContinue ||
+		result.Outcome == contractsv1.CampaignNodeExecutionStatusCompletedNoAction && (route == contractsv1.NodeOutcomeRouteContinue || route == contractsv1.NodeOutcomeRouteCompleteBranch) ||
+		result.Outcome == contractsv1.CampaignNodeExecutionStatusBlocked && route == contractsv1.NodeOutcomeRouteStop
+	if !valid {
+		return "", errors.New("provider result outcome route is invalid")
+	}
+	return route, nil
 }
 
 var ErrProviderDeadline = errors.New("provider result unavailable after node deadline")
@@ -910,14 +991,14 @@ func validateOutputCatalog(node contractsv1.NodeDefinition, outputs OutputCatalo
 	return nil
 }
 
-func validateArtifacts(artifacts []contractsv1.ActionArtifact, invocation Invocation, outputs OutputCatalog) error {
-	if err := validateArtifactContracts(artifacts, invocation, outputs); err != nil {
+func validateArtifacts(artifacts []contractsv1.ActionArtifact, invocation Invocation, outputs OutputCatalog, requireMinimum bool) error {
+	if err := validateArtifactContracts(artifacts, invocation, outputs, requireMinimum); err != nil {
 		return err
 	}
 	return validateArtifactBudget(artifacts, invocation)
 }
 
-func validateArtifactContracts(artifacts []contractsv1.ActionArtifact, invocation Invocation, outputs OutputCatalog) error {
+func validateArtifactContracts(artifacts []contractsv1.ActionArtifact, invocation Invocation, outputs OutputCatalog, requireMinimum bool) error {
 	if err := validateJSONLimit("action artifact set", artifacts, maxReceiptMaterialBytes); err != nil {
 		return err
 	}
@@ -970,7 +1051,7 @@ func validateArtifactContracts(artifacts []contractsv1.ActionArtifact, invocatio
 	}
 	for _, slot := range invocation.Node.OutputSlots {
 		count := counts[slot.ArtifactType]
-		if count < slot.MinItems || count > slot.MaxItems {
+		if requireMinimum && count < slot.MinItems || count > slot.MaxItems {
 			return fmt.Errorf("provider output %q has %d items outside [%d,%d]", slot.ArtifactType, count, slot.MinItems, slot.MaxItems)
 		}
 		delete(counts, slot.ArtifactType)
@@ -1069,7 +1150,14 @@ func postExecutionReceiptsWithState(aggregateID string, occurredAt time.Time, pr
 	if invocation.Isolation == nil {
 		return nil, errors.New("provider execution requires isolation evidence")
 	}
-	payload := map[string]any{"node_id": invocation.Node.Id, "idempotency_key": providerResult.IdempotencyKey, "completed_at": providerResult.CompletedAt, "isolation": *invocation.Isolation}
+	route, err := providerRoute(providerResult, invocation.Node)
+	if err != nil {
+		return nil, err
+	}
+	payload := map[string]any{"node_id": invocation.Node.Id, "idempotency_key": providerResult.IdempotencyKey, "completed_at": providerResult.CompletedAt, "isolation": *invocation.Isolation, "outcome": providerOutcome(providerResult), "route": route}
+	if providerResult.BlockerCode != nil {
+		payload["blocker_code"] = *providerResult.BlockerCode
+	}
 	if invocation.ExecutorProfile != nil {
 		payload["executor_profile"] = *invocation.ExecutorProfile
 	}
@@ -1218,10 +1306,17 @@ func MaterializeReplay(bundle contractsv1.ReplayBundle, outputs OutputCatalog) (
 	if err := validateProviderResult(providerResult, material.Invocation); err != nil {
 		return ReplayMaterial{}, err
 	}
+	acknowledged, err := providerAcknowledged(bundle, material.Invocation, providerResult)
+	if err != nil {
+		return ReplayMaterial{}, err
+	}
+	if !acknowledged {
+		return ReplayMaterial{}, errors.New("provider execution receipt does not match the exact result")
+	}
 	if providerResult.CompletedAt.After(material.Invocation.Deadline) {
 		return ReplayMaterial{}, errors.New("provider result completed after the node deadline")
 	}
-	if err := validateArtifacts(material.Artifacts, material.Invocation, outputs); err != nil {
+	if err := validateArtifacts(material.Artifacts, material.Invocation, outputs, providerOutcome(providerResult) != contractsv1.CampaignNodeExecutionStatusBlocked); err != nil {
 		return ReplayMaterial{}, err
 	}
 	return material, nil

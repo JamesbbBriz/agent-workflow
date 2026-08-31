@@ -808,6 +808,7 @@ const CampaignNodeExecutionStatusCompletedNoAction CampaignNodeExecutionStatus =
 const CampaignNodeExecutionStatusNeedsContext CampaignNodeExecutionStatus = "needs_context"
 const CampaignNodeExecutionStatusPending CampaignNodeExecutionStatus = "pending"
 const CampaignNodeExecutionStatusRunning CampaignNodeExecutionStatus = "running"
+const CampaignNodeExecutionStatusSkipped CampaignNodeExecutionStatus = "skipped"
 const CampaignNodeExecutionStatusWaiting CampaignNodeExecutionStatus = "waiting"
 
 type CampaignTerminalEventPayload struct {
@@ -2129,6 +2130,9 @@ const NeedsContextEventPayloadReasonsValueUnavailable NeedsContextEventPayloadRe
 const NeedsContextEventPayloadReasonsValueUnusable NeedsContextEventPayloadReasonsValue = "unusable"
 
 type NodeCompletedEventPayload struct {
+	// BlockerCode corresponds to the JSON schema field "blocker_code".
+	BlockerCode *Identifier `json:"blocker_code,omitempty,omitzero"`
+
 	// CompletedAt corresponds to the JSON schema field "completed_at".
 	CompletedAt time.Time `json:"completed_at"`
 
@@ -2137,6 +2141,9 @@ type NodeCompletedEventPayload struct {
 
 	// ResultReplayHash corresponds to the JSON schema field "result_replay_hash".
 	ResultReplayHash SHA256 `json:"result_replay_hash"`
+
+	// Route corresponds to the JSON schema field "route".
+	Route *NodeOutcomeRoute `json:"route,omitempty,omitzero"`
 
 	// Status corresponds to the JSON schema field "status".
 	Status NodeCompletedEventPayloadStatus `json:"status"`
@@ -2150,6 +2157,7 @@ type NodeCompletedEventPayload struct {
 
 type NodeCompletedEventPayloadStatus string
 
+const NodeCompletedEventPayloadStatusBlocked NodeCompletedEventPayloadStatus = "blocked"
 const NodeCompletedEventPayloadStatusCompleted NodeCompletedEventPayloadStatus = "completed"
 const NodeCompletedEventPayloadStatusCompletedNoAction NodeCompletedEventPayloadStatus = "completed_no_action"
 
@@ -2175,6 +2183,9 @@ type NodeDefinition struct {
 	// DependsOn corresponds to the JSON schema field "depends_on".
 	DependsOn Strings `json:"depends_on"`
 
+	// ExecutionMode corresponds to the JSON schema field "execution_mode".
+	ExecutionMode *NodeDefinitionExecutionMode `json:"execution_mode,omitempty,omitzero"`
+
 	// Executor corresponds to the JSON schema field "executor".
 	Executor string `json:"executor"`
 
@@ -2186,6 +2197,9 @@ type NodeDefinition struct {
 
 	// Kind corresponds to the JSON schema field "kind".
 	Kind NodeDefinitionKind `json:"kind"`
+
+	// OutcomeRoutes corresponds to the JSON schema field "outcome_routes".
+	OutcomeRoutes NodeOutcomeRoutes `json:"outcome_routes,omitempty,omitzero"`
 
 	// OutputSlots corresponds to the JSON schema field "output_slots".
 	OutputSlots []Slot `json:"output_slots"`
@@ -2200,6 +2214,11 @@ type NodeDefinition struct {
 	WaitSignal *Identifier `json:"wait_signal,omitempty,omitzero"`
 }
 
+type NodeDefinitionExecutionMode string
+
+const NodeDefinitionExecutionModeCore NodeDefinitionExecutionMode = "core"
+const NodeDefinitionExecutionModeProvider NodeDefinitionExecutionMode = "provider"
+
 type NodeDefinitionKind string
 
 const NodeDefinitionKindAgent NodeDefinitionKind = "agent"
@@ -2212,6 +2231,14 @@ type NodeDefinitionWaitMode string
 
 const NodeDefinitionWaitModeSignal NodeDefinitionWaitMode = "signal"
 const NodeDefinitionWaitModeTime NodeDefinitionWaitMode = "time"
+
+type NodeOutcomeRoute string
+
+const NodeOutcomeRouteCompleteBranch NodeOutcomeRoute = "complete_branch"
+const NodeOutcomeRouteContinue NodeOutcomeRoute = "continue"
+const NodeOutcomeRouteStop NodeOutcomeRoute = "stop"
+
+type NodeOutcomeRoutes map[string]NodeOutcomeRoute
 
 type NonEmptyStrings []string
 
@@ -2370,6 +2397,9 @@ type ProviderEventPageSchemaVersion int
 type ProviderEventSchemaVersion int
 
 type ProviderExecutionEventPayload struct {
+	// BlockerCode corresponds to the JSON schema field "blocker_code".
+	BlockerCode *Identifier `json:"blocker_code,omitempty,omitzero"`
+
 	// CompletedAt corresponds to the JSON schema field "completed_at".
 	CompletedAt time.Time `json:"completed_at"`
 
@@ -2385,6 +2415,9 @@ type ProviderExecutionEventPayload struct {
 	// NodeId corresponds to the JSON schema field "node_id".
 	NodeId Identifier `json:"node_id"`
 
+	// Outcome corresponds to the JSON schema field "outcome".
+	Outcome *ProviderExecutionEventPayloadOutcome `json:"outcome,omitempty,omitzero"`
+
 	// ProviderEvents corresponds to the JSON schema field "provider_events".
 	ProviderEvents []ProviderEvent `json:"provider_events,omitempty,omitzero"`
 
@@ -2394,7 +2427,16 @@ type ProviderExecutionEventPayload struct {
 
 	// ProviderRun corresponds to the JSON schema field "provider_run".
 	ProviderRun *ProviderRunRef `json:"provider_run,omitempty,omitzero"`
+
+	// Route corresponds to the JSON schema field "route".
+	Route *NodeOutcomeRoute `json:"route,omitempty,omitzero"`
 }
+
+type ProviderExecutionEventPayloadOutcome string
+
+const ProviderExecutionEventPayloadOutcomeBlocked ProviderExecutionEventPayloadOutcome = "blocked"
+const ProviderExecutionEventPayloadOutcomeCompleted ProviderExecutionEventPayloadOutcome = "completed"
+const ProviderExecutionEventPayloadOutcomeCompletedNoAction ProviderExecutionEventPayloadOutcome = "completed_no_action"
 
 type ProviderID string
 
@@ -3173,12 +3215,6 @@ type WorkflowDefinitionKind string
 
 const WorkflowDefinitionKindWorkflowDefinition WorkflowDefinitionKind = "workflow_definition"
 
-type RedactedReceiptPreviousReceiptHash_0 = SHA256
-
-type WorkflowRef string
-
-type ReceiptPreviousReceiptHash_0 = SHA256
-
 type WorkflowDefinitionSchemaVersion int
 
 type WorkflowLintIssue struct {
@@ -3197,8 +3233,12 @@ type WorkflowLintIssue struct {
 
 type WorkflowLintIssueSeverity string
 
+type RedactedReceiptPreviousReceiptHash_0 = SHA256
+
 const WorkflowLintIssueSeverityError WorkflowLintIssueSeverity = "error"
 const WorkflowLintIssueSeverityWarning WorkflowLintIssueSeverity = "warning"
+
+type ReceiptPreviousReceiptHash_0 = SHA256
 
 type WorkflowLintReport struct {
 	// Issues corresponds to the JSON schema field "issues".
@@ -3219,3 +3259,5 @@ type WorkflowLintReportKind string
 const WorkflowLintReportKindWorkflowLintReport WorkflowLintReportKind = "workflow_lint_report"
 
 type WorkflowLintReportSchemaVersion int
+
+type WorkflowRef string

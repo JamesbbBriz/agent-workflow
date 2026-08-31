@@ -100,6 +100,93 @@ func TestCampaignRuntimeDerivesDependenciesAndCompletesTheDAG(t *testing.T) {
 	}
 }
 
+func TestCampaignRuntimeRoutesProviderOwnedDeterministicOutcomes(t *testing.T) {
+	t.Parallel()
+	cutoff := time.Now().UTC().Add(-time.Hour)
+	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
+	registry, err := workflow.NewRegistry(workflow.NewCatalogProducer("project-brief", "project-brief", 1, packFixture(t, scope, cutoff)), workflow.NewIntentProducer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := loadExample(t)
+	providerMode := contractsv1.NodeDefinitionExecutionModeProvider
+	definition.Nodes[0].Kind = contractsv1.NodeDefinitionKindDeterministic
+	definition.Nodes[0].ExecutionMode = &providerMode
+	definition.Nodes[0].Executor = "bounded-deterministic@1"
+	definition.Nodes[0].OutcomeRoutes = contractsv1.NodeOutcomeRoutes{
+		string(contractsv1.CampaignNodeExecutionStatusCompletedNoAction): contractsv1.NodeOutcomeRouteCompleteBranch,
+		string(contractsv1.CampaignNodeExecutionStatusBlocked):           contractsv1.NodeOutcomeRouteStop,
+	}
+	definition.Nodes[1].Kind = contractsv1.NodeDefinitionKindAgent
+	definition.Nodes[1].Executor = "bounded-agent@1"
+	definition.Nodes[1].ApprovalPolicy = nil
+	job, campaign := jobFixture(scope), campaignFixture(scope, cutoff)
+	ledger := workflow.NewMemoryLedger()
+	core := workflow.NewAuthoringCore(registry, workflow.ExecutorCatalog{"bounded-deterministic@1": contractsv1.NodeDefinitionKindDeterministic, "bounded-agent@1": contractsv1.NodeDefinitionKindAgent}, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), []string{"context-missing", "provider-timeout", "approval-required", "approval-stale"}, []string{"human-confirm"}, ledger)
+	preview, lint, err := core.Preview(job, campaign, definition, "operator")
+	if err != nil {
+		t.Fatalf("provider-owned deterministic workflow did not validate: %v: %+v", err, lint.Issues)
+	}
+	if _, err := core.Confirm(preview, "operator", cutoff); err != nil {
+		t.Fatal(err)
+	}
+	provider := &dagProvider{results: map[string]workflow.ProviderResult{}, outcomes: map[string]contractsv1.CampaignNodeExecutionStatus{"research": contractsv1.CampaignNodeExecutionStatusCompletedNoAction}}
+	engine := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger)
+
+	receipt, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}, MaxTransitions: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.State.Status != contractsv1.CampaignExecutionStateStatusCompleted || receipt.State.Nodes[0].Status != contractsv1.CampaignNodeExecutionStatusCompletedNoAction || receipt.State.Nodes[1].Status != contractsv1.CampaignNodeExecutionStatusSkipped || provider.starts != 1 {
+		t.Fatalf("Core did not honor the provider-owned no-action route: state=%+v starts=%d", receipt.State, provider.starts)
+	}
+
+	campaign.Id = "campaign-b"
+	definition.Version = 2
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@2"}
+	preview, lint, err = core.Preview(job, campaign, definition, "operator")
+	if err != nil {
+		t.Fatalf("blocked fixture did not validate: %v: %+v", err, lint.Issues)
+	}
+	if _, err := core.Confirm(preview, "operator", cutoff); err != nil {
+		t.Fatal(err)
+	}
+	blocker := contractsv1.Identifier("context-missing")
+	provider = &dagProvider{results: map[string]workflow.ProviderResult{}, outcomes: map[string]contractsv1.CampaignNodeExecutionStatus{"research": contractsv1.CampaignNodeExecutionStatusBlocked}, blockers: map[string]*contractsv1.Identifier{"research": &blocker}, empty: map[string]bool{"research": true}}
+	engine = workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger)
+	receipt, err = engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}, MaxTransitions: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.State.Status != contractsv1.CampaignExecutionStateStatusBlocked || receipt.State.Nodes[0].Status != contractsv1.CampaignNodeExecutionStatusBlocked || receipt.State.BlockerCode == nil || *receipt.State.BlockerCode != blocker || provider.starts != 1 {
+		t.Fatalf("Core did not preserve the provider blocker: state=%+v starts=%d", receipt.State, provider.starts)
+	}
+
+	campaign.Id = "campaign-c"
+	definition = loadExample(t)
+	definition.Version = 3
+	definition.Nodes[0].Kind = contractsv1.NodeDefinitionKindDeterministic
+	definition.Nodes[0].ExecutionMode = &providerMode
+	definition.Nodes[0].Executor = "bounded-deterministic@1"
+	definition.Nodes[1].Kind = contractsv1.NodeDefinitionKindAgent
+	definition.Nodes[1].Executor = "bounded-agent@1"
+	definition.Nodes[1].ApprovalPolicy = nil
+	campaign.WorkflowPlan = []contractsv1.WorkflowRef{"research-review@3"}
+	definition.Nodes[0].OutcomeRoutes = contractsv1.NodeOutcomeRoutes{string(contractsv1.CampaignNodeExecutionStatusBlocked): contractsv1.NodeOutcomeRouteStop}
+	preview, lint, err = core.Preview(job, campaign, definition, "operator")
+	if err != nil {
+		t.Fatalf("undeclared route fixture did not validate: %v: %+v", err, lint.Issues)
+	}
+	if _, err := core.Confirm(preview, "operator", cutoff); err != nil {
+		t.Fatal(err)
+	}
+	provider = &dagProvider{results: map[string]workflow.ProviderResult{}, outcomes: map[string]contractsv1.CampaignNodeExecutionStatus{"research": contractsv1.CampaignNodeExecutionStatusCompletedNoAction}}
+	engine = workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, ledger)
+	if _, err := engine.Drive(context.Background(), workflow.CampaignDriveCommand{CampaignRunRequest: workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}, MaxTransitions: 10}); err == nil || !strings.Contains(err.Error(), "no admitted route") {
+		t.Fatalf("provider selected an undeclared route: %v", err)
+	}
+}
+
 func TestProductionCampaignAdmissionRejectsProviderWithoutStagedIsolation(t *testing.T) {
 	cutoff := time.Now().UTC().Add(-time.Hour)
 	scope := contractsv1.Scope{SubjectType: "project", SubjectIds: []string{"project-a"}}
@@ -552,6 +639,9 @@ type dagProvider struct {
 	starts           int
 	artifactsPerNode int
 	results          map[string]workflow.ProviderResult
+	outcomes         map[string]contractsv1.CampaignNodeExecutionStatus
+	blockers         map[string]*contractsv1.Identifier
+	empty            map[string]bool
 }
 
 func (p *dagProvider) Start(_ context.Context, invocation workflow.Invocation) error {
@@ -560,7 +650,7 @@ func (p *dagProvider) Start(_ context.Context, invocation workflow.Invocation) e
 	}
 	p.starts++
 	count := p.artifactsPerNode
-	if count == 0 {
+	if count == 0 && !p.empty[string(invocation.Node.Id)] {
 		count = 1
 	}
 	artifactType, content := "recommendation", map[string]any{"recommendation": "keep the bounded workflow"}
@@ -575,7 +665,7 @@ func (p *dagProvider) Start(_ context.Context, invocation workflow.Invocation) e
 		}
 		artifacts = append(artifacts, contractsv1.ActionArtifact{Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: fmtID(artifactType, index), ArtifactType: contractsv1.Identifier(artifactType), JobId: invocation.JobID, CampaignId: invocation.CampaignID, WorkflowRef: invocation.WorkflowRef, NodeId: invocation.Node.Id, InputHashes: invocation.InputHashes, Content: content, ContentSha256: contractsv1.SHA256(hash), ApprovalState: contractsv1.ActionArtifactApprovalStatePending})
 	}
-	p.results[invocation.IdempotencyKey] = workflow.ProviderResult{IdempotencyKey: invocation.IdempotencyKey, CompletedAt: time.Now().UTC(), Artifacts: artifacts}
+	p.results[invocation.IdempotencyKey] = workflow.ProviderResult{IdempotencyKey: invocation.IdempotencyKey, CompletedAt: time.Now().UTC(), Artifacts: artifacts, Outcome: p.outcomes[string(invocation.Node.Id)], BlockerCode: p.blockers[string(invocation.Node.Id)]}
 	return nil
 }
 
