@@ -533,7 +533,20 @@ func providerAcknowledged(replay contractsv1.ReplayBundle, invocation Invocation
 	if err != nil {
 		return false, err
 	}
-	return key == invocation.IdempotencyKey && completedAt.Equal(result.CompletedAt) && !completedAt.After(invocation.Deadline) && reflect.DeepEqual(receipt.OutputHashes, hashes), nil
+	artifactHashesMatch := reflect.DeepEqual(receipt.OutputHashes, hashes)
+	if !artifactHashesMatch {
+		legacy := result
+		legacy.Artifacts = append([]contractsv1.ActionArtifact(nil), result.Artifacts...)
+		for index := range legacy.Artifacts {
+			legacy.Artifacts[index].ApprovalState = contractsv1.ActionArtifactApprovalStateNotRequired
+		}
+		legacyHashes, legacyErr := actionArtifactHashes(legacy.Artifacts)
+		if legacyErr != nil {
+			return false, legacyErr
+		}
+		artifactHashesMatch = reflect.DeepEqual(receipt.OutputHashes, legacyHashes)
+	}
+	return key == invocation.IdempotencyKey && completedAt.Equal(result.CompletedAt) && !completedAt.After(invocation.Deadline) && artifactHashesMatch, nil
 }
 
 func validateProviderResult(result ProviderResult, invocation Invocation) error {

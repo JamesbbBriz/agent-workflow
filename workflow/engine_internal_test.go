@@ -1,8 +1,10 @@
 package workflow
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
@@ -69,6 +71,38 @@ func TestProviderCannotAssertArtifactAuthority(t *testing.T) {
 	normalized := normalizeProviderArtifactAuthority(result)
 	if normalized.Artifacts[0].ApprovalState != contractsv1.ActionArtifactApprovalStatePending {
 		t.Fatalf("provider authority survived normalization: %s", normalized.Artifacts[0].ApprovalState)
+	}
+}
+
+func TestProviderAcknowledgementAcceptsPreV04NotRequiredAuthority(t *testing.T) {
+	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	content := map[string]any{"candidate": "a"}
+	contentHash, err := Digest(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	isolation := contractsv1.ProviderIsolationEvidence{Kind: contractsv1.ProviderIsolationEvidenceKindProviderIsolationEvidence, SchemaVersion: 1, Profile: contractsv1.ProviderIsolationProfileTrustedInProcess, Driver: contractsv1.ProviderIsolationEvidenceDriverInProcess, DeclaredEnvironment: []string{}, EvidenceHash: repeatedSHA('9')}
+	invocation := Invocation{IdempotencyKey: "run-a", Deadline: now.Add(time.Hour), Isolation: &isolation, Node: contractsv1.NodeDefinition{Id: "node-a"}}
+	artifact := contractsv1.ActionArtifact{Kind: contractsv1.ActionArtifactKindActionArtifact, SchemaVersion: 1, Id: "candidate-a", ArtifactType: "candidate", Content: content, ContentSha256: contractsv1.SHA256(contentHash), ApprovalState: contractsv1.ActionArtifactApprovalStatePending}
+	result := ProviderResult{IdempotencyKey: invocation.IdempotencyKey, CompletedAt: now, Artifacts: []contractsv1.ActionArtifact{artifact}}
+	legacy := result
+	legacy.Artifacts = append([]contractsv1.ActionArtifact(nil), result.Artifacts...)
+	legacy.Artifacts[0].ApprovalState = contractsv1.ActionArtifactApprovalStateNotRequired
+	legacyHashes, err := actionArtifactHashes(legacy.Artifacts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := sealReceiptVersion(2, "run-a", 1, contractsv1.ReceiptReceiptTypeProviderExecution, now, nil, []contractsv1.SHA256{repeatedSHA('1')}, legacyHashes, map[string]any{"node_id": invocation.Node.Id, "idempotency_key": invocation.IdempotencyKey, "completed_at": now, "isolation": isolation, "outcome": contractsv1.CampaignNodeExecutionStatusCompleted, "route": contractsv1.NodeOutcomeRouteContinue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := replayBundle("run-a", []contractsv1.Receipt{receipt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	acknowledged, err := providerAcknowledged(replay, invocation, result)
+	if err != nil || !acknowledged {
+		t.Fatalf("legacy provider authority did not converge: acknowledged=%v err=%v hashes=%v", acknowledged, err, reflect.DeepEqual(receipt.OutputHashes, legacyHashes))
 	}
 }
 
