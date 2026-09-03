@@ -662,7 +662,11 @@ func (e *Engine) completeCampaign(state *contractsv1.CampaignExecutionState, rep
 
 func (e *Engine) appendCampaignEvent(replay contractsv1.ReplayBundle, receiptType contractsv1.ReceiptReceiptType, at time.Time, inputs, outputs []contractsv1.SHA256, payload map[string]any) error {
 	previous := replay.Receipts[len(replay.Receipts)-1]
-	receipt, err := sealReceiptVersion(2, replay.AggregateId, previous.AggregateVersion+1, receiptType, at, &previous.ReceiptHash, inputs, outputs, payload)
+	version := 2
+	if receiptType == contractsv1.ReceiptReceiptTypeTerminal && payload["state"] == "retired" {
+		version = 5
+	}
+	receipt, err := sealReceiptVersion(version, replay.AggregateId, previous.AggregateVersion+1, receiptType, at, &previous.ReceiptHash, inputs, outputs, payload)
 	if err != nil {
 		return err
 	}
@@ -1086,8 +1090,8 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 		if state.Status == contractsv1.CampaignExecutionStateStatusTerminal || state.Status == contractsv1.CampaignExecutionStateStatusCompleted {
 			return state, errors.New("Campaign receipt follows terminal state")
 		}
-		if receipt.SchemaVersion != 2 {
-			return state, errors.New("Campaign Replay contains a non-v2 receipt")
+		if receipt.SchemaVersion != 2 && !(receipt.SchemaVersion == 5 && receipt.ReceiptType == contractsv1.ReceiptReceiptTypeTerminal) {
+			return state, errors.New("Campaign Replay contains an unsupported receipt version")
 		}
 		if receipt.OccurredAt.Before(state.UpdatedAt) {
 			return state, errors.New("Campaign Replay receipt predates canonical state")
@@ -1432,7 +1436,7 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 				if err := decodePayload(receipt.Payload["retirement"], &retirement); err != nil {
 					return state, err
 				}
-				if contract.ValidateDefinition("CampaignRetirementRequest", retirement) != nil || retirement.JobId != state.JobId || retirement.CampaignId != state.CampaignId || string(retirement.ExpectedReceiptHash) != fmt.Sprint(receipt.PreviousReceiptHash) || strings.TrimSpace(retirement.Actor) == "" || strings.TrimSpace(retirement.Reason) == "" {
+				if receipt.SchemaVersion != 5 || contract.ValidateDefinition("CampaignRetirementRequest", retirement) != nil || retirement.JobId != state.JobId || retirement.CampaignId != state.CampaignId || retirement.ExpectedReceiptHash != previousReceiptHash(receipt.PreviousReceiptHash) || strings.TrimSpace(retirement.Actor) == "" || strings.TrimSpace(retirement.Reason) == "" {
 					return state, errors.New("Campaign retirement binding is invalid")
 				}
 				var children map[string]string

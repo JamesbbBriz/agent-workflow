@@ -157,6 +157,10 @@ type AgentWorkflowContractCatalog struct {
 	// "campaign_execution_state".
 	CampaignExecutionState *CampaignExecutionState `json:"campaign_execution_state,omitempty,omitzero"`
 
+	// CampaignRetirementEventPayload corresponds to the JSON schema field
+	// "campaign_retirement_event_payload".
+	CampaignRetirementEventPayload *CampaignRetirementEventPayload `json:"campaign_retirement_event_payload,omitempty,omitzero"`
+
 	// CampaignRetirementRequest corresponds to the JSON schema field
 	// "campaign_retirement_request".
 	CampaignRetirementRequest *CampaignRetirementRequest `json:"campaign_retirement_request,omitempty,omitzero"`
@@ -815,6 +819,19 @@ const CampaignNodeExecutionStatusRunning CampaignNodeExecutionStatus = "running"
 const CampaignNodeExecutionStatusSkipped CampaignNodeExecutionStatus = "skipped"
 const CampaignNodeExecutionStatusWaiting CampaignNodeExecutionStatus = "waiting"
 
+type CampaignRetirementEventPayload struct {
+	// ChildReplays corresponds to the JSON schema field "child_replays".
+	ChildReplays CampaignRetirementEventPayloadChildReplays `json:"child_replays"`
+
+	// Retirement corresponds to the JSON schema field "retirement".
+	Retirement CampaignRetirementRequest `json:"retirement"`
+
+	// State corresponds to the JSON schema field "state".
+	State interface{} `json:"state"`
+}
+
+type CampaignRetirementEventPayloadChildReplays map[string]interface{}
+
 type CampaignRetirementRequest struct {
 	// Actor corresponds to the JSON schema field "actor".
 	Actor string `json:"actor"`
@@ -837,22 +854,9 @@ type CampaignRetirementRequest struct {
 }
 
 type CampaignTerminalEventPayload struct {
-	// ChildReplays corresponds to the JSON schema field "child_replays".
-	ChildReplays CampaignTerminalEventPayloadChildReplays `json:"child_replays,omitempty,omitzero"`
-
-	// Retirement corresponds to the JSON schema field "retirement".
-	Retirement *CampaignRetirementRequest `json:"retirement,omitempty,omitzero"`
-
 	// State corresponds to the JSON schema field "state".
-	State CampaignTerminalEventPayloadState `json:"state"`
+	State interface{} `json:"state"`
 }
-
-type CampaignTerminalEventPayloadChildReplays map[string]interface{}
-
-type CampaignTerminalEventPayloadState string
-
-const CampaignTerminalEventPayloadStateCompleted CampaignTerminalEventPayloadState = "completed"
-const CampaignTerminalEventPayloadStateRetired CampaignTerminalEventPayloadState = "retired"
 
 type CanvasContextPort struct {
 	// AllowPartial corresponds to the JSON schema field "allow_partial".

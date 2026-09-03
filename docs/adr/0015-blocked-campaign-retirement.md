@@ -8,7 +8,9 @@ an already admitted, blocked Campaign whose child executions are all quiescent.
 
 The versioned request binds Job, Campaign, expected previous receipt hash,
 actor and reason. The existing terminal envelope records a `retired` state
-and that request. The reducer validates the prior blocked state, immutable
+and that request using receipt schema version 5 (versions 3 and 4 already own
+other contracts). Version 2 retains its completed-only terminal meaning; old
+readers reject the unknown new version. The reducer validates the prior blocked state, immutable
 identity, head binding and absence of unfinished children. Existing completed
 terminal receipts are unchanged. Exact retries return the original receipt;
 changed requests or heads fail. No receipt after a terminal state is legal.

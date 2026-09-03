@@ -35,13 +35,8 @@ func (e *Engine) RetireBlockedCampaign(ctx context.Context, request CampaignRunR
 	last := replay.Receipts[len(replay.Receipts)-1]
 	result := contractsv1.CampaignDriveReceipt{Kind: contractsv1.CampaignDriveReceiptKindCampaignDriveReceipt, SchemaVersion: 2, State: state, CampaignReplay: replay}
 	if state.Status == contractsv1.CampaignExecutionStateStatusTerminal {
-		var previous contractsv1.CampaignRetirementRequest
-		if decodePayload(last.Payload["retirement"], &previous) == nil {
-			priorHash, priorErr := Digest(previous)
-			requestHash, requestErr := Digest(retirement)
-			if priorErr == nil && requestErr == nil && priorHash == requestHash {
-				return result, nil
-			}
+		if sameRetirement(last, retirement) {
+			return result, nil
 		}
 		return result, errors.New("Campaign has a different terminal decision")
 	}
@@ -57,6 +52,11 @@ func (e *Engine) RetireBlockedCampaign(ctx context.Context, request CampaignRunR
 		return result, errors.New("retirement clock predates canonical state")
 	}
 	if err := e.appendCampaignEvent(*replay, contractsv1.ReceiptReceiptTypeTerminal, at, []contractsv1.SHA256{state.CampaignHash}, nil, map[string]any{"state": "retired", "retirement": retirement, "child_replays": children}); err != nil {
+		current, committed, readErr := e.campaignState(prepared)
+		if readErr == nil && committed != nil && current.Status == contractsv1.CampaignExecutionStateStatusTerminal && sameRetirement(committed.Receipts[len(committed.Receipts)-1], retirement) {
+			result.State, result.CampaignReplay = current, committed
+			return result, nil
+		}
 		return result, err
 	}
 	state, replay, err = e.campaignState(prepared)
@@ -65,6 +65,16 @@ func (e *Engine) RetireBlockedCampaign(ctx context.Context, request CampaignRunR
 	}
 	result.State, result.CampaignReplay, result.Transitions = state, replay, 1
 	return result, nil
+}
+
+func sameRetirement(receipt contractsv1.Receipt, request contractsv1.CampaignRetirementRequest) bool {
+	var previous contractsv1.CampaignRetirementRequest
+	if decodePayload(receipt.Payload["retirement"], &previous) != nil {
+		return false
+	}
+	priorHash, priorErr := Digest(previous)
+	requestHash, requestErr := Digest(request)
+	return priorErr == nil && requestErr == nil && priorHash == requestHash
 }
 
 func (e *Engine) retirementChildren(state contractsv1.CampaignExecutionState, prepared preparedCampaign, frozen map[string]string) (map[string]string, error) {

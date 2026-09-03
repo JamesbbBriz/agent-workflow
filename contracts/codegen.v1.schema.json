@@ -69,6 +69,7 @@
     ,"wait_resumed_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/WaitResumedEventPayload" }
     ,"core_completed_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/CoreCompletedEventPayload" }
     ,"campaign_terminal_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignTerminalEventPayload" }
+    ,"campaign_retirement_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignRetirementEventPayload" }
     ,"provider_execution_event_payload": { "$ref": "agent-workflow.v1.schema.json#/$defs/ProviderExecutionEventPayload" }
   }
 }

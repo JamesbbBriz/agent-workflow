@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -71,10 +72,32 @@ func TestRetireBlockedCampaignRequiresQuiescenceAndExactReceipt(t *testing.T) {
 			if _, err := engine.RetireBlockedCampaign(ctx, request, stale); err == nil {
 				t.Fatal("stale head retired")
 			}
-			retired, err := engine.RetireBlockedCampaign(ctx, request, retirement)
-			if err != nil {
-				t.Fatal(err)
+			var calls atomic.Int64
+			barrier := make(chan struct{})
+			engine.WithClock(func() time.Time {
+				n := calls.Add(1)
+				if n == 2 {
+					close(barrier)
+				}
+				<-barrier
+				return now.Add(time.Duration(n) * time.Nanosecond)
+			})
+			type answer struct {
+				receipt contractsv1.CampaignDriveReceipt
+				err     error
 			}
+			answers := make(chan answer, 2)
+			for i := 0; i < 2; i++ {
+				go func() {
+					r, err := engine.RetireBlockedCampaign(ctx, request, retirement)
+					answers <- answer{r, err}
+				}()
+			}
+			first, second := <-answers, <-answers
+			if first.err != nil || second.err != nil || first.receipt.CampaignReplay.BundleHash != second.receipt.CampaignReplay.BundleHash {
+				t.Fatalf("concurrent exact retirement failed: %v %v", first.err, second.err)
+			}
+			retired := first.receipt
 			if retired.State.Status != contractsv1.CampaignExecutionStateStatusTerminal || retired.State.BlockerCode == nil || *retired.State.BlockerCode != *blocked.State.BlockerCode {
 				t.Fatalf("lost terminal or original blocker: %+v", retired.State)
 			}
@@ -82,6 +105,21 @@ func TestRetireBlockedCampaignRequiresQuiescenceAndExactReceipt(t *testing.T) {
 				t.Fatal(err)
 			}
 			terminal := retired.CampaignReplay.Receipts[len(retired.CampaignReplay.Receipts)-1]
+			if terminal.SchemaVersion != 5 {
+				t.Fatal("retirement changed historical terminal version semantics")
+			}
+			wrongVersion := cloneReplayForTest(t, *retired.CampaignReplay)
+			wrongVersion.Receipts[len(wrongVersion.Receipts)-1].SchemaVersion = 2
+			wrongVersion = rehashReplayForTest(t, wrongVersion, len(wrongVersion.Receipts)-1)
+			versionLedger := workflow.NewMemoryLedger()
+			for _, receipt := range wrongVersion.Receipts[:len(wrongVersion.Receipts)-1] {
+				if err := versionLedger.Append(receipt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := versionLedger.Append(wrongVersion.Receipts[len(wrongVersion.Receipts)-1]); err == nil {
+				t.Fatal("retirement accepted under completed-only v2 schema")
+			}
 			var childBindings map[string]string
 			body, _ := json.Marshal(terminal.Payload["child_replays"])
 			if err := json.Unmarshal(body, &childBindings); err != nil || len(childBindings) != 1 {
