@@ -1093,6 +1093,11 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 		if receipt.SchemaVersion != 2 && !(receipt.SchemaVersion == 5 && receipt.ReceiptType == contractsv1.ReceiptReceiptTypeTerminal) {
 			return state, errors.New("Campaign Replay contains an unsupported receipt version")
 		}
+		if receipt.SchemaVersion == 5 {
+			if err := contract.ValidateDefinition("Receipt", receipt); err != nil {
+				return state, err
+			}
+		}
 		if receipt.OccurredAt.Before(state.UpdatedAt) {
 			return state, errors.New("Campaign Replay receipt predates canonical state")
 		}
@@ -1448,7 +1453,7 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 				}
 				state.Status = contractsv1.CampaignExecutionStateStatusTerminal
 			} else {
-				if terminal != "completed" || !allNodesCompleted(state) {
+				if receipt.SchemaVersion != 2 || terminal != "completed" || !allNodesCompleted(state) {
 					return state, errors.New("Campaign terminal receipt is not eligible")
 				}
 				state.Status = contractsv1.CampaignExecutionStateStatusCompleted

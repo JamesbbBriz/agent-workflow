@@ -191,3 +191,15 @@ func (p *retirementTestProvider) Poll(_ context.Context, key string) (workflow.P
 	return workflow.ProviderResult{IdempotencyKey: key, CompletedAt: *p.now, Artifacts: []contractsv1.ActionArtifact{}, Outcome: contractsv1.CampaignNodeExecutionStatusBlocked, BlockerCode: &blocker}, p.ready, nil
 }
 func (*retirementTestProvider) Cancel(context.Context, string) error { return nil }
+
+type retirementReplayLedger struct {
+	workflow.AtomicLedger
+	replay contractsv1.ReplayBundle
+}
+
+func (l retirementReplayLedger) Replay(id string) (contractsv1.ReplayBundle, error) {
+	if id == l.replay.AggregateId {
+		return l.replay, nil
+	}
+	return l.AtomicLedger.Replay(id)
+}

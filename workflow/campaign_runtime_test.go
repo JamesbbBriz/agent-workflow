@@ -98,6 +98,18 @@ func TestCampaignRuntimeDerivesDependenciesAndCompletesTheDAG(t *testing.T) {
 	if terminal.State.Status != contractsv1.CampaignExecutionStateStatusCompleted || terminal.Transitions != 1 {
 		t.Fatalf("Campaign did not close canonically: %+v", terminal)
 	}
+	for _, version := range []contractsv1.ReceiptSchemaVersion{1, 3, 4, 5, 99} {
+		malformed := cloneReplayForTest(t, *terminal.CampaignReplay)
+		malformed.Receipts[len(malformed.Receipts)-1].SchemaVersion = version
+		malformed = rehashReplayForTest(t, malformed, len(malformed.Receipts)-1)
+		if err := workflow.VerifyReplay(malformed); err != nil {
+			t.Fatal(err)
+		}
+		injected := workflow.NewEngine(registry, workflow.CapabilityCatalog{"read-evidence": contractsv1.CapabilityManifestCapabilitiesElemAuthorityRead}, dagOutputCatalog(), provider, retirementReplayLedger{AtomicLedger: ledger.(workflow.AtomicLedger), replay: malformed}).WithApprovalAuthorities(workflow.ApprovalAuthorityCatalog{"human-confirm": []string{"human@example.com"}})
+		if _, err := injected.Preview(context.Background(), workflow.CampaignRunRequest{Job: job, Campaign: campaign, Workflow: definition}); err == nil {
+			t.Fatalf("reducer accepted completed terminal using schema version %v", version)
+		}
+	}
 }
 
 func TestCampaignRuntimeRoutesProviderOwnedDeterministicOutcomes(t *testing.T) {
