@@ -602,11 +602,34 @@
         "completed_at": { "type": "string", "format": "date-time" }
       }
     },
+    "CampaignRetirementRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "job_id", "campaign_id", "expected_receipt_hash", "actor", "reason"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "job_id": { "$ref": "#/$defs/Identifier" },
+        "campaign_id": { "$ref": "#/$defs/Identifier" },
+        "expected_receipt_hash": { "$ref": "#/$defs/SHA256" },
+        "actor": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    },
     "CampaignTerminalEventPayload": {
       "type": "object",
       "additionalProperties": false,
       "required": ["state"],
       "properties": { "state": { "const": "completed" } }
+    },
+    "CampaignRetirementEventPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "retirement", "child_replays"],
+      "properties": {
+        "state": { "const": "retired" },
+        "retirement": { "$ref": "#/$defs/CampaignRetirementRequest" },
+        "child_replays": { "type": "object", "additionalProperties": { "anyOf": [ { "$ref": "#/$defs/SHA256" }, { "const": "absent" } ] } }
+      }
     },
     "ProviderExecutionEventPayload": {
       "type": "object",
@@ -632,7 +655,7 @@
       "required": ["kind", "schema_version", "id", "receipt_type", "aggregate_id", "aggregate_version", "occurred_at", "input_hashes", "output_hashes", "previous_receipt_hash", "receipt_hash"],
       "properties": {
         "kind": { "type": "string", "enum": ["receipt"] },
-        "schema_version": { "type": "integer", "enum": [1, 2, 3, 4] },
+        "schema_version": { "type": "integer", "enum": [1, 2, 3, 4, 5] },
         "id": { "type": "string", "minLength": 1, "maxLength": 160 },
         "receipt_type": { "enum": ["compile", "admission", "campaign_admission", "context_bound", "needs_context", "context_available", "attempt_reserved", "pack_edition", "invocation", "provider_execution", "result", "node_completed", "budget_exhausted", "approval_requested", "approval_decided", "wait_started", "wait_resumed", "core_completed", "approval", "terminal", "change_proposed", "change_merged", "conflict_detected", "resolution_proposed", "resolution_approved", "mutation_lease_acquired", "mutation_applied", "mutation_readback", "resource_generation_advanced"] },
         "aggregate_id": { "type": "string", "minLength": 1, "maxLength": 160 },
@@ -646,6 +669,13 @@
         "payload": { "type": "object" }
       },
       "allOf": [
+        {
+          "if": { "properties": { "schema_version": { "const": 5 } }, "required": ["schema_version"] },
+          "then": {
+            "properties": { "receipt_type": { "const": "terminal" }, "payload": { "$ref": "#/$defs/CampaignRetirementEventPayload" } },
+            "required": ["payload"]
+          }
+        },
         {
           "if": { "properties": { "schema_version": { "const": 1 } }, "required": ["schema_version"] },
           "then": {

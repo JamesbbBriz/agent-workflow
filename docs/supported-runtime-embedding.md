@@ -15,6 +15,15 @@ provider, context, output, and atomic-ledger contracts. Treat it as a
 with `MaxTransitions: 1` from each durable delivery, and `ReplayAt` for an exact
 audit cutoff.
 
+For operator-authorized retirement, retain that same `*workflow.Engine` and
+call `RetireBlockedCampaign` with a versioned `CampaignRetirementRequest` after
+authenticating the operator and settling external effects. Preview the blocked
+Campaign and confirm its exact last receipt hash. This additive supported
+embedding method (ADR 0015) does not widen the existing `CampaignRuntime`
+scheduling interface or cancel providers. A running or unfinished child is a
+blocker, not permission to discard it. Its external-package compatibility test
+is `workflow/campaign_retirement_test.go`.
+
 The downstream `AtomicLedger` owns transaction serialization. Its
 `AppendBatch` must compare aggregate version and previous receipt hash and
 either commit every receipt or none. Provider `Start`, `Poll`, and `Cancel`

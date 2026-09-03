@@ -157,6 +157,14 @@ type AgentWorkflowContractCatalog struct {
 	// "campaign_execution_state".
 	CampaignExecutionState *CampaignExecutionState `json:"campaign_execution_state,omitempty,omitzero"`
 
+	// CampaignRetirementEventPayload corresponds to the JSON schema field
+	// "campaign_retirement_event_payload".
+	CampaignRetirementEventPayload *CampaignRetirementEventPayload `json:"campaign_retirement_event_payload,omitempty,omitzero"`
+
+	// CampaignRetirementRequest corresponds to the JSON schema field
+	// "campaign_retirement_request".
+	CampaignRetirementRequest *CampaignRetirementRequest `json:"campaign_retirement_request,omitempty,omitzero"`
+
 	// CampaignTerminalEventPayload corresponds to the JSON schema field
 	// "campaign_terminal_event_payload".
 	CampaignTerminalEventPayload *CampaignTerminalEventPayload `json:"campaign_terminal_event_payload,omitempty,omitzero"`
@@ -810,6 +818,40 @@ const CampaignNodeExecutionStatusPending CampaignNodeExecutionStatus = "pending"
 const CampaignNodeExecutionStatusRunning CampaignNodeExecutionStatus = "running"
 const CampaignNodeExecutionStatusSkipped CampaignNodeExecutionStatus = "skipped"
 const CampaignNodeExecutionStatusWaiting CampaignNodeExecutionStatus = "waiting"
+
+type CampaignRetirementEventPayload struct {
+	// ChildReplays corresponds to the JSON schema field "child_replays".
+	ChildReplays CampaignRetirementEventPayloadChildReplays `json:"child_replays"`
+
+	// Retirement corresponds to the JSON schema field "retirement".
+	Retirement CampaignRetirementRequest `json:"retirement"`
+
+	// State corresponds to the JSON schema field "state".
+	State interface{} `json:"state"`
+}
+
+type CampaignRetirementEventPayloadChildReplays map[string]interface{}
+
+type CampaignRetirementRequest struct {
+	// Actor corresponds to the JSON schema field "actor".
+	Actor string `json:"actor"`
+
+	// CampaignId corresponds to the JSON schema field "campaign_id".
+	CampaignId Identifier `json:"campaign_id"`
+
+	// ExpectedReceiptHash corresponds to the JSON schema field
+	// "expected_receipt_hash".
+	ExpectedReceiptHash SHA256 `json:"expected_receipt_hash"`
+
+	// JobId corresponds to the JSON schema field "job_id".
+	JobId Identifier `json:"job_id"`
+
+	// Reason corresponds to the JSON schema field "reason".
+	Reason string `json:"reason"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion interface{} `json:"schema_version"`
+}
 
 type CampaignTerminalEventPayload struct {
 	// State corresponds to the JSON schema field "state".

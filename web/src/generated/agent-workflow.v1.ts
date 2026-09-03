@@ -1,68 +1,70 @@
 export interface AgentWorkflowV1 {
-    action_artifact?:                  ActionArtifact;
-    agent_role_catalog?:               AgentRoleCatalog;
-    approval_brief?:                   ApprovalBrief;
-    approval_decided_event_payload?:   ApprovalDecidedEventPayload;
-    approval_preview?:                 ApprovalPreview;
-    approval_requested_event_payload?: ApprovalRequestedEventPayload;
-    attempt_reserved_event_payload?:   AttemptReservedEventPayload;
-    authoring_catalog?:                AuthoringCatalog;
-    budget_exhausted_event_payload?:   BudgetExhaustedEventPayload;
-    campaign_admission_event_payload?: CampaignAdmissionEventPayload;
-    campaign_definition?:              CampaignDefinition;
-    campaign_drive_preview?:           CampaignDrivePreview;
-    campaign_drive_receipt?:           CampaignDriveReceipt;
-    campaign_execution_state?:         CampaignExecutionStateClass;
-    campaign_terminal_event_payload?:  CampaignTerminalEventPayload;
-    canvas_portfolio_snapshot?:        CanvasPortfolioSnapshot;
-    canvas_snapshot?:                  CanvasSnapshot;
-    capability_manifest?:              CapabilityManifest;
-    change_case_canvas?:               ChangeCaseCanvas;
-    change_case_event_payload?:        ChangeCaseEventPayload;
-    change_case_receipt_link?:         ChangeCaseReceiptLinkElement;
-    change_case_state?:                ChangeCaseStateClass;
-    change_proposal?:                  ChangeProposalElement;
-    conflict_set?:                     Conflicts;
-    conformance_check?:                ConformanceCheck;
-    conformance_fixture?:              ConformanceFixture;
-    conformance_report?:               ConformanceReport;
-    context_bundle?:                   Bundle;
-    context_pack_edition?:             Edition;
-    context_transition_event_payload?: ContextTransitionEventPayload;
-    control_plane_snapshot?:           ControlPlaneSnapshot;
-    core_completed_event_payload?:     CoreCompletedEventPayload;
-    evidence_window_report?:           EvidenceWindowReport;
-    executor_profile?:                 ExecutorProfile;
-    job_definition?:                   Job;
-    local_project_doctor?:             LocalProjectDoctor;
-    local_project_init?:               LocalProjectInit;
-    mutation_evidence?:                ApplyEvidence;
-    mutation_lease?:                   Lease;
-    needs_context_event_payload?:      NeedsContextEventPayload;
-    node_completed_event_payload?:     NodeCompletedEventPayload;
-    proposal_replacement?:             Replacement;
-    provider_cancellation?:            ProviderCancellation;
-    provider_descriptor?:              Descriptor;
-    provider_event?:                   ProviderEvent;
-    provider_event_page?:              ProviderEventPage;
-    provider_execution_event_payload?: ProviderExecutionEventPayload;
-    provider_isolation_evidence?:      ProviderIsolation;
-    provider_observation?:             ProviderObservation;
-    provider_protocol_request?:        ProviderProtocolRequest;
-    provider_protocol_response?:       ProviderProtocolResponse;
-    provider_readiness?:               ProviderReadiness;
-    provider_run_ref?:                 ProviderRun;
-    receipt?:                          ReplayBundleReceipt;
-    redacted_replay?:                  RedactedReplay;
-    replay_bundle?:                    CampaignReplay;
-    resolution_artifact?:              Resolution;
-    resource_ref?:                     Resource;
-    wait_resumed_event_payload?:       WaitResumedEventPayload;
-    wait_started_event_payload?:       WaitStartedEventPayload;
-    workflow_admission?:               WorkflowAdmission;
-    workflow_admission_preview?:       WorkflowAdmissionPreview;
-    workflow_definition?:              WorkflowDefinitionElement;
-    workflow_lint_report?:             WorkflowLintReport;
+    action_artifact?:                   ActionArtifact;
+    agent_role_catalog?:                AgentRoleCatalog;
+    approval_brief?:                    ApprovalBrief;
+    approval_decided_event_payload?:    ApprovalDecidedEventPayload;
+    approval_preview?:                  ApprovalPreview;
+    approval_requested_event_payload?:  ApprovalRequestedEventPayload;
+    attempt_reserved_event_payload?:    AttemptReservedEventPayload;
+    authoring_catalog?:                 AuthoringCatalog;
+    budget_exhausted_event_payload?:    BudgetExhaustedEventPayload;
+    campaign_admission_event_payload?:  CampaignAdmissionEventPayload;
+    campaign_definition?:               CampaignDefinition;
+    campaign_drive_preview?:            CampaignDrivePreview;
+    campaign_drive_receipt?:            CampaignDriveReceipt;
+    campaign_execution_state?:          CampaignExecutionStateClass;
+    campaign_retirement_event_payload?: CampaignRetirementEventPayload;
+    campaign_retirement_request?:       Retirement;
+    campaign_terminal_event_payload?:   CampaignTerminalEventPayload;
+    canvas_portfolio_snapshot?:         CanvasPortfolioSnapshot;
+    canvas_snapshot?:                   CanvasSnapshot;
+    capability_manifest?:               CapabilityManifest;
+    change_case_canvas?:                ChangeCaseCanvas;
+    change_case_event_payload?:         ChangeCaseEventPayload;
+    change_case_receipt_link?:          ChangeCaseReceiptLinkElement;
+    change_case_state?:                 ChangeCaseStateClass;
+    change_proposal?:                   ChangeProposalElement;
+    conflict_set?:                      Conflicts;
+    conformance_check?:                 ConformanceCheck;
+    conformance_fixture?:               ConformanceFixture;
+    conformance_report?:                ConformanceReport;
+    context_bundle?:                    Bundle;
+    context_pack_edition?:              Edition;
+    context_transition_event_payload?:  ContextTransitionEventPayload;
+    control_plane_snapshot?:            ControlPlaneSnapshot;
+    core_completed_event_payload?:      CoreCompletedEventPayload;
+    evidence_window_report?:            EvidenceWindowReport;
+    executor_profile?:                  ExecutorProfile;
+    job_definition?:                    Job;
+    local_project_doctor?:              LocalProjectDoctor;
+    local_project_init?:                LocalProjectInit;
+    mutation_evidence?:                 ApplyEvidence;
+    mutation_lease?:                    Lease;
+    needs_context_event_payload?:       NeedsContextEventPayload;
+    node_completed_event_payload?:      NodeCompletedEventPayload;
+    proposal_replacement?:              Replacement;
+    provider_cancellation?:             ProviderCancellation;
+    provider_descriptor?:               Descriptor;
+    provider_event?:                    ProviderEvent;
+    provider_event_page?:               ProviderEventPage;
+    provider_execution_event_payload?:  ProviderExecutionEventPayload;
+    provider_isolation_evidence?:       ProviderIsolation;
+    provider_observation?:              ProviderObservation;
+    provider_protocol_request?:         ProviderProtocolRequest;
+    provider_protocol_response?:        ProviderProtocolResponse;
+    provider_readiness?:                ProviderReadiness;
+    provider_run_ref?:                  ProviderRun;
+    receipt?:                           ReplayBundleReceipt;
+    redacted_replay?:                   RedactedReplay;
+    replay_bundle?:                     CampaignReplay;
+    resolution_artifact?:               Resolution;
+    resource_ref?:                      Resource;
+    wait_resumed_event_payload?:        WaitResumedEventPayload;
+    wait_started_event_payload?:        WaitStartedEventPayload;
+    workflow_admission?:                WorkflowAdmission;
+    workflow_admission_preview?:        WorkflowAdmissionPreview;
+    workflow_definition?:               WorkflowDefinitionElement;
+    workflow_lint_report?:              WorkflowLintReport;
 }
 
 export interface ActionArtifact {
@@ -393,11 +395,28 @@ export type PurpleReceiptType = "compile" | "admission" | "campaign_admission" |
 
 export type CampaignDriveReceiptKind = "campaign_drive_receipt";
 
-export interface CampaignTerminalEventPayload {
-    state: StateEnum;
+export interface CampaignRetirementEventPayload {
+    child_replays: { [key: string]: string };
+    retirement:    Retirement;
+    state:         CampaignRetirementEventPayloadState;
 }
 
-export type StateEnum = "completed";
+export interface Retirement {
+    actor:                 string;
+    campaign_id:           string;
+    expected_receipt_hash: string;
+    job_id:                string;
+    reason:                string;
+    schema_version:        number;
+}
+
+export type CampaignRetirementEventPayloadState = "retired";
+
+export interface CampaignTerminalEventPayload {
+    state: CampaignTerminalEventPayloadState;
+}
+
+export type CampaignTerminalEventPayloadState = "completed";
 
 export interface CanvasPortfolioSnapshot {
     campaigns:            [CanvasPortfolioCampaign, ...CanvasPortfolioCampaign[]];

@@ -73,7 +73,7 @@ func ValidateWorkflow(raw []byte) (WorkflowIdentity, error) {
 
 func ValidateDefinition(name string, value any) error {
 	switch name {
-	case "JobDefinition", "CampaignDefinition", "ContextPackEdition", "ContextBundle", "CapabilityManifest", "ActionArtifact", "Receipt", "ReplayBundle", "RedactedReplay", "ProviderIsolationEvidence", "CanvasSnapshot", "CanvasPortfolioSnapshot", "ControlPlaneSnapshot", "CampaignExecutionState", "CampaignDrivePreview", "CampaignDriveReceipt",
+	case "JobDefinition", "CampaignDefinition", "CampaignRetirementRequest", "ContextPackEdition", "ContextBundle", "CapabilityManifest", "ActionArtifact", "Receipt", "ReplayBundle", "RedactedReplay", "ProviderIsolationEvidence", "CanvasSnapshot", "CanvasPortfolioSnapshot", "ControlPlaneSnapshot", "CampaignExecutionState", "CampaignDrivePreview", "CampaignDriveReceipt",
 		"AuthoringCatalog", "WorkflowLintReport", "WorkflowAdmissionPreview", "WorkflowAdmission", "ApprovalBrief", "ApprovalPreview",
 		"ConformanceFixture", "ConformanceCheck", "ConformanceReport", "LocalProjectInit", "LocalProjectDoctor", "AgentRoleCatalog", "EvidenceWindowReport",
 		"ResourceRef", "ProposalReplacement", "ChangeProposal", "ConflictSet", "ResolutionArtifact", "MutationLease", "MutationEvidence", "ChangeCaseState", "ChangeCaseEventPayload", "ChangeCaseCanvas",

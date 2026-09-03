@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/JamesbbBriz/agent-workflow/internal/contract"
@@ -661,7 +662,11 @@ func (e *Engine) completeCampaign(state *contractsv1.CampaignExecutionState, rep
 
 func (e *Engine) appendCampaignEvent(replay contractsv1.ReplayBundle, receiptType contractsv1.ReceiptReceiptType, at time.Time, inputs, outputs []contractsv1.SHA256, payload map[string]any) error {
 	previous := replay.Receipts[len(replay.Receipts)-1]
-	receipt, err := sealReceiptVersion(2, replay.AggregateId, previous.AggregateVersion+1, receiptType, at, &previous.ReceiptHash, inputs, outputs, payload)
+	version := 2
+	if receiptType == contractsv1.ReceiptReceiptTypeTerminal && payload["state"] == "retired" {
+		version = 5
+	}
+	receipt, err := sealReceiptVersion(version, replay.AggregateId, previous.AggregateVersion+1, receiptType, at, &previous.ReceiptHash, inputs, outputs, payload)
 	if err != nil {
 		return err
 	}
@@ -1082,8 +1087,16 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 		return contractsv1.CampaignExecutionState{}, errors.New("Campaign Replay definition binding does not match")
 	}
 	for _, receipt := range replay.Receipts[1:] {
-		if receipt.SchemaVersion != 2 {
-			return state, errors.New("Campaign Replay contains a non-v2 receipt")
+		if state.Status == contractsv1.CampaignExecutionStateStatusTerminal || state.Status == contractsv1.CampaignExecutionStateStatusCompleted {
+			return state, errors.New("Campaign receipt follows terminal state")
+		}
+		if receipt.SchemaVersion != 2 && !(receipt.SchemaVersion == 5 && receipt.ReceiptType == contractsv1.ReceiptReceiptTypeTerminal) {
+			return state, errors.New("Campaign Replay contains an unsupported receipt version")
+		}
+		if receipt.SchemaVersion == 5 {
+			if err := contract.ValidateDefinition("Receipt", receipt); err != nil {
+				return state, err
+			}
 		}
 		if receipt.OccurredAt.Before(state.UpdatedAt) {
 			return state, errors.New("Campaign Replay receipt predates canonical state")
@@ -1420,10 +1433,31 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			if err := decodePayload(receipt.Payload["state"], &terminal); err != nil {
 				return state, err
 			}
-			if terminal != "completed" || !allNodesCompleted(state) || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{state.CampaignHash}) || len(receipt.OutputHashes) != 0 {
+			if !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{state.CampaignHash}) || len(receipt.OutputHashes) != 0 {
 				return state, errors.New("Campaign terminal receipt is not eligible")
 			}
-			state.Status = contractsv1.CampaignExecutionStateStatusCompleted
+			if terminal == "retired" {
+				var retirement contractsv1.CampaignRetirementRequest
+				if err := decodePayload(receipt.Payload["retirement"], &retirement); err != nil {
+					return state, err
+				}
+				if receipt.SchemaVersion != 5 || contract.ValidateDefinition("CampaignRetirementRequest", retirement) != nil || retirement.JobId != state.JobId || retirement.CampaignId != state.CampaignId || retirement.ExpectedReceiptHash != previousReceiptHash(receipt.PreviousReceiptHash) || strings.TrimSpace(retirement.Actor) == "" || strings.TrimSpace(retirement.Reason) == "" {
+					return state, errors.New("Campaign retirement binding is invalid")
+				}
+				var children map[string]string
+				if err := decodePayload(receipt.Payload["child_replays"], &children); err != nil || children == nil {
+					return state, errors.New("Campaign retirement child cutoffs are missing")
+				}
+				if _, err := e.retirementChildren(state, prepared, children); err != nil {
+					return state, err
+				}
+				state.Status = contractsv1.CampaignExecutionStateStatusTerminal
+			} else {
+				if receipt.SchemaVersion != 2 || terminal != "completed" || !allNodesCompleted(state) {
+					return state, errors.New("Campaign terminal receipt is not eligible")
+				}
+				state.Status = contractsv1.CampaignExecutionStateStatusCompleted
+			}
 		default:
 			return state, fmt.Errorf("unsupported Campaign receipt type %q", receipt.ReceiptType)
 		}
