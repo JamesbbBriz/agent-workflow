@@ -602,11 +602,30 @@
         "completed_at": { "type": "string", "format": "date-time" }
       }
     },
+    "CampaignRetirementRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "job_id", "campaign_id", "expected_receipt_hash", "actor", "reason"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "job_id": { "$ref": "#/$defs/Identifier" },
+        "campaign_id": { "$ref": "#/$defs/Identifier" },
+        "expected_receipt_hash": { "$ref": "#/$defs/SHA256" },
+        "actor": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    },
     "CampaignTerminalEventPayload": {
       "type": "object",
       "additionalProperties": false,
       "required": ["state"],
-      "properties": { "state": { "const": "completed" } }
+      "properties": {
+        "state": { "enum": ["completed", "retired"] },
+        "retirement": { "$ref": "#/$defs/CampaignRetirementRequest" }
+      },
+      "allOf": [
+        { "if": { "properties": { "state": { "const": "retired" } } }, "then": { "required": ["retirement"] }, "else": { "not": { "required": ["retirement"] } } }
+      ]
     },
     "ProviderExecutionEventPayload": {
       "type": "object",

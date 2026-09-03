@@ -7,6 +7,7 @@
   "properties": {
     "job_definition": { "$ref": "agent-workflow.v1.schema.json#/$defs/JobDefinition" },
     "campaign_definition": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignDefinition" },
+    "campaign_retirement_request": { "$ref": "agent-workflow.v1.schema.json#/$defs/CampaignRetirementRequest" },
     "workflow_definition": { "$ref": "agent-workflow.v1.schema.json#/$defs/WorkflowDefinition" },
     "context_pack_edition": { "$ref": "agent-workflow.v1.schema.json#/$defs/ContextPackEdition" },
     "context_bundle": { "$ref": "agent-workflow.v1.schema.json#/$defs/ContextBundle" },

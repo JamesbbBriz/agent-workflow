@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/JamesbbBriz/agent-workflow/internal/contract"
@@ -1082,6 +1083,9 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 		return contractsv1.CampaignExecutionState{}, errors.New("Campaign Replay definition binding does not match")
 	}
 	for _, receipt := range replay.Receipts[1:] {
+		if state.Status == contractsv1.CampaignExecutionStateStatusTerminal || state.Status == contractsv1.CampaignExecutionStateStatusCompleted {
+			return state, errors.New("Campaign receipt follows terminal state")
+		}
 		if receipt.SchemaVersion != 2 {
 			return state, errors.New("Campaign Replay contains a non-v2 receipt")
 		}
@@ -1420,10 +1424,27 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 			if err := decodePayload(receipt.Payload["state"], &terminal); err != nil {
 				return state, err
 			}
-			if terminal != "completed" || !allNodesCompleted(state) || !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{state.CampaignHash}) || len(receipt.OutputHashes) != 0 {
+			if !reflect.DeepEqual(receipt.InputHashes, []contractsv1.SHA256{state.CampaignHash}) || len(receipt.OutputHashes) != 0 {
 				return state, errors.New("Campaign terminal receipt is not eligible")
 			}
-			state.Status = contractsv1.CampaignExecutionStateStatusCompleted
+			if terminal == "retired" {
+				var retirement contractsv1.CampaignRetirementRequest
+				if err := decodePayload(receipt.Payload["retirement"], &retirement); err != nil {
+					return state, err
+				}
+				if contract.ValidateDefinition("CampaignRetirementRequest", retirement) != nil || retirement.JobId != state.JobId || retirement.CampaignId != state.CampaignId || string(retirement.ExpectedReceiptHash) != fmt.Sprint(receipt.PreviousReceiptHash) || strings.TrimSpace(retirement.Actor) == "" || strings.TrimSpace(retirement.Reason) == "" {
+					return state, errors.New("Campaign retirement binding is invalid")
+				}
+				if err := e.retirementEligible(state, prepared); err != nil {
+					return state, err
+				}
+				state.Status = contractsv1.CampaignExecutionStateStatusTerminal
+			} else {
+				if terminal != "completed" || !allNodesCompleted(state) {
+					return state, errors.New("Campaign terminal receipt is not eligible")
+				}
+				state.Status = contractsv1.CampaignExecutionStateStatusCompleted
+			}
 		default:
 			return state, fmt.Errorf("unsupported Campaign receipt type %q", receipt.ReceiptType)
 		}

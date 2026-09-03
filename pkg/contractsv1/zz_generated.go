@@ -157,6 +157,10 @@ type AgentWorkflowContractCatalog struct {
 	// "campaign_execution_state".
 	CampaignExecutionState *CampaignExecutionState `json:"campaign_execution_state,omitempty,omitzero"`
 
+	// CampaignRetirementRequest corresponds to the JSON schema field
+	// "campaign_retirement_request".
+	CampaignRetirementRequest *CampaignRetirementRequest `json:"campaign_retirement_request,omitempty,omitzero"`
+
 	// CampaignTerminalEventPayload corresponds to the JSON schema field
 	// "campaign_terminal_event_payload".
 	CampaignTerminalEventPayload *CampaignTerminalEventPayload `json:"campaign_terminal_event_payload,omitempty,omitzero"`
@@ -811,10 +815,39 @@ const CampaignNodeExecutionStatusRunning CampaignNodeExecutionStatus = "running"
 const CampaignNodeExecutionStatusSkipped CampaignNodeExecutionStatus = "skipped"
 const CampaignNodeExecutionStatusWaiting CampaignNodeExecutionStatus = "waiting"
 
-type CampaignTerminalEventPayload struct {
-	// State corresponds to the JSON schema field "state".
-	State interface{} `json:"state"`
+type CampaignRetirementRequest struct {
+	// Actor corresponds to the JSON schema field "actor".
+	Actor string `json:"actor"`
+
+	// CampaignId corresponds to the JSON schema field "campaign_id".
+	CampaignId Identifier `json:"campaign_id"`
+
+	// ExpectedReceiptHash corresponds to the JSON schema field
+	// "expected_receipt_hash".
+	ExpectedReceiptHash SHA256 `json:"expected_receipt_hash"`
+
+	// JobId corresponds to the JSON schema field "job_id".
+	JobId Identifier `json:"job_id"`
+
+	// Reason corresponds to the JSON schema field "reason".
+	Reason string `json:"reason"`
+
+	// SchemaVersion corresponds to the JSON schema field "schema_version".
+	SchemaVersion interface{} `json:"schema_version"`
 }
+
+type CampaignTerminalEventPayload struct {
+	// Retirement corresponds to the JSON schema field "retirement".
+	Retirement *CampaignRetirementRequest `json:"retirement,omitempty,omitzero"`
+
+	// State corresponds to the JSON schema field "state".
+	State CampaignTerminalEventPayloadState `json:"state"`
+}
+
+type CampaignTerminalEventPayloadState string
+
+const CampaignTerminalEventPayloadStateCompleted CampaignTerminalEventPayloadState = "completed"
+const CampaignTerminalEventPayloadStateRetired CampaignTerminalEventPayloadState = "retired"
 
 type CanvasContextPort struct {
 	// AllowPartial corresponds to the JSON schema field "allow_partial".

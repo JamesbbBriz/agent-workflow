@@ -13,6 +13,7 @@ export interface AgentWorkflowV1 {
     campaign_drive_preview?:           CampaignDrivePreview;
     campaign_drive_receipt?:           CampaignDriveReceipt;
     campaign_execution_state?:         CampaignExecutionStateClass;
+    campaign_retirement_request?:      CampaignRetirementRequest;
     campaign_terminal_event_payload?:  CampaignTerminalEventPayload;
     canvas_portfolio_snapshot?:        CanvasPortfolioSnapshot;
     canvas_snapshot?:                  CanvasSnapshot;
@@ -393,11 +394,21 @@ export type PurpleReceiptType = "compile" | "admission" | "campaign_admission" |
 
 export type CampaignDriveReceiptKind = "campaign_drive_receipt";
 
-export interface CampaignTerminalEventPayload {
-    state: StateEnum;
+export interface CampaignRetirementRequest {
+    actor:                 string;
+    campaign_id:           string;
+    expected_receipt_hash: string;
+    job_id:                string;
+    reason:                string;
+    schema_version:        number;
 }
 
-export type StateEnum = "completed";
+export interface CampaignTerminalEventPayload {
+    retirement?: CampaignRetirementRequest;
+    state:       StateEnum;
+}
+
+export type StateEnum = "completed" | "retired";
 
 export interface CanvasPortfolioSnapshot {
     campaigns:            [CanvasPortfolioCampaign, ...CanvasPortfolioCampaign[]];
