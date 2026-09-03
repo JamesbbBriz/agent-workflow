@@ -621,10 +621,11 @@
       "required": ["state"],
       "properties": {
         "state": { "enum": ["completed", "retired"] },
-        "retirement": { "$ref": "#/$defs/CampaignRetirementRequest" }
+        "retirement": { "$ref": "#/$defs/CampaignRetirementRequest" },
+        "child_replays": { "type": "object", "additionalProperties": { "anyOf": [ { "$ref": "#/$defs/SHA256" }, { "const": "absent" } ] } }
       },
       "allOf": [
-        { "if": { "properties": { "state": { "const": "retired" } } }, "then": { "required": ["retirement"] }, "else": { "not": { "required": ["retirement"] } } }
+        { "if": { "properties": { "state": { "const": "retired" } } }, "then": { "required": ["retirement", "child_replays"] }, "else": { "not": { "anyOf": [ { "required": ["retirement"] }, { "required": ["child_replays"] } ] } } }
       ]
     },
     "ProviderExecutionEventPayload": {

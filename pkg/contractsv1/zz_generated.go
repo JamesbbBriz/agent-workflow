@@ -837,12 +837,17 @@ type CampaignRetirementRequest struct {
 }
 
 type CampaignTerminalEventPayload struct {
+	// ChildReplays corresponds to the JSON schema field "child_replays".
+	ChildReplays CampaignTerminalEventPayloadChildReplays `json:"child_replays,omitempty,omitzero"`
+
 	// Retirement corresponds to the JSON schema field "retirement".
 	Retirement *CampaignRetirementRequest `json:"retirement,omitempty,omitzero"`
 
 	// State corresponds to the JSON schema field "state".
 	State CampaignTerminalEventPayloadState `json:"state"`
 }
+
+type CampaignTerminalEventPayloadChildReplays map[string]interface{}
 
 type CampaignTerminalEventPayloadState string
 

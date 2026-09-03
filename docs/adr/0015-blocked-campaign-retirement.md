@@ -13,8 +13,17 @@ identity, head binding and absence of unfinished children. Existing completed
 terminal receipts are unchanged. Exact retries return the original receipt;
 changed requests or heads fail. No receipt after a terminal state is legal.
 
+Retirement captures every admitted node's child replay bundle hash, or an
+explicit absent-child marker. Replay validates exact child prefixes rather
+than mutable heads; a missing recorded prefix is corruption, never permission
+to substitute current evidence. Recorded child results cannot be marked absent.
+
 This is an additive Go embedding API, not a new HTTP listener or scheduler.
 The trusted host authenticates the operator and verifies vertical external
 effects have settled before calling. It neither kills running providers nor
 claims successful completion or erases prior failure. Existing consumers must
 upgrade their replay reader before accepting retirement receipts.
+
+This extends ADR 0012 with an operator-only method on the same Engine. Keep
+CampaignRuntime's scheduling interface unchanged for existing embedders; retain
+the constructed Engine for this explicitly supported retirement operation.

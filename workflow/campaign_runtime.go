@@ -1435,7 +1435,11 @@ func (e *Engine) reduceCampaignReplay(replay contractsv1.ReplayBundle, prepared 
 				if contract.ValidateDefinition("CampaignRetirementRequest", retirement) != nil || retirement.JobId != state.JobId || retirement.CampaignId != state.CampaignId || string(retirement.ExpectedReceiptHash) != fmt.Sprint(receipt.PreviousReceiptHash) || strings.TrimSpace(retirement.Actor) == "" || strings.TrimSpace(retirement.Reason) == "" {
 					return state, errors.New("Campaign retirement binding is invalid")
 				}
-				if err := e.retirementEligible(state, prepared); err != nil {
+				var children map[string]string
+				if err := decodePayload(receipt.Payload["child_replays"], &children); err != nil || children == nil {
+					return state, errors.New("Campaign retirement child cutoffs are missing")
+				}
+				if _, err := e.retirementChildren(state, prepared, children); err != nil {
 					return state, err
 				}
 				state.Status = contractsv1.CampaignExecutionStateStatusTerminal

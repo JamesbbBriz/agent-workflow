@@ -2,6 +2,7 @@ package workflow_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -80,6 +81,30 @@ func TestRetireBlockedCampaignRequiresQuiescenceAndExactReceipt(t *testing.T) {
 			if err := workflow.VerifyReplay(*retired.CampaignReplay); err != nil {
 				t.Fatal(err)
 			}
+			terminal := retired.CampaignReplay.Receipts[len(retired.CampaignReplay.Receipts)-1]
+			var childBindings map[string]string
+			body, _ := json.Marshal(terminal.Payload["child_replays"])
+			if err := json.Unmarshal(body, &childBindings); err != nil || len(childBindings) != 1 {
+				t.Fatalf("missing canonical child cutoffs: %s %v", body, err)
+			}
+			for childID, cutoffHash := range childBindings {
+				child, err := ledger.Replay(childID)
+				if err != nil || string(child.BundleHash) != cutoffHash {
+					t.Fatalf("wrong child cutoff: %v", err)
+				}
+				// A later well-formed ledger suffix must not change an already
+				// accepted retirement's exact child prefix.
+				next := child.Receipts[0]
+				next.Id += "-later"
+				next.AggregateVersion = len(child.Receipts) + 1
+				next.OccurredAt = now.Add(time.Second)
+				next.PreviousReceiptHash = child.CutoffReceiptHash
+				next.ReceiptHash = ""
+				next.ReceiptHash = contractsv1.SHA256(canonicalDigestForTest(t, next))
+				if err := ledger.Append(next); err != nil {
+					t.Fatal(err)
+				}
+			}
 			again, err := engine.RetireBlockedCampaign(ctx, request, retirement)
 			if err != nil || again.Transitions != 0 || again.CampaignReplay.BundleHash != retired.CampaignReplay.BundleHash {
 				t.Fatalf("retry was not idempotent: %+v %v", again, err)
@@ -92,6 +117,18 @@ func TestRetireBlockedCampaignRequiresQuiescenceAndExactReceipt(t *testing.T) {
 			driven, err := engine.Drive(ctx, workflow.CampaignDriveCommand{CampaignRunRequest: request, MaxTransitions: 10})
 			if err != nil || driven.State.Status != contractsv1.CampaignExecutionStateStatusTerminal || driven.Transitions != 0 || provider.starts != 1 {
 				t.Fatalf("retired Campaign resumed: %+v %v starts=%d", driven, err, provider.starts)
+			}
+			extra := terminal
+			extra.Id += "-illegal-suffix"
+			extra.AggregateVersion++
+			extra.PreviousReceiptHash = terminal.ReceiptHash
+			extra.ReceiptHash = ""
+			extra.ReceiptHash = contractsv1.SHA256(canonicalDigestForTest(t, extra))
+			if err := ledger.Append(extra); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := engine.Preview(ctx, request); err == nil {
+				t.Fatal("post-terminal Campaign receipt accepted")
 			}
 		})
 	}

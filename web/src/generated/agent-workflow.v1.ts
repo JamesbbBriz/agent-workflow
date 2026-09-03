@@ -404,8 +404,9 @@ export interface CampaignRetirementRequest {
 }
 
 export interface CampaignTerminalEventPayload {
-    retirement?: CampaignRetirementRequest;
-    state:       StateEnum;
+    child_replays?: { [key: string]: string };
+    retirement?:    CampaignRetirementRequest;
+    state:          StateEnum;
 }
 
 export type StateEnum = "completed" | "retired";
