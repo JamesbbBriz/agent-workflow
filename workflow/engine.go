@@ -405,10 +405,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		if e.now().Before(invocation.Deadline) {
 			return RunResult{}, ErrProviderNotReady
 		}
-		cancelContext, cancel := context.WithTimeout(ctx, 5*time.Second)
-		_ = e.provider.Cancel(cancelContext, invocation.IdempotencyKey)
-		cancel()
-		if err := e.appendDeadlineTerminal(aggregateID, occurredAt, invocation, replay); err != nil {
+		if err := e.cancelDeadlineInvocation(ctx, aggregateID, occurredAt, invocation, replay); err != nil {
 			return RunResult{}, err
 		}
 		return RunResult{}, ErrProviderDeadline
@@ -426,10 +423,7 @@ func (e *Engine) resumeInvocation(ctx context.Context, aggregateID string, occur
 		}
 	}
 	if providerResult.CompletedAt.After(invocation.Deadline) || (deadlinePassed && !acknowledged) {
-		cancelContext, cancel := context.WithTimeout(ctx, 5*time.Second)
-		_ = e.provider.Cancel(cancelContext, invocation.IdempotencyKey)
-		cancel()
-		if err := e.appendDeadlineTerminal(aggregateID, occurredAt, invocation, replay); err != nil {
+		if err := e.cancelDeadlineInvocation(ctx, aggregateID, occurredAt, invocation, replay); err != nil {
 			return RunResult{}, err
 		}
 		return RunResult{}, ErrProviderDeadline
@@ -608,6 +602,15 @@ func providerRoute(result ProviderResult, node contractsv1.NodeDefinition) (cont
 
 var ErrProviderDeadline = errors.New("provider result unavailable after node deadline")
 var ErrProviderNotReady = errors.New("provider result is not ready")
+
+func (e *Engine) cancelDeadlineInvocation(ctx context.Context, aggregateID string, occurredAt time.Time, invocation Invocation, replay contractsv1.ReplayBundle) error {
+	cancelContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := e.provider.Cancel(cancelContext, invocation.IdempotencyKey); err != nil {
+		return fmt.Errorf("provider cancellation not settled: %w", err)
+	}
+	return e.appendDeadlineTerminal(aggregateID, occurredAt, invocation, replay)
+}
 
 func (e *Engine) appendDeadlineTerminal(aggregateID string, occurredAt time.Time, invocation Invocation, replay contractsv1.ReplayBundle) error {
 	previous := replay.Receipts[len(replay.Receipts)-1]

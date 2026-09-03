@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +13,36 @@ import (
 
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
+
+func TestProviderCancellationRequiresQuiescence(t *testing.T) {
+	done := make(chan struct{})
+	cancelled := make(chan struct{}, 2)
+	p := &SubprocessProvider{runs: map[string]*subprocessRun{"key": {done: done}}, cancels: map[string]context.CancelFunc{"key": func() { cancelled <- struct{}{} }}}
+	ctx, cancel := context.WithCancel(context.Background())
+	answer := make(chan error, 1)
+	go func() { answer <- p.Cancel(ctx, "key") }()
+	<-cancelled
+	select {
+	case err := <-answer:
+		t.Fatalf("cancel returned before process exit: %v", err)
+	default:
+	}
+	cancel()
+	if err := <-answer; !errors.Is(err, context.Canceled) {
+		t.Fatalf("unsettled cancellation: %v", err)
+	}
+	close(done)
+	if err := p.Cancel(context.Background(), "key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Cancel(context.Background(), "unknown"); err == nil {
+		t.Fatal("unknown run treated as settled")
+	}
+	adapter := &AgentRunnerProvider{runs: map[string]*agentRunnerRun{"key": {cancellation: &contractsv1.ProviderCancellation{Status: contractsv1.ProviderCancellationStatusUnsupported}}}}
+	if err := adapter.Cancel(context.Background(), "key"); err == nil {
+		t.Fatal("unsupported cancellation treated as settled")
+	}
+}
 
 func TestProductionIsolationRejectsTrustedAndUnknownProfiles(t *testing.T) {
 	engine := NewEngine(nil, nil, nil, inertProvider{}, NewMemoryLedger()).RequireProviderIsolation(contractsv1.ProviderIsolationProfileStagedSubprocess)

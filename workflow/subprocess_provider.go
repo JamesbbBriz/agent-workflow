@@ -277,14 +277,23 @@ func (p *SubprocessProvider) Poll(_ context.Context, key string) (ProviderResult
 	}
 }
 
-func (p *SubprocessProvider) Cancel(_ context.Context, key string) error {
+func (p *SubprocessProvider) Cancel(ctx context.Context, key string) error {
 	p.mu.Lock()
 	cancel := p.cancels[key]
+	running := p.runs[key]
 	p.mu.Unlock()
+	if running == nil {
+		return errors.New("provider run is unknown")
+	}
 	if cancel != nil {
 		cancel()
 	}
-	return nil
+	select {
+	case <-running.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (p *SubprocessProvider) verifyInputs() error {

@@ -9,6 +9,76 @@ import (
 	contractsv1 "github.com/JamesbbBriz/agent-workflow/pkg/contractsv1"
 )
 
+// SettleExpiredCampaignInvocations cancels only recorded, expired invocations of
+// an exact blocked Campaign. Cancel success must mean provider quiescence; the
+// host must settle external effects first. This never dispatches new work.
+func (e *Engine) SettleExpiredCampaignInvocations(ctx context.Context, request CampaignRunRequest, retirement contractsv1.CampaignRetirementRequest) ([]contractsv1.ReplayBundle, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := contract.ValidateDefinition("CampaignRetirementRequest", retirement); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(retirement.Actor) == "" || strings.TrimSpace(retirement.Reason) == "" || retirement.JobId != request.Job.Id || retirement.CampaignId != request.Campaign.Id {
+		return nil, errors.New("settlement identity, actor and reason must match")
+	}
+	prepared, err := e.prepareCampaign(request)
+	if err != nil {
+		return nil, err
+	}
+	state, parent, err := e.campaignState(prepared)
+	if err != nil {
+		return nil, err
+	}
+	if parent == nil || state.Status != contractsv1.CampaignExecutionStateStatusBlocked || parent.Receipts[len(parent.Receipts)-1].ReceiptHash != retirement.ExpectedReceiptHash {
+		return nil, errors.New("settlement requires the exact blocked Campaign head")
+	}
+	var settled []contractsv1.ReplayBundle
+	for _, node := range state.Nodes {
+		wf, ok := preparedWorkflowByRef(prepared, node.WorkflowRef)
+		if !ok {
+			return settled, errors.New("settlement Workflow is not admitted")
+		}
+		id, err := executionID(RunRequest{Job: request.Job, Campaign: request.Campaign, Workflow: wf.definition, NodeID: string(node.NodeId)})
+		if err != nil {
+			return settled, err
+		}
+		child, err := e.ledger.Replay(id)
+		if errors.Is(err, ErrReplayEmpty) && node.ResultReplayHash == nil {
+			continue
+		}
+		if err != nil {
+			return settled, err
+		}
+		invocation, err := VerifyDefinitionBindingWithAdmission(child, wf.admissionReplay, request.Job, request.Campaign, wf.definition)
+		if err != nil {
+			return settled, err
+		}
+		if child.Receipts[len(child.Receipts)-1].ReceiptType == contractsv1.ReceiptReceiptTypeTerminal {
+			continue
+		}
+		if hasReceipt(child, contractsv1.ReceiptReceiptTypeProviderExecution) || hasReceipt(child, contractsv1.ReceiptReceiptTypeResult) {
+			return settled, errors.New("recorded provider result must reconcile before expired settlement")
+		}
+		at := e.now()
+		if invocation.Node.Id != node.NodeId || invocation.Deadline.IsZero() || at.Before(invocation.Deadline) || at.Before(state.UpdatedAt) {
+			return settled, errors.New("unfinished child is not eligible for expired settlement")
+		}
+		if err := e.validateInvocationIsolation(invocation); err != nil {
+			return settled, err
+		}
+		if err := e.cancelDeadlineInvocation(ctx, id, at, invocation, child); err != nil {
+			return settled, err
+		}
+		child, err = e.ledger.Replay(id)
+		if err != nil {
+			return settled, err
+		}
+		settled = append(settled, child)
+	}
+	return settled, nil
+}
+
 // RetireBlockedCampaign is an operator-authorized embedding operation. The host
 // must settle its external effects first; this operation never cancels providers.
 func (e *Engine) RetireBlockedCampaign(ctx context.Context, request CampaignRunRequest, retirement contractsv1.CampaignRetirementRequest) (contractsv1.CampaignDriveReceipt, error) {

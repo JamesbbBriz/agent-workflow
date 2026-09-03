@@ -24,6 +24,14 @@ scheduling interface or cancel providers. A running or unfinished child is a
 blocker, not permission to discard it. Its external-package compatibility test
 is `workflow/campaign_retirement_test.go`.
 
+If a parent budget blocked before an expired child settled, the same operator
+may first call `SettleExpiredCampaignInvocations` with that retirement request
+(ADR 0016). This only cancels admission-bound expired invocations and records
+deadline terminals after cancellation succeeds; it never starts or polls work.
+Provider `Cancel` must acknowledge quiescence, not just signal delivery. An
+unexpired invocation, recorded-but-unreconciled result, or cancellation error
+still blocks retirement. Retry after partial settlement, then explicitly retire.
+
 The downstream `AtomicLedger` owns transaction serialization. Its
 `AppendBatch` must compare aggregate version and previous receipt hash and
 either commit every receipt or none. Provider `Start`, `Poll`, and `Cancel`

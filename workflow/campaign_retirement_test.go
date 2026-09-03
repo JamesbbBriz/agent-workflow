@@ -3,6 +3,7 @@ package workflow_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -56,8 +57,43 @@ func TestRetireBlockedCampaignRequiresQuiescenceAndExactReceipt(t *testing.T) {
 					t.Fatalf("expected duration blocker: %+v %v", blocked.State, err)
 				}
 				retirement.ExpectedReceiptHash = blocked.CampaignReplay.Receipts[len(blocked.CampaignReplay.Receipts)-1].ReceiptHash
+				stale := retirement
+				stale.ExpectedReceiptHash = contractsv1.SHA256("sha256:" + strings.Repeat("0", 64))
+				if _, err := engine.SettleExpiredCampaignInvocations(ctx, request, stale); err == nil || provider.cancels != 0 {
+					t.Fatal("stale settlement reached provider")
+				}
+				engine.WithClock(func() time.Time { return cutoff.Add(time.Hour) })
+				if _, err := engine.SettleExpiredCampaignInvocations(ctx, request, retirement); err == nil || provider.cancels != 0 {
+					t.Fatal("unexpired settlement reached provider")
+				}
+				engine.WithClock(func() time.Time { return now })
 				if _, err := engine.RetireBlockedCampaign(ctx, request, retirement); err == nil || !strings.Contains(err.Error(), "unfinished child") {
 					t.Fatalf("duration-exhausted parent hid active child: %v", err)
+				}
+				provider.cancelErr = errors.New("provider still running")
+				if _, err := engine.SettleExpiredCampaignInvocations(ctx, request, retirement); err == nil {
+					t.Fatal("failed provider cancellation was accepted")
+				}
+				if _, err := engine.RetireBlockedCampaign(ctx, request, retirement); err == nil {
+					t.Fatal("failed cancellation settled child")
+				}
+				provider.cancelErr = nil
+				settled, err := engine.SettleExpiredCampaignInvocations(ctx, request, retirement)
+				if err != nil || len(settled) != 1 || provider.starts != 1 {
+					t.Fatalf("settlement=%+v err=%v starts=%d", settled, err, provider.starts)
+				}
+				for _, receipt := range settled[0].Receipts {
+					if receipt.ReceiptType == contractsv1.ReceiptReceiptTypeResult {
+						t.Fatal("settlement fabricated a provider result")
+					}
+				}
+				calls := provider.cancels
+				if _, err := engine.SettleExpiredCampaignInvocations(ctx, request, retirement); err != nil || provider.cancels != calls {
+					t.Fatalf("settlement retry repeated provider cancellation: %v", err)
+				}
+				retired, err := engine.RetireBlockedCampaign(ctx, request, retirement)
+				if err != nil || retired.State.Status != contractsv1.CampaignExecutionStateStatusTerminal {
+					t.Fatalf("settled Campaign could not retire: %+v %v", retired.State, err)
 				}
 				return
 			}
@@ -176,6 +212,8 @@ type retirementTestProvider struct {
 	now        *time.Time
 	ready      bool
 	starts     int
+	cancels    int
+	cancelErr  error
 	invocation workflow.Invocation
 }
 
@@ -190,7 +228,10 @@ func (p *retirementTestProvider) Poll(_ context.Context, key string) (workflow.P
 	blocker := contractsv1.Identifier("provider-timeout")
 	return workflow.ProviderResult{IdempotencyKey: key, CompletedAt: *p.now, Artifacts: []contractsv1.ActionArtifact{}, Outcome: contractsv1.CampaignNodeExecutionStatusBlocked, BlockerCode: &blocker}, p.ready, nil
 }
-func (*retirementTestProvider) Cancel(context.Context, string) error { return nil }
+func (p *retirementTestProvider) Cancel(context.Context, string) error {
+	p.cancels++
+	return p.cancelErr
+}
 
 type retirementReplayLedger struct {
 	workflow.AtomicLedger

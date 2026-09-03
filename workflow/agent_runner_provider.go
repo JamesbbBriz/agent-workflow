@@ -591,8 +591,14 @@ func (p *AgentRunnerProvider) writeDurableAttemptFile(kind, key string, body []b
 }
 
 func (p *AgentRunnerProvider) Cancel(ctx context.Context, key string) error {
-	_, err := p.CancelRun(ctx, key)
-	return err
+	cancellation, err := p.CancelRun(ctx, key)
+	if err != nil {
+		return err
+	}
+	if cancellation.Status != contractsv1.ProviderCancellationStatusAccepted && cancellation.Status != contractsv1.ProviderCancellationStatusAlreadyTerminal {
+		return errors.New("provider cancellation is not settled")
+	}
+	return nil
 }
 
 func (p *AgentRunnerProvider) CancelRun(ctx context.Context, key string) (contractsv1.ProviderCancellation, error) {
